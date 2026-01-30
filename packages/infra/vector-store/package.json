@@ -1,0 +1,19 @@
+{
+	"name": "@infra/vector-store",
+	"version": "1.0.0",
+	"description": "",
+	"main": "index.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"volta": {
+		"node": "24.13.0"
+	},
+	"dependencies": {
+		"@zilliz/milvus2-sdk-node": "^2.6.9",
+		"dotenv": "^17.2.3"
+	}
+}

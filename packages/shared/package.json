@@ -1,0 +1,18 @@
+{
+  "name": "@packages/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "lint": "biome check .",
+    "format": "biome format ."
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@biomejs/biome": "^1.7.3"
+  }
+}

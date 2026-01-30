@@ -1,0 +1,24 @@
+{
+  "name": "ai-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "format": "turbo run format"
+  },
+  "devDependencies": {
+    "turbo": "^1.13.2",
+    "@biomejs/biome": "^1.7.3",
+    "typescript": "^5.5.4",
+    "@types/node": "^20.12.7"
+  },
+  "volta": {
+    "node": "24.13.0"
+  }
+}

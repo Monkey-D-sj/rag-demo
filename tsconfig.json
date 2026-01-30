@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["packages/shared/src/*"],
+      "@ai-core/*": ["packages/ai-core/src/*"],
+      "@ai-tools/*": ["packages/ai-tools/src/*"],
+      "@llm/*": ["packages/llm-adapters/src/*"]
+    }
+  },
+  "exclude": ["node_modules"]
+}

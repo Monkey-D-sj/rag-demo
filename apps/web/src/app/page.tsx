@@ -1,10 +1,9 @@
-import Hello from "./hello";
+import {Chat} from "@/components/chat/chat";
 
 export default function Page() {
 	return (
 		<main>
-			AI 全栈骨架
-			<Hello />
+			<Chat />
 		</main>
 	);
 }

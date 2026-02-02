@@ -1,16 +1,11 @@
 import { ChatDeepSeek, ChatDeepSeekInput } from "@langchain/deepseek";
-import { LLM } from "@llm/base/llm.base";
+import { LLMBase } from "@llm/base/llm.base";
 
 
-export class DeepseekAdapter implements LLM {
+export class DeepseekAdapter extends LLMBase {
   public model: ChatDeepSeek;
   constructor(options: ChatDeepSeekInput) {
+    super()
     this.model = new ChatDeepSeek(options)
-  }
-  async *stream(prompt: string): AsyncIterable<string> {
-    const response = await this.model.stream(prompt);
-    for await (const chunk of response) {
-      yield chunk;
-    }
   }
 }

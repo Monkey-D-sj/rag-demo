@@ -1,7 +1,16 @@
-import { MilvusClient, RowData } from '@zilliz/milvus2-sdk-node';
+import { MilvusClient } from "@zilliz/milvus2-sdk-node"
+
+interface VectorRecord {
+	embedding: number[];
+	content: string;
+	metadata: Record<
+		string,
+		string | number | string[] | number[] | boolean | unknown
+	>;
+}
 
 interface VectorSearchResult {
-	id: string;
+	content: string;
 	score: number;
 	metadata?: Record<string, any>;
 }
@@ -12,33 +21,32 @@ export class MilvusVectorStore {
 		private readonly collectionName: string,
 	) {}
 
-	async upsert(records: RowData[]) {
+	async upsert(records: VectorRecord[]) {
 		await this.client.upsert({
 			collection_name: this.collectionName,
-			data: records,
+			data: records.map((r) => ({
+				embedding: r.embedding,
+				content: r.content,
+				metadata: r.metadata,
+			})),
 		});
 	}
 
 	async similaritySearch(
-		query: number[],
+		queryEmbedding: number[],
 		topK: number,
 	): Promise<VectorSearchResult[]> {
 		const res = await this.client.search({
 			collection_name: this.collectionName,
-			data: [query],
-			anns_field: 'vector',
-			param: {
-				metric_type: 'L2',
-				params: {
-					nprobe: 10,
-				},
-			},
-			limit: topK,
+			data: [queryEmbedding],
+			top_k: topK,
+			output_fields: ['content', 'metadata'],
 		});
-		return res.results.map((item) => ({
-			id: item.id,
-			score: item.score,
-			metadata: item.entity?.metadata,
+
+		return res.results.map((r) => ({
+			content: r.content,
+			score: r.score,
+			metadata: r.metadata,
 		}));
 	}
 }

@@ -6,7 +6,7 @@ export interface Collection {
 	name: string;
 	dimension: number;
 	fields: FieldType[];
-	index?: CreateIndexSimpleReq;
+	index: CreateIndexSimpleReq;
 }
 
 export const collectionList = [KnowledgeCollection];

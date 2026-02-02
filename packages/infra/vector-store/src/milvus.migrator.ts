@@ -1,20 +1,21 @@
-import { Collection, collectionList } from "./collections";
+import { MilvusClient } from '@zilliz/milvus2-sdk-node';
+import { Collection } from './collections';
 
 export class MilvusMigrator {
-  async migrateAll() {
-    for (const collection of collectionList) {
-      await this.ensureCollection(collection)
-    }
-  }
+	constructor(private readonly client: MilvusClient) {}
 
-  private async ensureCollection(collection: Collection) {
-    const { value } = await this.client.hasCollection({
-      collection_name: collection.name
-    })
+	async migrate(collection: Collection) {
+		const { value } = await this.client.hasCollection({
+			collection_name: collection.name,
+		});
 
-    if (!value) {
-      await this.client.createCollection(...)
-      await this.client.createIndex(...)
-    }
-  }
+		if (value) return;
+
+		await this.client.createCollection({
+			collection_name: collection.name,
+			fields: collection.fields,
+		});
+
+		await this.client.createIndex(collection.index);
+	}
 }

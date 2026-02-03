@@ -11,7 +11,7 @@
 		"format": "biome format ."
 	},
 	"dependencies": {
-		"@langchain/core": "^0.2.0",
+		"@langchain/core": "^1.0.0",
 		"@langchain/community": "^0.2.0"
 	},
 	"devDependencies": {

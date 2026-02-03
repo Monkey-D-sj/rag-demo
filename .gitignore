@@ -2,3 +2,5 @@ node_modules
 apps/web/.next/*
 apps/api/dist/*
 .idea
+**/.turbo
+**/dist

@@ -1,5 +1,5 @@
 import { ChatDeepSeek, ChatDeepSeekInput } from "@langchain/deepseek";
-import { LLMBase } from "@llm/base/llm.base";
+import { LLMBase } from "../base/llm.base";
 
 
 export class DeepseekAdapter extends LLMBase {

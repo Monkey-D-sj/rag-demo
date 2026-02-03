@@ -3,7 +3,7 @@ export abstract class LLMBase {
   async *stream(prompt: string): AsyncIterable<string> {
     const response = await this.model.stream(prompt);
     for await (const chunk of response) {
-      yield chunk;
+      yield chunk.content;
     }
   }
 }

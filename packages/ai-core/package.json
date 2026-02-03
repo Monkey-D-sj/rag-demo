@@ -1,19 +1,17 @@
 {
-	"name": "ai-core",
+	"name": "@ai-rag/ai-core",
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"scripts": {
-		"build": "tsc -p tsconfig.json",
-		"dev": "tsc -w -p tsconfig.json",
+		"build": "tsc -p tsconfig.build.json",
 		"lint": "biome check .",
 		"format": "biome format ."
 	},
 	"dependencies": {
 		"@langchain/core": "^0.2.0",
-		"langchain": "^0.2.0",
 		"@langchain/community": "^0.2.0"
 	},
 	"devDependencies": {

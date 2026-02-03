@@ -1,43 +1,33 @@
-// chat.controller.ts
-import {
-  Controller,
-  Post,
-  Req,
-  Res,
-} from '@nestjs/common'
-import { Request, Response } from 'express'
-import {DeepseekAdapter} from "@llm/providers/deepseek.adapter";
+import { Body, Controller, Post, Res, } from '@nestjs/common'
+import { Response } from 'express'
 import 'dotenv/config'
+import { ChatDto } from "./dto/chat.dto";
+import { DeepseekAdapter } from "@ai-rag/llm-adapters";
+import { ChatService } from "./chat.service";
 
 @Controller('chat')
 export class ChatController {
+  constructor(private readonly chatService: ChatService) {
+  }
   @Post()
-  async chat(@Req() req: Request, @Res() res: Response) {
+  async chat(@Body() body: ChatDto, @Res() res: Response) {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
     res.flushHeaders()
-    console.log(req)
 
-    // const llm = new DeepseekAdapter({
-    //   apiKey: process.env.DEEPSEEK_API_KEY,
-    //   model: 'deepseek-chat',
-    // })
-    // llm.stream(req.body)
-    const chunks = ['你好', '，这是', ' NestJS', ' SSE', ' 流式响应']
-
-    for (const chunk of chunks) {
+    const llm = new DeepseekAdapter({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      model: 'deepseek-chat',
+    })
+    const stream = llm.stream(body.message)
+    for await (const message of stream) {
       res.write(
-        `data: ${JSON.stringify({ content: chunk })}\n\n`
+        `data: ${JSON.stringify({ content: message })}\n\n`
       )
-      await this.sleep(500)
     }
 
     res.write('data: [DONE]\n\n')
     res.end()
-  }
-
-  private sleep(ms: number) {
-    return new Promise((r) => setTimeout(r, ms))
   }
 }

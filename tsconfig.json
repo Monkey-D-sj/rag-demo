@@ -11,10 +11,12 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["packages/shared/src/*"],
-      "@ai-core/*": ["packages/ai-core/src/*"],
-      "@ai-tools/*": ["packages/ai-tools/src/*"],
-      "@llm/*": ["packages/llm-adapters/src/*"]
+      "@ai-rag/shared/*": ["packages/shared/src/*"],
+      "@ai-rag/ai-core/*": ["packages/ai-core/src/*"],
+      "@ai-rag/ai-tools/*": ["packages/ai-tools/src/*"],
+      "@ai-rag/infra/*": ["packages/infra/src/*"],
+      "@ai-rag/contracts/*": ["packages/contracts/src/*"],
+      "@ai-rag/llm-adapters/*": ["packages/llm-adapters/src/*"]
     }
   },
   "exclude": ["node_modules"]

@@ -19,10 +19,10 @@ class MemoryManager:
         return self._long_term.add(session_id, text, metadata)
 
     def search(
-        self, query: str, top_k: int = 5, filters: dict | None = None
+        self, session_id: str, query: str, top_k: int = 5, filters: dict | None = None
     ) -> list[dict]:
         """向量相似度搜索长期记忆"""
-        return self._long_term.search(query, top_k, filters)
+        return self._long_term.search(query, session_id, top_k, filters)
 
     # ── 短期记忆（会话级，自动过期） ──────────────────
 

@@ -30,7 +30,7 @@ class LongTermMemoryAdapter(ABC):
 
     @abstractmethod
     def search(
-        self, query: str, top_k: int = 5, filters: dict | None = None
+        self, session_id: str, query: str, top_k: int = 5, filters: dict | None = None
     ) -> list[dict]:
         """基于向量相似度搜索记忆，可按 metadata 字段过滤"""
         ...

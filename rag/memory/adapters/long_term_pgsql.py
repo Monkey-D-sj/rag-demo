@@ -85,7 +85,11 @@ class PgVectorLongTermMemory(LongTermMemoryAdapter):
         return memory_id
 
     def search(
-        self, query: str, top_k: int = 5, filters: Optional[dict] = None
+        self,
+        query: str,
+        session_id: str,
+        top_k: int = 5,
+        filters: Optional[dict] = None
     ) -> list[dict]:
         """基于向量相似度搜索记忆，可按 metadata 字段过滤
 

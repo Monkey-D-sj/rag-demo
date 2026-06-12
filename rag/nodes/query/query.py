@@ -6,7 +6,7 @@ from rag.type import MyState, ContextSchema
 
 system_prompt = """
 你是一个专业的关务助手, 你的任务是根据用户的查询, 提供专业的关务信息.
-如果有不确定的地方，例如：他/那么。
+有不确定的地方，例如：他/那么。
 从上下文获取信息，改写消息返回
 """
 

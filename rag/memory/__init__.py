@@ -1,3 +1,8 @@
+from rag.memory.adapters.base import LongTermMemoryAdapter, ShortTermMemoryAdapter
 from rag.memory.manager import MemoryManager
 
-memory_manager = MemoryManager()
+__all__ = [
+    "MemoryManager",
+    "LongTermMemoryAdapter",
+    "ShortTermMemoryAdapter",
+]

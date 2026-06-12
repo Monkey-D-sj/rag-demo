@@ -1,8 +1,8 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.config import get_stream_writer
+from langgraph.runtime import Runtime
 
-from rag.models.normal import llm_invoke
-from rag.type import MyState
+from rag.type import MyState, ContextSchema
 
 system_prompt = """
 你是一个专业的关务助手, 你的任务是根据用户的查询, 提供专业的关务信息.
@@ -11,17 +11,19 @@ system_prompt = """
 """
 
 
-def handle_query(state: MyState) -> MyState:
+def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
 	"""处理查询"""
 	# ----------- 输出 -----------
 	writer = get_stream_writer()
 	writer("深度思考中")
 	
-	state["rewrite_query"] = llm_invoke([
+	llm = runtime.context.llm
+	
+	state["rewrite_query"] = llm.invoke([
 		SystemMessage(content=system_prompt),
 		HumanMessage(content=f"""
 用户查询: {state["raw_query"]}
-上下文: {state["raw_query"]}
+上下文: {state["context"]}
 """),
 	])
 	return state

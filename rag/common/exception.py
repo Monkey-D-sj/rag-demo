@@ -1,29 +1,17 @@
-from typing import Optional
-
-
 class LLMException(Exception):
     """LLM 异常基类"""
 
-    def __init__(
-        self,
-        message: str,
-        status_code: int = 0,
-        model: str = "",
-        retryable: bool = False,
-    ):
+    def __init__(self, message: str, status_code: int = 0, model: str = ""):
         super().__init__(message)
         self.status_code = status_code
         self.model = model
-        self.retryable = retryable
 
 
 # ── 可重试异常（5xx / 网络） ──────────────────────────────
 
 class LLMRetryableError(LLMException):
     """可重试的 LLM 异常"""
-
-    def __init__(self, message: str, status_code: int = 0, model: str = ""):
-        super().__init__(message, status_code=status_code, model=model, retryable=True)
+    pass
 
 
 class LLMServerError(LLMRetryableError):
@@ -40,9 +28,7 @@ class LLMServiceUnavailableError(LLMRetryableError):
 
 class LLMNonRetryableError(LLMException):
     """不可重试的 LLM 异常（客户端错误，重试无意义）"""
-
-    def __init__(self, message: str, status_code: int = 0, model: str = ""):
-        super().__init__(message, status_code=status_code, model=model, retryable=False)
+    pass
 
 
 class LLMBadRequestError(LLMNonRetryableError):
@@ -101,12 +87,7 @@ def from_http_error(
 ) -> LLMException:
     """根据 HTTP 状态码构造对应的异常"""
     exc_cls = _STATUS_MAP.get(status_code, LLMException)
-    if issubclass(exc_cls, LLMRetryableError):
-        return exc_cls(message, status_code=status_code, model=model)
-    elif issubclass(exc_cls, LLMNonRetryableError):
-        return exc_cls(message, status_code=status_code, model=model)
-    else:
-        return LLMException(message, status_code=status_code, model=model, retryable=False)
+    return exc_cls(message, status_code=status_code, model=model)
 
 
 def is_retryable(exc: BaseException) -> bool:

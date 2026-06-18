@@ -220,7 +220,7 @@ alembic.ini
   # redis>=5.0 保留（自带 redis.asyncio）；langchain / langgraph 保留
 ```
 
-**待用户拍板项：** `requires-python>=3.14` 建议降到 `>=3.12`（3.14 太新、部分轮子未必齐，生产风险）。此项会动现有环境，默认不擅改，等用户确认。
+**`requires-python`：已确认从 `>=3.14` 降到 `>=3.12`**（3.14 太新、部分轮子未必齐，生产风险）。`.python-version` 同步改为 3.12，需在 3.12 环境重建 `.venv` 并刷新 `uv.lock`。
 
 ## 7. 安全 / 配置
 
@@ -251,5 +251,5 @@ alembic.ini
 ## 10. 风险与备注
 
 - **psycopg3 + ParadeDB**：本轮迁移含 `paradedb.create_bm25`，但运行时 BM25 检索（`@@@ paradedb.parse`）属 B，本轮不在热路径调用；迁移阶段需确认 ParadeDB 镜像下 `create_bm25` 正常。
-- **Python 3.14**：见 §6 待拍板项。
+- **Python 版本**：已定 3.12（见 §6）。改 `requires-python` + `.python-version` 后需在 3.12 重建 `.venv`、刷新 `uv.lock`，并验证 langgraph/langchain/psycopg3 等在 3.12 下轮子齐备。
 - **alembic 与运行时双 URL**：需在 `Settings` 暴露同步/异步两种连接串（或由异步串推导同步串），env.py 用同步串。

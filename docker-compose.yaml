@@ -18,9 +18,10 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql
     restart: unless-stopped
 
 volumes:
   redis_data:
   pg_data:
+  # pg_data mounts to /var/lib/postgresql (not /data) for paradedb/postgres 18+ compatibility

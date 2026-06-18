@@ -1,57 +1,30 @@
-import os
 import logging
-from contextlib import contextmanager
-from typing import Any, Callable, Generator
+from contextlib import asynccontextmanager
+from typing import Any, Callable
 
-from dotenv import load_dotenv
-from langchain_core.messages import AIMessageChunk, BaseMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from tenacity import (
-    retry,
+    AsyncRetrying,
+    before_sleep_log,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential_jitter,
-    retry_if_exception,
-    before_sleep_log,
-    RetryError,
 )
 
-from rag.common.exception import (
-    LLMException,
-    from_http_error,
-    is_retryable,
-)
+from rag.common.exception import LLMException, from_http_error, is_retryable
+from rag.config import Settings
 from rag.models.base import ChatModel
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# ── retry 配置 ──────────────────────────────────────────
-
-_retry_decorator = retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
-    retry=retry_if_exception(is_retryable),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=True,
-)
-
-# ── 调用方的错误分发工具 ────────────────────────────────
-
 ErrorHandler = Callable[[LLMException], None]
-ErrorHandlers = dict[int, ErrorHandler]
+ErrorHandlers = dict[int | str, ErrorHandler]
 
 
-def dispatch_error(exc: LLMException, handlers: ErrorHandlers | None):
-    """按 status_code 分发到对应的处理器，支持 '*' 通配
-
-    用法:
-        dispatch_error(exc, {
-            402: lambda e: send_dingtalk("余额不足"),
-            '*':  lambda e: logger.error("未知错误: %s", e),
-        })
-    """
+def dispatch_error(exc: LLMException, handlers: ErrorHandlers | None) -> None:
+    """按 status_code 分发，支持 '*' 通配。"""
     if not handlers:
         return
     handler = handlers.get(exc.status_code) or handlers.get("*")
@@ -62,8 +35,6 @@ def dispatch_error(exc: LLMException, handlers: ErrorHandlers | None):
             logger.exception("error handler failed")
 
 
-# ── 内部辅助 ────────────────────────────────────────────
-
 def _extract_status_code(exc: BaseException) -> int:
     if hasattr(exc, "status_code"):
         return exc.status_code
@@ -72,25 +43,22 @@ def _extract_status_code(exc: BaseException) -> int:
     return 0
 
 
-# ── NormalModel ─────────────────────────────────────────
-
 class NormalModel(ChatModel):
-    def __init__(self):
+    def __init__(self, settings: Settings):
         self._model = ChatOpenAI(
-            api_key=os.getenv("MODEL_KEY"),
-            model=os.getenv("MODEL_NAME"),
-            base_url=os.getenv("MODEL_URL"),
+            api_key=settings.model_key,
+            model=settings.model_name,
+            base_url=settings.model_url,
             temperature=0,
             seed=42,
         )
-        self._model_name = os.getenv("MODEL_NAME")
+        self._model_name = settings.model_name
 
-    def bind_tools(self, tools: list[BaseTool]):
+    def bind_tools(self, tools: list[BaseTool]) -> None:
         self._model = self._model.bind_tools(tools)
 
-    @contextmanager
-    def _translate(self):
-        """将底层异常转为 LLMException 子类"""
+    @asynccontextmanager
+    async def _translate(self):
         try:
             yield
         except LLMException:
@@ -101,33 +69,24 @@ class NormalModel(ChatModel):
                 raise from_http_error(code, str(e), model=self._model_name) from e
             raise
 
-    # ── 公开接口 ──────────────────────────────────────
+    async def ainvoke(self, messages: list[BaseMessage | str]) -> str:
+        """带重试的异步调用。"""
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
+            retry=retry_if_exception(is_retryable),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        ):
+            with attempt:
+                async with self._translate():
+                    rsp = await self._model.ainvoke(messages)
+                    return rsp.content
+        raise AssertionError("unreachable")
 
-    def invoke(self, messages: list[BaseMessage | str]) -> str:
-        """单次调用，不重试"""
-        with self._translate():
-            return self._model.invoke(messages).content
-
-    def stream(self, messages: list[BaseMessage | str]) -> Generator[AIMessageChunk, Any, None]:
-        """单次流式，不重试"""
-        with self._translate():
-            yield from self._model.stream(messages)
-
-    @_retry_decorator
-    def _do_invoke(self, messages: list[BaseMessage | str]) -> str:
-        with self._translate():
-            return self._model.invoke(messages).content
-
-    def invoke_with_retry(self, messages: list[BaseMessage | str]) -> str:
-        """调用 LLM，自动重试可恢复错误"""
-        try:
-            return self._do_invoke(messages)
-        except RetryError as e:
-            cause = e.last_attempt.exception()  # type: ignore[union-attr]
-            code = _extract_status_code(cause)
-            raise LLMException(
-                f"invoke failed after 3 retries: {cause}",
-                status_code=code,
-                model=self._model_name,
-            ) from cause
+    async def astream(self, messages: list[BaseMessage | str]):
+        """单次异步流式（不重试，流式中途重试语义复杂，留待 C）。"""
+        async with self._translate():
+            async for chunk in self._model.astream(messages):
+                yield chunk
 

@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 .idea
+.env
+.pytest_cache
+.traces

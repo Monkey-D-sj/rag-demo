@@ -1,4 +1,2 @@
-from rag.db.redis import get_redis_client
-from rag.db.postgres import get_pg_pool, ensure_pgvector_extension
-
-redis_client = get_redis_client()
+# db 层已迁移至异步实现（psycopg3 AsyncConnectionPool + redis.asyncio）
+# 使用 create_pg_pool / get_cursor / create_redis_client 替代旧同步接口

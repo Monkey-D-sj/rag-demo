@@ -1,23 +1,16 @@
-import os
+import redis.asyncio as redis
 
-import redis
-from dotenv import load_dotenv
-
-load_dotenv()
-
-_pool: redis.ConnectionPool | None = None
+from rag.config import Settings
 
 
-def get_redis_client() -> redis.Redis:
-    """获取 Redis 客户端（连接池复用）"""
-    global _pool
-    if _pool is None:
-        _pool = redis.ConnectionPool(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", "6379")),
-            db=int(os.getenv("REDIS_DB", "0")),
-            password=os.getenv("REDIS_PASSWORD") or None,
-            max_connections=10,
-            decode_responses=True,
-        )
-    return redis.Redis(connection_pool=_pool)
+def create_redis_client(settings: Settings) -> redis.Redis:
+    """创建异步 Redis 客户端（连接池复用，解码为 str）。"""
+    pool = redis.ConnectionPool(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+        max_connections=settings.redis_max_connections,
+        decode_responses=True,
+    )
+    return redis.Redis(connection_pool=pool)

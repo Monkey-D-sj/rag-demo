@@ -3,24 +3,29 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from rag.api.modules import register_modules
+from rag.common.logging import setup_logging
+from rag.config import get_settings
+from rag.db import create_pg_pool, create_redis_client
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-	from rag.common.logging import setup_logging
-	setup_logging()
-	
-	from rag.db import create_pg_pool, create_redis_client
-	# ------ 初始化pg -------
-	pool = await create_pg_pool()
-	app.state.pg = pool
-	
-	# ------ 初始化redis -------
-	resis = await create_redis_client()
-	app.state.redis = resis
+    setup_logging()
+    settings = get_settings()
+
+    # ------ 初始化 pg -------
+    pool = await create_pg_pool(settings)
+    app.state.pg = pool
+
+    # ------ 初始化 redis -------
+    app.state.redis = create_redis_client(settings)
+
+    yield
+
+    # ------ 关闭资源 -------
+    await pool.close()
+    await app.state.redis.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
 register_modules(app)
-
-
-

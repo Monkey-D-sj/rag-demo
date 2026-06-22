@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-v4"
     embedding_dim: int = 1024
 
+    # ── Logging ──
+    log_level: str = "INFO"                        # DEBUG / INFO / WARNING / ERROR
+    log_format: str = "text"                       # "text"（开发） | "json"（生产）
+    log_file: str | None = None                    # None=仅控制台；给路径则额外写文件
+    log_file_max_bytes: int = 10 * 1024 * 1024     # 单文件 10MB
+    log_file_backup_count: int = 5                 # 轮转保留份数
+
     @property
     def pg_async_dsn(self) -> str:
         return (

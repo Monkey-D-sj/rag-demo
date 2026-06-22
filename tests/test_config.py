@@ -19,3 +19,14 @@ def test_settings_defaults(monkeypatch):
     assert s.pg_host == "localhost"
     assert s.redis_port == 6379
     assert s.embedding_dim == 1024
+
+
+def test_settings_has_log_defaults():
+    from rag.config import Settings
+
+    s = Settings()
+    assert s.log_level == "INFO"
+    assert s.log_format == "text"
+    assert s.log_file is None
+    assert s.log_file_max_bytes == 10 * 1024 * 1024
+    assert s.log_file_backup_count == 5

@@ -47,9 +47,6 @@ def test_text_formatter_color_has_ansi():
     assert "\x1b[" in out
 
 
-import json as _json
-
-
 @pytest.fixture(autouse=True)
 def _clean_root_handlers():
     root = logging.getLogger()
@@ -86,7 +83,7 @@ def test_setup_logging_json_output_is_valid_json(capsys):
     logging.getLogger("rag.test").error("boom")
     err = capsys.readouterr().err
     line = [ln for ln in err.splitlines() if ln.strip()][-1]
-    data = _json.loads(line)
+    data = json.loads(line)
     assert data["message"] == "boom"
     assert data["level"] == "ERROR"
 
@@ -107,3 +104,17 @@ def test_setup_logging_creates_file_and_parent_dir(tmp_path):
 def test_setup_logging_invalid_level_falls_back_to_info():
     setup_logging(Settings(log_level="NOTALEVEL"))
     assert logging.getLogger().level == logging.INFO
+
+
+def test_setup_logging_tames_uvicorn_loggers():
+    # 预先给 uvicorn logger 装一个 handler、关掉 propagate，模拟 uvicorn 默认状态
+    uv = logging.getLogger("uvicorn")
+    uv.addHandler(logging.NullHandler())
+    uv.propagate = False
+
+    setup_logging(Settings(log_format="text"))
+
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        assert lg.handlers == []
+        assert lg.propagate is True

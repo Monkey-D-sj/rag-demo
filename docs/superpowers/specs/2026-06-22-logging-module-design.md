@@ -46,7 +46,7 @@ log_file_backup_count: int = 5                 # 轮转保留份数
 - `settings` 为 `None` 时调用 `get_settings()` 获取。
 - **幂等**:先清空 root logger 已有的 handler(`logger.handlers.clear()`),保证可重复调用不叠加。
 - 按 `log_format` 选择 formatter,装配 handler,设置 `log_level`。
-- 始终添加一个指向 `stdout` 的 `StreamHandler`。
+- 始终添加一个指向 `stderr`（`StreamHandler` 默认 stream）的 `StreamHandler`。
 - 当 `log_file` 非空时,额外添加一个 `RotatingFileHandler`
   (`maxBytes=log_file_max_bytes`,`backupCount=log_file_backup_count`,`encoding="utf-8"`)。
   文件 handler 始终使用非彩色 formatter。

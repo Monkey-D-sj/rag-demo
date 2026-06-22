@@ -1,6 +1,11 @@
 import datetime
 import json
 import logging
+import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+from rag.config import Settings, get_settings
 
 
 class JsonFormatter(logging.Formatter):
@@ -47,3 +52,60 @@ class ColorTextFormatter(logging.Formatter):
                 record = logging.makeLogRecord(record.__dict__)
                 record.levelname = f"{color}{record.levelname}{_RESET}"
         return super().format(record)
+
+
+_VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+def _build_formatter(log_format: str, *, use_color: bool) -> logging.Formatter:
+    if log_format == "json":
+        return JsonFormatter()
+    return ColorTextFormatter(use_color=use_color)
+
+
+def setup_logging(settings: Settings | None = None) -> None:
+    """幂等配置 root logger。可在应用启动时重复调用。"""
+    settings = settings or get_settings()
+
+    root = logging.getLogger()
+    root.handlers.clear()
+
+    # 解析 level（非法则回退 INFO）
+    level_name = settings.log_level.upper()
+    invalid_level = level_name not in _VALID_LEVELS
+    level = logging.INFO if invalid_level else getattr(logging, level_name)
+    root.setLevel(level)
+
+    # 控制台 handler（默认 stderr）
+    stream_handler = logging.StreamHandler()
+    use_color = bool(getattr(stream_handler.stream, "isatty", lambda: False)())
+    stream_handler.setFormatter(
+        _build_formatter(settings.log_format, use_color=use_color)
+    )
+    root.addHandler(stream_handler)
+
+    # 可选文件 handler（始终非彩色）
+    if settings.log_file:
+        path = Path(settings.log_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            filename=str(path),
+            maxBytes=settings.log_file_max_bytes,
+            backupCount=settings.log_file_backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(
+            _build_formatter(settings.log_format, use_color=False)
+        )
+        root.addHandler(file_handler)
+
+    # 收编 uvicorn，统一走 root
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        lg.handlers.clear()
+        lg.propagate = True
+
+    if invalid_level:
+        logging.getLogger(__name__).warning(
+            "未知 log_level %r，已回退为 INFO", settings.log_level
+        )

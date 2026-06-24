@@ -69,9 +69,12 @@ async def test_ingest_empty_chunks_marks_failed(monkeypatch):
     async def fake_get_document(pool, doc_id):
         return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
 
+    async def fake_get_object(*a, **k):
+        return b"data"
+
     monkeypatch.setattr(pipe.store, "set_status", fake_set_status)
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
-    monkeypatch.setattr(pipe, "get_object", lambda *a, **k: _async_bytes())
+    monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "")
     monkeypatch.setattr(pipe, "chunk", lambda text, size, overlap: [])
 
@@ -80,9 +83,5 @@ async def test_ingest_empty_chunks_marks_failed(monkeypatch):
 
     with pytest.raises(ValueError):
         await pipe.ingest_document(ctx, "d1")
-    assert ("processing", None) in statuses
-    assert any(s == "failed" for s, _ in statuses)
-
-
-async def _async_bytes():
-    return b"data"
+    assert statuses[0] == ("processing", None)
+    assert any(s == "failed" and e is not None for s, e in statuses)

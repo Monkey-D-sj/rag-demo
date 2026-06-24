@@ -1,7 +1,17 @@
 from types import SimpleNamespace
 
+import rag.nodes.query.query as query_mod
 import rag.nodes.recall_memory.memory as recall_mod
 from rag.type import ContextSchema
+
+
+class _FakeLLM:
+    def __init__(self):
+        self.calls = []
+
+    async def ainvoke(self, messages):
+        self.calls.append(messages)
+        return "rewritten"
 
 
 class _FakeMM:
@@ -29,3 +39,15 @@ async def test_recall_memory_awaits_and_composes_context(monkeypatch):
     assert mm.search_calls == [("s1", "q1")]
     assert mm.recent_calls == ["s1"]
     assert out["context"] == "S1\nL1"
+
+
+async def test_handle_query_awaits_ainvoke(monkeypatch):
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+    llm = _FakeLLM()
+    runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
+    state = {"session_id": "s1", "raw_query": "q1", "context": "ctx"}
+
+    out = await query_mod.handle_query(state, runtime)
+
+    assert out["rewrite_query"] == "rewritten"
+    assert len(llm.calls) == 1

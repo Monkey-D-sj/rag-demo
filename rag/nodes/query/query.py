@@ -11,15 +11,15 @@ system_prompt = """
 """
 
 
-def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
+async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
 	"""处理查询"""
 	# ----------- 输出 -----------
 	writer = get_stream_writer()
 	writer("深度思考中")
-	
+
 	llm = runtime.context.llm
-	
-	state["rewrite_query"] = llm.invoke([
+
+	state["rewrite_query"] = await llm.ainvoke([
 		SystemMessage(content=system_prompt),
 		HumanMessage(content=f"""
 用户查询: {state["raw_query"]}

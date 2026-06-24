@@ -1,3 +1,5 @@
+import pytest
+
 import rag.common.minio_client as mc
 from rag.config import Settings
 
@@ -60,4 +62,26 @@ async def test_get_object_reads_and_closes():
 
     out = await mc.get_object(_C(), "bk", "k1")
     assert out == b"data"
+    assert closed == {"closed": True, "released": True}
+
+
+async def test_get_object_releases_on_read_error():
+    closed = {"closed": False, "released": False}
+
+    class _Resp:
+        def read(self):
+            raise RuntimeError("boom")
+
+        def close(self):
+            closed["closed"] = True
+
+        def release_conn(self):
+            closed["released"] = True
+
+    class _C:
+        def get_object(self, bucket, key):
+            return _Resp()
+
+    with pytest.raises(RuntimeError):
+        await mc.get_object(_C(), "bk", "k1")
     assert closed == {"closed": True, "released": True}

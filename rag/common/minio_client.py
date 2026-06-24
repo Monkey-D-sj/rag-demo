@@ -36,7 +36,9 @@ async def get_object(client: Minio, bucket: str, key: str) -> bytes:
         try:
             return resp.read()
         finally:
-            resp.close()
-            resp.release_conn()
+            try:
+                resp.close()
+            finally:
+                resp.release_conn()
 
     return await asyncio.to_thread(_get)

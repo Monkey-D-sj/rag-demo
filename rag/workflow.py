@@ -1,7 +1,5 @@
 from langgraph.graph import END, START, StateGraph
 
-from rag.memory.manager import get_memory_manager
-from rag.models.normal import NormalModel
 from rag.nodes.query.query import handle_query
 from rag.nodes.recall_memory.memory import recall_memory
 from rag.type import MyState, ContextSchema
@@ -18,17 +16,9 @@ builder.add_edge("handle_query", END)
 
 graph = builder.compile()
 
-# ── 运行时依赖 ──
-memory_manager = get_memory_manager()
-llm = NormalModel()
-context: ContextSchema = ContextSchema(
-    memory_manager=memory_manager,
-    llm=llm
-)
 
-
-def invoke(session_id: str, query: str):
-    for chunk in graph.stream(
+async def invoke(session_id: str, query: str, context: ContextSchema):
+    async for chunk in graph.astream(
         {"session_id": session_id, "raw_query": query},
         context=context,
     ):

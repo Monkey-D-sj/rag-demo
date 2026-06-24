@@ -37,6 +37,8 @@ def test_settings_has_document_ingestion_defaults():
     assert s.minio_endpoint == "localhost:9000"
     assert s.minio_bucket == "rag-documents"
     assert s.minio_secure is False
+    assert s.minio_access_key == "minioadmin"
+    assert s.minio_secret_key == "minioadmin"
     assert s.arq_redis_db == 1
     assert s.chunk_size == 800
     assert s.chunk_overlap == 100

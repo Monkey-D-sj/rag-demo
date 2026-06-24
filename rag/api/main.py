@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager
 
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import FastAPI
 
 from rag.api.modules import register_modules
 from rag.common.logging import setup_logging
+from rag.common.minio_client import create_minio_client
 from rag.config import get_settings
 from rag.db import create_pg_pool, create_redis_client
 from rag.memory import MemoryManager
@@ -33,11 +36,23 @@ async def lifespan(app: FastAPI):
     )
     app.state.llm = NormalModel(settings)
 
+    # ------ 初始化对象存储与任务队列 -------
+    app.state.minio = create_minio_client(settings)
+    app.state.arq_pool = await create_pool(
+        RedisSettings(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            database=settings.arq_redis_db,
+            password=settings.redis_password,
+        )
+    )
+
     yield
 
     # ------ 关闭资源 -------
     await pool.close()
     await app.state.redis.aclose()
+    await app.state.arq_pool.aclose()
 
 
 app = FastAPI(lifespan=lifespan)

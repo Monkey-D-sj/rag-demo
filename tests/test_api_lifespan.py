@@ -12,3 +12,12 @@ def test_lifespan_populates_app_state():
         assert app.state.redis is not None
         assert app.state.memory_manager is not None
         assert app.state.llm is not None
+
+
+@pytest.mark.integration
+def test_lifespan_populates_storage():
+    from rag.api.main import app
+
+    with TestClient(app):
+        assert app.state.minio is not None
+        assert app.state.arq_pool is not None

@@ -33,6 +33,20 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-v4"
     embedding_dim: int = 1024
 
+    # ── MinIO ──
+    minio_endpoint: str = "localhost:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_bucket: str = "rag-documents"
+    minio_secure: bool = False
+
+    # ── arq / 文档入库 ──
+    arq_redis_db: int = 1
+    chunk_size: int = 800
+    chunk_overlap: int = 100
+    embedding_batch_size: int = 16
+    max_upload_mb: int = 20
+
     # ── Logging ──
     log_level: str = "INFO"                        # DEBUG / INFO / WARNING / ERROR
     log_format: str = "text"                       # "text"（开发） | "json"（生产）

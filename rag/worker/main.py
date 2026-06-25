@@ -1,4 +1,8 @@
+from typing import TypedDict
+
 from arq.connections import RedisSettings
+from minio import Minio
+from psycopg_pool import AsyncConnectionPool
 
 from rag.common.logging import setup_logging
 from rag.common.minio_client import create_minio_client
@@ -6,9 +10,17 @@ from rag.config import get_settings
 from rag.db import create_pg_pool
 from rag.document.pipeline import ingest_document
 from rag.models.embedding import EmbeddingModel
+from rag.config import Settings
 
 _settings = get_settings()
 
+
+class WorkerCtx(TypedDict):
+    settings: Settings
+    pg: AsyncConnectionPool
+    minio: Minio
+    bucket: str
+    embedding: EmbeddingModel
 
 async def on_startup(ctx: dict) -> None:
     setup_logging()

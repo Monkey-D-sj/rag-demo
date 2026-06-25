@@ -1,14 +1,21 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from rag.common.minio_client import get_object
 from rag.document import store
 from rag.document.chunker import chunk
 from rag.document.parser import parse
 
+if TYPE_CHECKING:
+    # 仅类型注解需要;运行期不导入,避免 pipeline ↔ worker 循环导入
+    from rag.worker import WorkerCtx
+
 logger = logging.getLogger(__name__)
 
 
-async def ingest_document(ctx: dict, document_id: str) -> None:
+async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
     """web 投递、worker 执行的入库编排。失败置 failed 并 re-raise 供重试。"""
     pool = ctx["pg"]
     minio = ctx["minio"]

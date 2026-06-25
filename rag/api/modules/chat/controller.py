@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from rag.api.dependence.agent import get_llm, get_memory_manager
+from rag.api.dependence.agent import get_llm, get_memory_manager, get_retriever
+from rag.api.modules.chat import service
+from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.models.base import ChatModel
-from rag.type import ContextSchema
-from rag.workflow import invoke
 
 chat_router = APIRouter(prefix="/chat")
 
@@ -20,7 +21,16 @@ async def chat(
     body: ChatRequest,
     memory_manager: MemoryManager = Depends(get_memory_manager),
     llm: ChatModel = Depends(get_llm),
+    retriever: KnowledgeRetriever = Depends(get_retriever),
 ):
-    context = ContextSchema(llm=llm, memory_manager=memory_manager)
-    chunks = [chunk async for chunk in invoke(body.session_id, body.query, context)]
-    return {"chunks": chunks}
+    return StreamingResponse(
+        service.stream_chat(
+            body.session_id,
+            body.query,
+            llm=llm,
+            memory_manager=memory_manager,
+            retriever=retriever,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

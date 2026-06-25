@@ -1,3 +1,16 @@
+class AppError(Exception):
+    """应用层领域异常基类:由 API 层 exception handler 统一映射为 HTTP 响应。
+
+    service 只抛此类异常,不依赖 fastapi;status_code 决定最终响应码。
+    """
+
+    status_code: int = 500
+
+    def __init__(self, detail: str = "internal error"):
+        self.detail = detail
+        super().__init__(detail)
+
+
 class LLMException(Exception):
     """LLM 异常基类"""
 

@@ -1,9 +1,21 @@
-from rag.type import MyState
+from langgraph.config import get_stream_writer
+from langgraph.runtime import Runtime
+
+from rag.document import DEFAULT_KB_ID
+from rag.type import ContextSchema, MyState
 
 
-def recall(state: MyState):
-	"""
-	从数据库召回知识库数据
-	"""
-	
-	
+async def recall(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
+    """从知识库召回相关 chunk(向量检索),写入 recall_vec_results。"""
+    writer = get_stream_writer()
+    writer({"type": "status", "data": "检索知识库中..."})
+
+    retriever = runtime.context.retriever
+    if retriever is None:
+        state["recall_vec_results"] = []
+        return state
+
+    # 改写后的查询更适合检索,缺失时回退原始查询
+    query = state.get("rewrite_query") or state["raw_query"]
+    state["recall_vec_results"] = await retriever.search(query, DEFAULT_KB_ID)
+    return state

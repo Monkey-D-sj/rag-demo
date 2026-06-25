@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import TypedDict
 
+from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.models.base import ChatModel
 
@@ -24,5 +25,6 @@ class MyState(TypedDict):
 class ContextSchema:
 	llm: ChatModel
 	memory_manager: MemoryManager
+	retriever: KnowledgeRetriever | None = None
 	
 	

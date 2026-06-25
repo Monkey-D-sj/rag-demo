@@ -4,11 +4,13 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI
 
+from rag.api.common.error_handlers import register_error_handlers
 from rag.api.modules import register_modules
 from rag.common.logging import setup_logging
 from rag.common.minio_client import create_minio_client
 from rag.config import get_settings
 from rag.db import create_pg_pool, create_redis_client
+from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.memory.adapters.long_term_pgsql import PgVectorLongTermMemory
 from rag.memory.adapters.short_term_redis import RedisShortTermMemory
@@ -35,6 +37,7 @@ async def lifespan(app: FastAPI):
         short_term=RedisShortTermMemory(app.state.redis),
     )
     app.state.llm = NormalModel(settings)
+    app.state.retriever = KnowledgeRetriever(pool, embedding)
 
     # ------ 初始化对象存储与任务队列 -------
     app.state.minio = create_minio_client(settings)
@@ -57,3 +60,4 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 register_modules(app)
+register_error_handlers(app)

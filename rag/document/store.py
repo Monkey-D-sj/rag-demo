@@ -39,6 +39,28 @@ async def create_document(
     return document_id
 
 
+async def search_chunks(
+    pool: AsyncConnectionPool,
+    embedding: list[float],
+    knowledge_base_id: str,
+    top_k: int = 5,
+) -> list[dict]:
+    """按余弦相似度从知识库召回最相关的 chunk。"""
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT id, document_id, chunk_index, text,
+                   1 - (embedding <=> %(emb)s) AS similarity
+            FROM document_chunks
+            WHERE knowledge_base_id = %(kb)s
+            ORDER BY embedding <=> %(emb)s
+            LIMIT %(k)s
+            """,
+            {"emb": embedding, "kb": knowledge_base_id, "k": top_k},
+        )
+        return await cur.fetchall()
+
+
 async def get_document(pool: AsyncConnectionPool, document_id: str) -> dict | None:
     async with get_cursor(pool) as cur:
         await cur.execute(

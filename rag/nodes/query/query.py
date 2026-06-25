@@ -12,10 +12,10 @@ system_prompt = """
 
 
 async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
-	"""处理查询"""
+	"""处理查询:改写为中间步骤,整体 ainvoke(不逐 token 流式)"""
 	# ----------- 输出 -----------
 	writer = get_stream_writer()
-	writer("深度思考中")
+	writer({"type": "status", "data": "深度思考中"})
 
 	llm = runtime.context.llm
 

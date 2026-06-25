@@ -70,3 +70,23 @@ async def get_status(pg, document_id: str) -> dict:
         "chunk_count": doc["chunk_count"],
         "error": doc["error"],
     }
+
+
+async def retry_document(pg, arq_pool, document_id: str) -> dict:
+    """将失败文档重置为 pending 并重新投递入库任务。"""
+    doc = await store.get_document(pg, document_id)
+    if doc is None:
+        raise DocumentNotFound("文档不存在")
+    if doc["status"] not in ("failed",):
+        return {
+            "document_id": str(doc["id"]),
+            "status": doc["status"],
+            "message": "文档未处于 failed 状态，无需重试",
+        }
+    await store.set_status(pg, document_id, "pending")
+    await arq_pool.enqueue_job("ingest_document", document_id)
+    return {
+        "document_id": str(doc["id"]),
+        "status": "pending",
+        "message": "已重新投递入库任务",
+    }

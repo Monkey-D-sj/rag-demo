@@ -40,7 +40,10 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
     monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "full text")
-    monkeypatch.setattr(pipe, "chunk", lambda text, size, overlap: ["a", "b", "c"])
+    async def fake_chunk(text, size, overlap):
+        return ["a", "b", "c"]
+
+    monkeypatch.setattr(pipe, "chunk", fake_chunk)
 
     emb = _FakeEmbedding()
     ctx = {
@@ -76,7 +79,10 @@ async def test_ingest_empty_chunks_marks_failed(monkeypatch):
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "")
-    monkeypatch.setattr(pipe, "chunk", lambda text, size, overlap: [])
+    async def fake_chunk_empty(text, size, overlap):
+        return []
+
+    monkeypatch.setattr(pipe, "chunk", fake_chunk_empty)
 
     ctx = {"pg": None, "minio": None, "bucket": "b",
            "embedding": _FakeEmbedding(), "settings": _settings()}

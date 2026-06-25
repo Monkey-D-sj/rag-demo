@@ -31,7 +31,7 @@ async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
 
         data = await get_object(minio, bucket, doc["object_key"])
         text = parse(data, doc["content_type"])
-        chunks = chunk(text, settings.chunk_size, settings.chunk_overlap)
+        chunks = await chunk(text, settings.chunk_size, settings.chunk_overlap)
         if not chunks:
             raise ValueError("切块结果为空,无可入库内容")
 

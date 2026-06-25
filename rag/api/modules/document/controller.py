@@ -34,3 +34,15 @@ async def upload_document(
 @document_router.get("/{document_id}")
 async def get_document_status(document_id: str, pg=Depends(get_pg)):
     return await service.get_status(pg, document_id)
+
+
+@document_router.post("/{document_id}/retry", status_code=202)
+async def retry_document(
+    document_id: str,
+    pg=Depends(get_pg),
+    arq_pool=Depends(get_arq_pool),
+):
+    return JSONResponse(
+        status_code=202,
+        content=await service.retry_document(pg, arq_pool, document_id),
+    )

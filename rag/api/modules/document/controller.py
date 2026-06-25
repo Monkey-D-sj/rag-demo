@@ -1,5 +1,9 @@
+from typing import Annotated
+
+from arq import ArqRedis
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from psycopg_pool import AsyncConnectionPool
 
 from rag.api.dependence.db import get_pg
 from rag.api.dependence.storage import get_arq_pool, get_minio
@@ -39,8 +43,8 @@ async def get_document_status(document_id: str, pg=Depends(get_pg)):
 @document_router.post("/{document_id}/retry", status_code=202)
 async def retry_document(
     document_id: str,
-    pg=Depends(get_pg),
-    arq_pool=Depends(get_arq_pool),
+    pg: Annotated[AsyncConnectionPool, Depends(get_pg)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ):
     return JSONResponse(
         status_code=202,

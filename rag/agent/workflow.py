@@ -1,8 +1,8 @@
 from langgraph.graph import END, START, StateGraph
 
-from rag.agent.nodes import generate
-from rag.agent.nodes import handle_query
-from rag.agent.nodes import recall
+from rag.agent.nodes.generate.generate import generate
+from rag.agent.nodes.query.query import handle_query
+from rag.agent.nodes.recall.recall import recall
 from rag.agent.nodes.recall_memory.memory import recall_memory
 from rag.agent.type import MyState, ContextSchema
 

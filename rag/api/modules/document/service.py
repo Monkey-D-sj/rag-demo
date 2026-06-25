@@ -73,7 +73,11 @@ async def get_status(pg, document_id: str) -> dict:
 
 
 async def retry_document(pg, arq_pool, document_id: str) -> dict:
-    """将失败文档重置为 pending 并重新投递入库任务。"""
+    """强制重试:重置 retry_count=0 并立即投递,旁路 cron 退避。
+
+    cron 自愈对同文档每轮递增 retry_count 并按指数退避;本接口是运维入口,
+    清零重试计数让文档获得完整重试预算,适合修好根因后批量恢复。
+    """
     doc = await store.get_document(pg, document_id)
     if doc is None:
         raise DocumentNotFound("文档不存在")
@@ -83,10 +87,11 @@ async def retry_document(pg, arq_pool, document_id: str) -> dict:
             "status": doc["status"],
             "message": "文档未处于 failed 状态，无需重试",
         }
-    await store.set_status(pg, document_id, "pending")
+    await store.force_retry(pg, document_id)
     await arq_pool.enqueue_job("ingest_document", document_id)
     return {
         "document_id": str(doc["id"]),
         "status": "pending",
-        "message": "已重新投递入库任务",
+        "retry_count": 0,
+        "message": "已重置重试计数并投递入库任务",
     }

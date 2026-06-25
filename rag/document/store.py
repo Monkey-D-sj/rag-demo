@@ -1,3 +1,4 @@
+import datetime
 import uuid
 
 from psycopg_pool import AsyncConnectionPool
@@ -67,6 +68,115 @@ async def get_document(pool: AsyncConnectionPool, document_id: str) -> dict | No
             "SELECT * FROM documents WHERE id = %(id)s", {"id": document_id}
         )
         return await cur.fetchone()
+
+
+async def claim_for_processing(
+    pool: AsyncConnectionPool, document_id: str, *, stale_after_seconds: int = 600
+) -> bool:
+    """原子领取:置为 processing 并返回是否领取成功。
+
+    可领取条件:
+    - 文档处于 pending/failed;或
+    - 处于 processing 但 updated_at 已超过 stale_after_seconds(worker 中途硬崩、
+      没走 failed 分支导致状态卡死),视为陈旧任务可被回收重跑。
+
+    并发或重复投递(重试、双提交、arq 重跑)时,行级锁保证只有一个任务领取成功,
+    其余拿到 False 直接跳过,避免多个任务同时对同一文档重复入库(删/插 chunk 打架)。
+
+    注意:stale_after_seconds 必须大于 worker 的 job_timeout(默认 300),
+    否则可能误回收仍在运行的任务。
+    """
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            UPDATE documents
+            SET status = 'processing', updated_at = now()
+            WHERE id = %(id)s
+              AND (
+                status IN ('pending', 'failed')
+                OR (
+                    status = 'processing'
+                    AND updated_at < now() - make_interval(secs => %(stale)s)
+                )
+              )
+            RETURNING id
+            """,
+            {"id": document_id, "stale": stale_after_seconds},
+        )
+        return await cur.fetchone() is not None
+
+
+async def claim_failed_for_retry(
+    pool: AsyncConnectionPool, max_retry_rounds: int, backoff_base: int
+) -> list[str]:
+    """扫描并原子领取应重试的失败文档,返回文档 ID 列表。
+
+    单事务内完成:
+    1. FOR UPDATE SKIP LOCKED 锁候选行
+    2. 按指数退避过滤(backoff_base * 2^retry_count 秒)
+    3. retry_count += 1, status 重置 pending
+
+    多个 cron 并发安全;只返回实际更新成功的 id。
+    """
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            # 1. 锁所有 candidate（避免并发 cron 抢同一行）
+            await cur.execute(
+                """
+                SELECT id, retry_count, updated_at
+                FROM documents
+                WHERE status = 'failed' AND retry_count < %(max_rounds)s
+                FOR UPDATE SKIP LOCKED
+                """,
+                {"max_rounds": max_retry_rounds},
+            )
+            candidates = await cur.fetchall()
+
+        # 2. Python 侧过滤退避（带时区的指数退避）
+        now = datetime.datetime.now(datetime.timezone.utc)
+        eligible: list[str] = []
+        for row in candidates:
+            backoff_s = backoff_base * (2 ** row["retry_count"])
+            # updated_at 来自 DB 是 aware datetime;确保比较双方都有 tz
+            ts = row["updated_at"]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=datetime.timezone.utc)
+            if ts + datetime.timedelta(seconds=backoff_s) < now:
+                eligible.append(row["id"])
+
+        # 3. 原子更新
+        if eligible:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE documents
+                    SET retry_count = retry_count + 1,
+                        status = 'pending',
+                        error = NULL,
+                        updated_at = now()
+                    WHERE id = ANY(%(ids)s)
+                    """,
+                    {"ids": eligible},
+                )
+
+    return eligible
+
+
+async def force_retry(pool: AsyncConnectionPool, document_id: str) -> None:
+    """强制重试:清零 retry_count、清除错误、重置为 pending。
+
+    与 claim_failed_for_retry 不同,本函数不检查退避时间也不递增计数,
+    是运维级别的"从头再来",适合根因修复后批量恢复。
+    """
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            UPDATE documents
+            SET retry_count = 0, status = 'pending', error = NULL, updated_at = now()
+            WHERE id = %(id)s
+            """,
+            {"id": document_id},
+        )
 
 
 async def set_status(

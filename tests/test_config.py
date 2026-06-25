@@ -44,3 +44,9 @@ def test_settings_has_document_ingestion_defaults():
     assert s.chunk_overlap == 100
     assert s.embedding_batch_size == 16
     assert s.max_upload_mb == 20
+
+
+def test_settings_has_dlq_defaults():
+    s = Settings()
+    assert s.max_retry_rounds == 10
+    assert s.retry_backoff_base == 60

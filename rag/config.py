@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     chunk_overlap: int = 100
     embedding_batch_size: int = 16
     max_upload_mb: int = 20
+    # 死信自愈:arq 单轮重试用尽后,cron 每 5 min 扫描 failed 文档按指数退避重试,
+    # retry_count 达上限后放弃(真·死信),需人工介入。
+    max_retry_rounds: int = 10
+    retry_backoff_base: int = 60  # 秒;第 n 轮退避 = base * 2^n
 
     # ── Logging ──
     log_level: str = "INFO"                        # DEBUG / INFO / WARNING / ERROR

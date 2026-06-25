@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _parse_and_chunk(
+    data: bytes, content_type: str, chunk_size: int, chunk_overlap: int
+) -> list[str]:
+    """CPU 密集段(PDF 解析 + 切块)合并到一次调用,由调用方 to_thread 整体 offload。"""
+    text = parse(data, content_type)
+    return chunk(text, chunk_size, chunk_overlap)
+
+
 async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
     """web 投递、worker 执行的入库编排。失败置 failed 并 re-raise 供重试。"""
     pool = ctx["pg"]
@@ -23,15 +32,24 @@ async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
     embedding = ctx["embedding"]
     settings = ctx["settings"]
 
-    await store.set_status(pool, document_id, "processing")
+    # 原子领取:并发/重复投递时只有一个任务能拿到,其余跳过,避免重复入库
+    if not await store.claim_for_processing(pool, document_id):
+        logger.info("文档非待处理状态或已被其他任务领取,跳过: %s", document_id)
+        return
     try:
         doc = await store.get_document(pool, document_id)
         if doc is None:
             raise ValueError(f"document not found: {document_id}")
 
         data = await get_object(minio, bucket, doc["object_key"])
-        text = parse(data, doc["content_type"])
-        chunks = await chunk(text, settings.chunk_size, settings.chunk_overlap)
+        # parse + chunk 是纯 CPU(GIL 活),合并到一次线程池调用,避免阻塞 event loop
+        chunks = await asyncio.to_thread(
+            _parse_and_chunk,
+            data,
+            doc["content_type"],
+            settings.chunk_size,
+            settings.chunk_overlap,
+        )
         if not chunks:
             raise ValueError("切块结果为空,无可入库内容")
 

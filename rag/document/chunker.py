@@ -1,5 +1,3 @@
-import asyncio
-
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # 中文分隔符:在默认 "\n\n" / "\n" / " " / "" 之前插入中文标点，
@@ -11,8 +9,12 @@ _SEPARATORS = [
 ]
 
 
-async def chunk(text: str, chunk_size: int = 800, chunk_overlap: int = 100) -> list[str]:
-    """把文本切成块。空白文本返回空列表。CPU 操作走线程池避免阻塞 event loop。"""
+def chunk(text: str, chunk_size: int = 800, chunk_overlap: int = 100) -> list[str]:
+    """把文本切成块。空白文本返回空列表。
+
+    纯 CPU 同步函数;调用方(pipeline)负责把 parse+chunk 合并到一次线程池调用,
+    避免在 worker event loop 上阻塞其他并发 job。
+    """
     if not text.strip():
         return []
     splitter = RecursiveCharacterTextSplitter(
@@ -20,4 +22,4 @@ async def chunk(text: str, chunk_size: int = 800, chunk_overlap: int = 100) -> l
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
     )
-    return await asyncio.to_thread(splitter.split_text, text)
+    return splitter.split_text(text)

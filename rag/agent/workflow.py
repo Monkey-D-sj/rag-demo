@@ -1,10 +1,10 @@
 from langgraph.graph import END, START, StateGraph
 
-from rag.nodes.generate.generate import generate
-from rag.nodes.query.query import handle_query
-from rag.nodes.recall.recall import recall
-from rag.nodes.recall_memory.memory import recall_memory
-from rag.type import MyState, ContextSchema
+from rag.agent.nodes import generate
+from rag.agent.nodes import handle_query
+from rag.agent.nodes import recall
+from rag.agent.nodes.recall_memory.memory import recall_memory
+from rag.agent.type import MyState, ContextSchema
 
 # 构建状态图
 builder = StateGraph(MyState, context_schema=ContextSchema)

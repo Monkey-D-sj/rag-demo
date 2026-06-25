@@ -5,8 +5,8 @@ from collections.abc import AsyncIterator
 from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.models.base import ChatModel
-from rag.type import ContextSchema
-from rag.workflow import invoke
+from rag.agent.type import ContextSchema
+from rag.agent.workflow import invoke
 
 logger = logging.getLogger(__name__)
 

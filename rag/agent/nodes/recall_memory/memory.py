@@ -1,7 +1,7 @@
 from langgraph.runtime import Runtime
 from langgraph.config import get_stream_writer
 
-from rag.type import MyState, ContextSchema
+from rag.agent.type import MyState, ContextSchema
 
 
 async def recall_memory(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:

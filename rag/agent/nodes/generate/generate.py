@@ -2,7 +2,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from rag.type import ContextSchema, MyState
+from rag.agent.type import ContextSchema, MyState
 
 system_prompt = """
 你是一个专业的关务助手。请基于上下文与改写后的查询,简洁回答用户问题。

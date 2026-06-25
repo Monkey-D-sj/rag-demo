@@ -2,7 +2,7 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from rag.document import DEFAULT_KB_ID
-from rag.type import ContextSchema, MyState
+from rag.agent.type import ContextSchema, MyState
 
 
 async def recall(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:

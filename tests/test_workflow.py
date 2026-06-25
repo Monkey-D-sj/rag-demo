@@ -1,5 +1,5 @@
-import rag.workflow as wf
-from rag.type import ContextSchema
+import rag.agent.workflow as wf
+from rag.agent.type import ContextSchema
 
 
 class _FakeMM:

@@ -1,10 +1,10 @@
 from types import SimpleNamespace
 
-import rag.nodes.generate.generate as generate_mod
-import rag.nodes.query.query as query_mod
-import rag.nodes.recall.recall as kb_recall_mod
-import rag.nodes.recall_memory.memory as recall_mod
-from rag.type import ContextSchema
+import rag.agent.nodes.generate.generate as generate_mod
+import rag.agent.nodes.query.query as query_mod
+import rag.agent.nodes.recall.recall as kb_recall_mod
+import rag.agent.nodes.recall_memory.memory as recall_mod
+from rag.agent.type import ContextSchema
 
 
 class _FakeLLM:

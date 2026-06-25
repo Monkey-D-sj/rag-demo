@@ -96,21 +96,24 @@ async def store_chunks_and_complete(
                 "DELETE FROM document_chunks WHERE document_id = %(id)s",
                 {"id": document_id},
             )
-            for chunk_index, text, embedding in embedded:
-                await cur.execute(
+            if embedded:
+                await cur.executemany(
                     """
                     INSERT INTO document_chunks
                         (document_id, knowledge_base_id, chunk_index, text, embedding)
                     VALUES
                         (%(doc)s, %(kb)s, %(idx)s, %(text)s, %(emb)s)
                     """,
-                    {
-                        "doc": document_id,
-                        "kb": knowledge_base_id,
-                        "idx": chunk_index,
-                        "text": text,
-                        "emb": embedding,
-                    },
+                    [
+                        {
+                            "doc": document_id,
+                            "kb": knowledge_base_id,
+                            "idx": chunk_index,
+                            "text": text,
+                            "emb": embedding,
+                        }
+                        for chunk_index, text, embedding in embedded
+                    ],
                 )
             await cur.execute(
                 """

@@ -22,6 +22,7 @@ from rag.models.normal import NormalModel
 async def lifespan(app: FastAPI):
     setup_logging()
     settings = get_settings()
+    settings.check_required()
 
     # ------ 初始化 pg -------
     pool = await create_pg_pool(settings)

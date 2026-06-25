@@ -54,6 +54,19 @@ class Settings(BaseSettings):
     log_file_max_bytes: int = 10 * 1024 * 1024     # 单文件 10MB
     log_file_backup_count: int = 5                 # 轮转保留份数
 
+    _REQUIRED_FIELDS = (
+        "model_key", "model_name", "model_url",
+        "embedding_key", "embedding_url",
+    )
+
+    def check_required(self) -> None:
+        """校验必填配置项已设置；未设置则抛 ValueError，启动即失败。"""
+        missing = [f for f in self._REQUIRED_FIELDS if not getattr(self, f)]
+        if missing:
+            raise ValueError(
+                f"缺少必要配置: {', '.join(missing)}，请检查 .env 文件"
+            )
+
     @property
     def pg_async_dsn(self) -> str:
         return (

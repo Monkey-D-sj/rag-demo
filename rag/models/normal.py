@@ -1,4 +1,3 @@
-import logging
 from contextlib import asynccontextmanager
 from typing import Any, Callable
 
@@ -14,10 +13,11 @@ from tenacity import (
 )
 
 from rag.common.exception import LLMException, from_http_error, is_retryable
+from rag.common.logging import get_logger
 from rag.config import Settings
 from rag.models.base import ChatModel
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 ErrorHandler = Callable[[LLMException], None]
 ErrorHandlers = dict[int | str, ErrorHandler]

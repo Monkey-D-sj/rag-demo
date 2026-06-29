@@ -1,5 +1,3 @@
-import logging
-
 from arq.connections import RedisSettings
 from arq.cron import cron
 from arq.worker import run_worker
@@ -7,7 +5,7 @@ from minio import Minio
 from psycopg_pool import AsyncConnectionPool
 from typing import TypedDict
 
-from rag.common.logging import setup_logging
+from rag.common.logging import get_logger, setup_logging
 from rag.common.minio_client import create_minio_client
 from rag.config import Settings, get_settings
 from rag.db import create_pg_pool
@@ -15,7 +13,7 @@ from rag.document import store
 from rag.document.pipeline import ingest_document
 from rag.models.embedding import EmbeddingModel
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 class WorkerCtx(TypedDict):

@@ -1,14 +1,14 @@
 import json
-import logging
 from collections.abc import AsyncIterator
 
+from rag.common.logging import get_logger
 from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.models.base import ChatModel
 from rag.agent.type import ContextSchema
 from rag.agent.workflow import invoke
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 def _sse(event: dict) -> str:

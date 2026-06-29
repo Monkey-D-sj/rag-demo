@@ -9,6 +9,9 @@ from rag.config import Settings, get_settings
 
 _logging_initialized = False
 
+# logging 模块自身不能走 get_logger()（栈帧会追溯到调用者），用标准写法
+_logger = logging.getLogger(__name__)
+
 
 def get_logger() -> logging.Logger:
     """获取调用者模块的 logger —— ``logging.getLogger(__name__)`` 的便利封装。
@@ -130,6 +133,6 @@ def setup_logging(settings: Settings | None = None) -> None:
         lg.propagate = True
 
     if invalid_level:
-        logging.getLogger(__name__).warning(
+        _logger.warning(
             "未知 log_level %r，已回退为 INFO", settings.log_level
         )

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING
 
+from rag.common.logging import get_logger
 from rag.common.minio_client import get_object
 from rag.document import store
 from rag.document.chunker import chunk
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     # 仅类型注解需要;运行期不导入,避免 pipeline ↔ worker 循环导入
     from rag.worker import WorkerCtx
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 def _parse_and_chunk(

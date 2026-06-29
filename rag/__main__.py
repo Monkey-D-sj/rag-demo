@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logger.info("FastAPI 启动 → %s:%s", host, port)
     uvicorn.run(
-        "rag.api.main:app",
+        "rag.api.main:start_app",
         host=host,
         port=port,
         reload=True,

@@ -1,5 +1,3 @@
-import logging
-
 from openai import AsyncOpenAI
 from tenacity import (
     AsyncRetrying,
@@ -10,9 +8,10 @@ from tenacity import (
 )
 
 from rag.common.exception import is_retryable
+from rag.common.logging import get_logger
 from rag.config import Settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 class EmbeddingModel:

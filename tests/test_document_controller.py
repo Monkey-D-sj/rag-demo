@@ -3,8 +3,8 @@ from fastapi.testclient import TestClient
 
 import rag.api.modules.document.controller as ctrl
 import rag.api.modules.document.service as svc
-from rag.api.dependence.db import get_pg
-from rag.api.dependence.storage import get_arq_pool, get_minio
+from rag.api.dependencies.db import get_pg
+from rag.api.dependencies.storage import get_arq_pool, get_minio
 from rag.api.common.error_handlers import register_error_handlers
 
 

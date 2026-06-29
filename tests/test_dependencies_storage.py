@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from rag.api.dependence.storage import get_arq_pool, get_minio
+from rag.api.dependencies.storage import get_arq_pool, get_minio
 
 
 def test_get_minio_reads_app_state():

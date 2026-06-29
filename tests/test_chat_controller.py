@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 import rag.api.modules.chat.controller as controller_mod
 import rag.api.modules.chat.service as service_mod
-from rag.api.dependence.agent import get_llm, get_memory_manager, get_retriever
+from rag.api.dependencies.agent import get_llm, get_memory_manager, get_retriever
 
 
 async def _fake_invoke(session_id, query, context):

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from rag.api.dependence.agent import get_memory_manager, get_llm
+from rag.api.dependencies.agent import get_memory_manager, get_llm
 
 
 def test_get_memory_manager_reads_app_state():

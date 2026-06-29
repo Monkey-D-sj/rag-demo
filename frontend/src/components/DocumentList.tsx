@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Download, RefreshCw, RotateCcw } from "lucide-react";
 import { getDocumentStatus, retryDocument } from "@/api/client";
 import type { DocumentItem } from "@/types";
@@ -16,26 +15,6 @@ interface Props {
 }
 
 export default function DocumentList({ docs, onDocsChange }: Props) {
-  // 轮询 pending / processing 的文档
-  useEffect(() => {
-    const refreshActive = () => {
-      docs.forEach((d) => {
-        if (d.status === "pending" || d.status === "processing") {
-          getDocumentStatus(d.document_id)
-            .then((fresh) =>
-              onDocsChange((prev) =>
-                prev.map((x) => (x.document_id === fresh.document_id ? fresh : x)),
-              ),
-            )
-            .catch(() => {}); // 忽略单条失败
-        }
-      });
-    };
-
-    const id = setInterval(refreshActive, 3000);
-    return () => clearInterval(id);
-  }, [docs, onDocsChange]);
-
   const handleRefresh = async (id: string) => {
     try {
       const fresh = await getDocumentStatus(id);

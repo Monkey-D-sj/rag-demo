@@ -51,7 +51,7 @@ export async function* streamChat(
 
 export async function uploadDocument(
   file: File,
-  knowledgeBaseId: string = "default",
+  knowledgeBaseId: string = "00000000-0000-0000-0000-000000000001",
 ): Promise<{ document_id: string; status: string }> {
   const form = new FormData();
   form.append("file", file);

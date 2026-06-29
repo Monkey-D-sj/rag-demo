@@ -12,7 +12,7 @@ export default function DocumentsPage() {
       const d = await getDocumentStatus(documentId);
       setDocs((prev) => [...prev, d]);
     } catch {
-      // 列表轮询会自动补上
+      // 刷新按钮可手动获取
     }
   }, []);
 

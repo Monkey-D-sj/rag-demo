@@ -1,10 +1,30 @@
 import datetime
+import inspect
 import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from rag.config import Settings, get_settings
+
+_logging_initialized = False
+
+
+def get_logger() -> logging.Logger:
+    """获取调用者模块的 logger —— ``logging.getLogger(__name__)`` 的便利封装。
+
+    用法（模块顶部一行）::
+
+        from rag.common.logging import get_logger
+        logger = get_logger()
+    """
+    frame = inspect.currentframe()
+    try:
+        caller_globals = frame.f_back.f_back.f_globals  # type: ignore[union-attr]
+        module_name = caller_globals.get("__name__", "__unknown__")
+    finally:
+        del frame
+    return logging.getLogger(module_name)
 
 
 class JsonFormatter(logging.Formatter):
@@ -63,7 +83,12 @@ def _build_formatter(log_format: str, *, use_color: bool) -> logging.Formatter:
 
 
 def setup_logging(settings: Settings | None = None) -> None:
-    """幂等配置 root logger。可在应用启动时重复调用。"""
+    """幂等配置 root logger。重复调用安全，只有首次生效。"""
+    global _logging_initialized
+    if _logging_initialized:
+        return
+    _logging_initialized = True
+
     settings = settings or get_settings()
 
     root = logging.getLogger()

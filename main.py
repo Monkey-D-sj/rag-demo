@@ -1,12 +1,6 @@
-import logging
+"""快捷入口 —— 等价于 ``python -m rag`` / ``rag-api``。"""
 
-from rag.common.logging import setup_logging
-
-
-def main() -> None:
-    setup_logging()
-    logging.getLogger(__name__).info("rag-demo 启动")
-
+from rag.__main__ import main
 
 if __name__ == "__main__":
     main()

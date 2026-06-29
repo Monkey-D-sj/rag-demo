@@ -2,6 +2,7 @@ import logging
 
 from arq.connections import RedisSettings
 from arq.cron import cron
+from arq.worker import run_worker
 from minio import Minio
 from psycopg_pool import AsyncConnectionPool
 from typing import TypedDict
@@ -15,8 +16,6 @@ from rag.document.pipeline import ingest_document
 from rag.models.embedding import EmbeddingModel
 
 logger = logging.getLogger(__name__)
-
-_settings = get_settings()
 
 
 class WorkerCtx(TypedDict):
@@ -71,8 +70,19 @@ class WorkerSettings:
     # 控制在低并发,吞吐靠多开 worker 进程横向扩展。
     max_jobs = 4
     redis_settings = RedisSettings(
-        host=_settings.redis_host,
-        port=_settings.redis_port,
-        database=_settings.arq_redis_db,
-        password=_settings.redis_password,
+        host=get_settings().redis_host,
+        port=get_settings().redis_port,
+        database=get_settings().arq_redis_db,
+        password=get_settings().redis_password,
     )
+
+
+def run() -> None:
+    """``rag-worker`` console_scripts 入口 —— 启动 arq worker。
+
+    也可直接 ``arq rag.worker.main.WorkerSettings`` 启动。
+    """
+    from rag.common.logging import setup_logging
+
+    setup_logging()
+    run_worker(WorkerSettings)

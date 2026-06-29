@@ -1,8 +1,11 @@
+import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from rag.api.common.error_handlers import register_error_handlers
 from rag.api.modules import register_modules
@@ -17,6 +20,7 @@ from rag.memory.adapters.short_term_redis import RedisShortTermMemory
 from rag.models.embedding import EmbeddingModel
 from rag.models.normal import NormalModel
 
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,7 +62,18 @@ async def lifespan(app: FastAPI):
     await app.state.redis.aclose()
     await app.state.arq_pool.aclose()
 
+def start_app() -> FastAPI:
+    logger.info("rag-demo 启动")
+    app = FastAPI(lifespan=lifespan)
+    register_modules(app)
+    register_error_handlers(app)
 
-app = FastAPI(lifespan=lifespan)
-register_modules(app)
-register_error_handlers(app)
+    # 生产模式：挂载前端 SPA 静态文件（npm run build → frontend/dist/）
+    dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
+    if dist.is_dir():
+        app.mount("/", StaticFiles(directory=str(dist), html=True), name="frontend")
+
+    return app
+
+
+app = start_app()

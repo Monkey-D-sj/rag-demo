@@ -5,6 +5,10 @@ from rag.api.modules.document.exceptions import (
     FileTooLarge,
     UnsupportedFileType,
 )
+from rag.api.modules.document.schemas import (
+    DocumentRetryResponse,
+    DocumentStatusResponse,
+)
 from rag.common.minio_client import put_object
 from rag.config import get_settings
 from rag.document import store
@@ -27,7 +31,7 @@ async def ingest_upload(
     data: bytes,
     knowledge_base_id: str,
 ) -> str:
-    """落库 + 上传对象存储 + 投递解析任务,返回 document_id。"""
+    """落库 + 上传对象存储 + 投递解析任务，返回 document_id。"""
     settings = get_settings()
     name = _safe_filename(filename)
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
@@ -59,39 +63,39 @@ async def ingest_upload(
     return document_id
 
 
-async def get_status(pg, document_id: str) -> dict:
+async def get_status(pg, document_id: str) -> DocumentStatusResponse:
     doc = await store.get_document(pg, document_id)
     if doc is None:
         raise DocumentNotFound("文档不存在")
-    return {
-        "document_id": str(doc["id"]),
-        "filename": doc["filename"],
-        "status": doc["status"],
-        "chunk_count": doc["chunk_count"],
-        "error": doc["error"],
-    }
+    return DocumentStatusResponse(
+        document_id=str(doc["id"]),
+        filename=doc["filename"],
+        status=doc["status"],
+        chunk_count=doc["chunk_count"],
+        error=doc["error"],
+    )
 
 
-async def retry_document(pg, arq_pool, document_id: str) -> dict:
-    """强制重试:重置 retry_count=0 并立即投递,旁路 cron 退避。
+async def retry_document(pg, arq_pool, document_id: str) -> DocumentRetryResponse:
+    """强制重试：重置 retry_count=0 并立即投递，旁路 cron 退避。
 
-    cron 自愈对同文档每轮递增 retry_count 并按指数退避;本接口是运维入口,
-    清零重试计数让文档获得完整重试预算,适合修好根因后批量恢复。
+    cron 自愈对同文档每轮递增 retry_count 并按指数退避；本接口是运维入口，
+    清零重试计数让文档获得完整重试预算，适合修好根因后批量恢复。
     """
     doc = await store.get_document(pg, document_id)
     if doc is None:
         raise DocumentNotFound("文档不存在")
     if doc["status"] not in ("failed",):
-        return {
-            "document_id": str(doc["id"]),
-            "status": doc["status"],
-            "message": "文档未处于 failed 状态，无需重试",
-        }
+        return DocumentRetryResponse(
+            document_id=str(doc["id"]),
+            status=doc["status"],
+            message="文档未处于 failed 状态，无需重试",
+        )
     await store.force_retry(pg, document_id)
     await arq_pool.enqueue_job("ingest_document", document_id)
-    return {
-        "document_id": str(doc["id"]),
-        "status": "pending",
-        "retry_count": 0,
-        "message": "已重置重试计数并投递入库任务",
-    }
+    return DocumentRetryResponse(
+        document_id=str(doc["id"]),
+        status="pending",
+        retry_count=0,
+        message="已重置重试计数并投递入库任务",
+    )

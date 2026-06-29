@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── 基础层 ───────────────────────────────────── */
+body {
+  @apply antialiased;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-700 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-600;
+}
+
+/* ── Markdown 渲染（ChatBox 内） ──────────────── */
+.prose-chat p {
+  @apply mb-2 leading-relaxed;
+}
+.prose-chat p:last-child {
+  @apply mb-0;
+}
+.prose-chat code {
+  @apply bg-gray-800 text-emerald-400 px-1.5 py-0.5 rounded text-sm;
+}
+.prose-chat pre {
+  @apply bg-gray-900 rounded-lg p-4 my-3 overflow-x-auto;
+}
+.prose-chat pre code {
+  @apply bg-transparent text-gray-200 px-0 py-0;
+}
+.prose-chat ul,
+.prose-chat ol {
+  @apply ml-5 mb-2;
+}
+.prose-chat li {
+  @apply mb-1;
+}

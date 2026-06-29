@@ -12,3 +12,7 @@ wheels/
 .env
 .pytest_cache
 .traces
+
+# Frontend
+frontend/node_modules/
+frontend/dist/

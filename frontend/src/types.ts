@@ -8,6 +8,19 @@ export interface DocumentItem {
   status: DocumentStatus;
   chunk_count: number | null;
   error: string | null;
+  // 以下字段仅列表接口 GET /documents/ 返回;详情/上传接口不含,故可选
+  knowledge_base_id?: string;
+  content_type?: string;
+  size_bytes?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DocumentListResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  items: DocumentItem[];
 }
 
 export interface RetryResult {

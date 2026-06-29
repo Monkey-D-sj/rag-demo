@@ -78,6 +78,40 @@ async def get_status(pg, document_id: str) -> DocumentStatusResponse:
     )
 
 
+async def list_documents(
+    pg,
+    *,
+    knowledge_base_id: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> DocumentListResponse:
+    """分页查询文档列表,可按知识库与状态过滤。"""
+    rows, total = await store.list_documents(
+        pg,
+        knowledge_base_id=knowledge_base_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    items = [
+        DocumentListItem(
+            document_id=str(row["id"]),
+            knowledge_base_id=str(row["knowledge_base_id"]),
+            filename=row["filename"],
+            content_type=row["content_type"],
+            size_bytes=row["size_bytes"],
+            status=row["status"],
+            chunk_count=row["chunk_count"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+        for row in rows
+    ]
+    return DocumentListResponse(total=total, limit=limit, offset=offset, items=items)
+
+
 async def retry_document(pg, arq_pool, document_id: str) -> DocumentRetryResponse:
     """强制重试：重置 retry_count=0 并立即投递，旁路 cron 退避。
 

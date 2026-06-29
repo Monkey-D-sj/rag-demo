@@ -11,7 +11,9 @@ from rag.api.dependencies.db import get_pg
 from rag.api.dependencies.storage import get_arq_pool, get_minio
 from rag.api.modules.document import service
 from rag.api.modules.document.schemas import (
+    DocumentListResponse,
     DocumentRetryResponse,
+    DocumentStatus,
     DocumentStatusResponse,
     DocumentUploadResponse,
 )
@@ -46,6 +48,28 @@ async def upload_document(
         knowledge_base_id=knowledge_base_id,
     )
     return DocumentUploadResponse(document_id=document_id, status="pending")
+
+
+@document_router.get(
+    "/",
+    response_model=DocumentListResponse,
+)
+async def list_documents(
+    pg: Annotated[AsyncConnectionPool, Depends(get_pg)],
+    knowledge_base_id: str | None = Query(
+        None, description="按知识库 UUID 过滤;不传则返回全部"
+    ),
+    status: DocumentStatus | None = Query(None, description="按处理状态过滤"),
+    limit: int = Query(20, ge=1, le=100, description="每页条数"),
+    offset: int = Query(0, ge=0, description="偏移量"),
+) -> DocumentListResponse:
+    return await service.list_documents(
+        pg,
+        knowledge_base_id=knowledge_base_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @document_router.get(

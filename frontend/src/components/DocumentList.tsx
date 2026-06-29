@@ -1,5 +1,6 @@
 import { Download, RefreshCw, RotateCcw } from "lucide-react";
 import { getDocumentStatus, retryDocument } from "@/api/client";
+import { formatBytes, formatDate } from "@/lib/utils";
 import type { DocumentItem } from "@/types";
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -50,7 +51,9 @@ export default function DocumentList({ docs, onDocsChange }: Props) {
           <tr className="text-left text-gray-500 border-b border-gray-800">
             <th className="py-3 px-4 font-medium">文件名</th>
             <th className="py-3 px-4 font-medium">状态</th>
+            <th className="py-3 px-4 font-medium">大小</th>
             <th className="py-3 px-4 font-medium">Chunks</th>
+            <th className="py-3 px-4 font-medium">创建时间</th>
             <th className="py-3 px-4 font-medium">操作</th>
           </tr>
         </thead>
@@ -73,7 +76,13 @@ export default function DocumentList({ docs, onDocsChange }: Props) {
                   )}
                 </td>
                 <td className="py-3 px-4 text-gray-400">
+                  {d.size_bytes != null ? formatBytes(d.size_bytes) : "—"}
+                </td>
+                <td className="py-3 px-4 text-gray-400">
                   {d.chunk_count !== null ? d.chunk_count : "—"}
+                </td>
+                <td className="py-3 px-4 text-gray-400 whitespace-nowrap">
+                  {formatDate(d.created_at)}
                 </td>
                 <td className="py-3 px-4">
                   <div className="flex items-center gap-2">

@@ -46,13 +46,13 @@ def _extract_status_code(exc: BaseException) -> int:
 class NormalModel(ChatModel):
     def __init__(self, settings: Settings):
         self._model = ChatOpenAI(
-            api_key=settings.model_key,
-            model=settings.model_name,
-            base_url=settings.model_url,
+            api_key=settings.MODEL_KEY,
+            model=settings.MODEL_NAME,
+            base_url=settings.MODEL_URL,
             temperature=0,
             seed=42,
         )
-        self._model_name = settings.model_name
+        self._model_name = settings.MODEL_NAME
 
     def bind_tools(self, tools: list[BaseTool]) -> None:
         self._model = self._model.bind_tools(tools)

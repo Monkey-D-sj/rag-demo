@@ -15,9 +15,9 @@ async def _configure(conn) -> None:
 async def create_pg_pool(settings: Settings) -> AsyncConnectionPool:
     """创建并打开异步连接池（不在 import 期调用）。"""
     pool = AsyncConnectionPool(
-        conninfo=settings.pg_async_dsn,
-        min_size=settings.pg_pool_min,
-        max_size=settings.pg_pool_max,
+        conninfo=settings.PG_ASYNC_DSN,
+        min_size=settings.PG_POOL_MIN,
+        max_size=settings.PG_POOL_MAX,
         open=False,
         configure=_configure,
     )

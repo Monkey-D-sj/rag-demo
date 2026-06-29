@@ -30,7 +30,7 @@ async def on_startup(ctx: dict) -> None:
     ctx["settings"] = settings
     ctx["pg"] = await create_pg_pool(settings)
     ctx["minio"] = create_minio_client(settings)
-    ctx["bucket"] = settings.minio_bucket
+    ctx["bucket"] = settings.MINIO_BUCKET
     ctx["embedding"] = EmbeddingModel(settings)
 
 
@@ -46,7 +46,7 @@ async def retry_failed_documents(ctx: dict) -> None:
     """
     settings: Settings = ctx["settings"]
     ids = await store.claim_failed_for_retry(
-        ctx["pg"], settings.max_retry_rounds, settings.retry_backoff_base
+        ctx["pg"], settings.MAX_RETRY_ROUNDS, settings.RETRY_BACKOFF_BASE
     )
     for doc_id in ids:
         try:

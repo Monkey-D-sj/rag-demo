@@ -37,7 +37,7 @@ async def ingest_upload(
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext not in ALLOWED_TYPES:
         raise UnsupportedFileType(f"不支持的文件类型: {ext}")
-    if len(data) > settings.max_upload_mb * 1024 * 1024:
+    if len(data) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise FileTooLarge("文件超过大小上限")
 
     content_hash = hashlib.sha256(data).hexdigest()
@@ -45,7 +45,7 @@ async def ingest_upload(
 
     await put_object(
         minio,
-        settings.minio_bucket,
+        settings.MINIO_BUCKET,
         object_key,
         data,
         content_type or "application/octet-stream",
@@ -108,5 +108,5 @@ async def get_download_url(pg, minio, document_id: str, expires: int = 3600) -> 
     if doc is None:
         raise DocumentNotFound("文档不存在")
     return await presigned_get_url(
-        minio, settings.minio_bucket, doc["object_key"], expires
+        minio, settings.MINIO_BUCKET, doc["object_key"], expires
     )

@@ -7,60 +7,60 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # ── PostgreSQL ──
-    pg_host: str = "localhost"
-    pg_port: int = 5432
-    pg_database: str = "rag_memory"
-    pg_user: str = "rag"
-    pg_password: str = "rag123"
-    pg_pool_min: int = 2
-    pg_pool_max: int = 10
+    PG_HOST: str = "localhost"
+    PG_PORT: int = 5432
+    PG_DATABASE: str = "rag_memory"
+    PG_USER: str = "rag"
+    PG_PASSWORD: str = "rag123"
+    PG_POOL_MIN: int = 2
+    PG_POOL_MAX: int = 10
 
     # ── Redis ──
-    redis_host: str = "localhost"
-    redis_port: int = 6379
-    redis_db: int = 0
-    redis_password: str | None = None
-    redis_max_connections: int = 10
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_PASSWORD: str | None = None
+    REDIS_MAX_CONNECTIONS: int = 10
 
     # ── LLM ──
-    model_key: str = ""
-    model_name: str = ""
-    model_url: str = ""
+    MODEL_KEY: str = ""
+    MODEL_NAME: str = ""
+    MODEL_URL: str = ""
 
     # ── Embedding ──
-    embedding_key: str = ""
-    embedding_url: str = ""
-    embedding_model: str = "text-embedding-v4"
-    embedding_dim: int = 1024
+    EMBEDDING_KEY: str = ""
+    EMBEDDING_URL: str = ""
+    EMBEDDING_MODEL: str = "text-embedding-v4"
+    EMBEDDING_DIM: int = 1024
 
     # ── MinIO ──
-    minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
-    minio_bucket: str = "rag-documents"
-    minio_secure: bool = False
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET: str = "rag-documents"
+    MINIO_SECURE: bool = False
 
     # ── arq / 文档入库 ──
-    arq_redis_db: int = 1
-    chunk_size: int = 800
-    chunk_overlap: int = 100
-    embedding_batch_size: int = 16
-    max_upload_mb: int = 20
-    # 死信自愈:arq 单轮重试用尽后,cron 每 5 min 扫描 failed 文档按指数退避重试,
-    # retry_count 达上限后放弃(真·死信),需人工介入。
-    max_retry_rounds: int = 10
-    retry_backoff_base: int = 60  # 秒;第 n 轮退避 = base * 2^n
+    ARQ_REDIS_DB: int = 1
+    CHUNK_SIZE: int = 800
+    CHUNK_OVERLAP: int = 100
+    EMBEDDING_BATCH_SIZE: int = 16
+    MAX_UPLOAD_MB: int = 20
+    # 死信自愈：arq 单轮重试用尽后，cron 每 5 min 扫描 failed 文档按指数退避重试，
+    # retry_count 达上限后放弃（真·死信），需人工介入。
+    MAX_RETRY_ROUNDS: int = 10
+    RETRY_BACKOFF_BASE: int = 60  # 秒；第 n 轮退避 = base * 2^n
 
     # ── Logging ──
-    log_level: str = "INFO"                        # DEBUG / INFO / WARNING / ERROR
-    log_format: str = "text"                       # "text"（开发） | "json"（生产）
-    log_file: str | None = None                    # None=仅控制台；给路径则额外写文件
-    log_file_max_bytes: int = 10 * 1024 * 1024     # 单文件 10MB
-    log_file_backup_count: int = 5                 # 轮转保留份数
+    LOG_LEVEL: str = "INFO"                        # DEBUG / INFO / WARNING / ERROR
+    LOG_FORMAT: str = "text"                       # "text"（开发） | "json"（生产）
+    LOG_FILE: str | None = None                    # None=仅控制台；给路径则额外写文件
+    LOG_FILE_MAX_BYTES: int = 10 * 1024 * 1024     # 单文件 10MB
+    LOG_FILE_BACKUP_COUNT: int = 5                 # 轮转保留份数
 
     _REQUIRED_FIELDS = (
-        "model_key", "model_name", "model_url",
-        "embedding_key", "embedding_url",
+        "MODEL_KEY", "MODEL_NAME", "MODEL_URL",
+        "EMBEDDING_KEY", "EMBEDDING_URL",
     )
 
     def check_required(self) -> None:
@@ -72,17 +72,17 @@ class Settings(BaseSettings):
             )
 
     @property
-    def pg_async_dsn(self) -> str:
+    def PG_ASYNC_DSN(self) -> str:
         return (
-            f"postgresql://{self.pg_user}:{self.pg_password}"
-            f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
+            f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
+            f"@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DATABASE}"
         )
 
     @property
-    def pg_sync_url(self) -> str:
+    def PG_SYNC_URL(self) -> str:
         return (
-            f"postgresql+psycopg://{self.pg_user}:{self.pg_password}"
-            f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
+            f"postgresql+psycopg://{self.PG_USER}:{self.PG_PASSWORD}"
+            f"@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DATABASE}"
         )
 
 

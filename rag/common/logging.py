@@ -16,6 +16,9 @@ _logger = logging.getLogger(__name__)
 def get_logger() -> logging.Logger:
     """获取调用者模块的 logger —— ``logging.getLogger(__name__)`` 的便利封装。
 
+    沿栈帧向上找到第一个不在本模块内的帧，取它的 ``__name__``。
+    兼容模块顶层调用、函数内调用、嵌套调用等各种场景。
+
     用法（模块顶部一行）::
 
         from rag.common.logging import get_logger
@@ -23,11 +26,16 @@ def get_logger() -> logging.Logger:
     """
     frame = inspect.currentframe()
     try:
-        caller_globals = frame.f_back.f_back.f_globals  # type: ignore[union-attr]
-        module_name = caller_globals.get("__name__", "__unknown__")
+        f = frame.f_back  # 跳过 get_logger 自身
+        while f is not None:
+            module_name = f.f_globals.get("__name__")
+            # 跳过本模块自身的内部调用
+            if module_name and module_name != __name__:
+                return logging.getLogger(module_name)
+            f = f.f_back
+        return logging.getLogger("__unknown__")
     finally:
         del frame
-    return logging.getLogger(module_name)
 
 
 class JsonFormatter(logging.Formatter):
@@ -98,7 +106,7 @@ def setup_logging(settings: Settings | None = None) -> None:
     root.handlers.clear()
 
     # 解析 level（非法则回退 INFO）
-    level_name = settings.log_level.upper()
+    level_name = settings.LOG_LEVEL.upper()
     invalid_level = level_name not in _VALID_LEVELS
     level = logging.INFO if invalid_level else getattr(logging, level_name)
     root.setLevel(level)
@@ -107,22 +115,22 @@ def setup_logging(settings: Settings | None = None) -> None:
     stream_handler = logging.StreamHandler()
     use_color = bool(getattr(stream_handler.stream, "isatty", lambda: False)())
     stream_handler.setFormatter(
-        _build_formatter(settings.log_format, use_color=use_color)
+        _build_formatter(settings.LOG_FORMAT, use_color=use_color)
     )
     root.addHandler(stream_handler)
 
     # 可选文件 handler（始终非彩色）
-    if settings.log_file:
-        path = Path(settings.log_file)
+    if settings.LOG_FILE:
+        path = Path(settings.LOG_FILE)
         path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             filename=str(path),
-            maxBytes=settings.log_file_max_bytes,
-            backupCount=settings.log_file_backup_count,
+            maxBytes=settings.LOG_FILE_MAX_BYTES,
+            backupCount=settings.LOG_FILE_BACKUP_COUNT,
             encoding="utf-8",
         )
         file_handler.setFormatter(
-            _build_formatter(settings.log_format, use_color=False)
+            _build_formatter(settings.LOG_FORMAT, use_color=False)
         )
         root.addHandler(file_handler)
 
@@ -134,5 +142,5 @@ def setup_logging(settings: Settings | None = None) -> None:
 
     if invalid_level:
         _logger.warning(
-            "未知 log_level %r，已回退为 INFO", settings.log_level
+            "未知 log_level %r，已回退为 INFO", settings.LOG_LEVEL
         )

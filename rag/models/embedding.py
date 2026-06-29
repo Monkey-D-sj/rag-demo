@@ -19,12 +19,12 @@ class EmbeddingModel:
 
     def __init__(self, settings: Settings):
         self._client = AsyncOpenAI(
-            api_key=settings.embedding_key,
-            base_url=settings.embedding_url,
+            api_key=settings.EMBEDDING_KEY,
+            base_url=settings.EMBEDDING_URL,
             timeout=30,
         )
-        self._model = settings.embedding_model
-        self._dim = settings.embedding_dim
+        self._model = settings.EMBEDDING_MODEL
+        self._dim = settings.EMBEDDING_DIM
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         async for attempt in AsyncRetrying(

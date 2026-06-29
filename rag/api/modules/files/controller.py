@@ -16,9 +16,9 @@ async def list_files(
 ):
     """列出 MinIO bucket 中的所有对象。"""
     settings = get_settings()
-    objects = await list_objects(minio, settings.minio_bucket, prefix=prefix)
+    objects = await list_objects(minio, settings.MINIO_BUCKET, prefix=prefix)
     return FileListResponse(
-        bucket=settings.minio_bucket,
+        bucket=settings.MINIO_BUCKET,
         count=len(objects),
         items=[FileItem(**o) for o in objects],
     )
@@ -34,5 +34,5 @@ async def download_file(
     from fastapi.responses import RedirectResponse
 
     settings = get_settings()
-    url = await presigned_get_url(minio, settings.minio_bucket, key, expires)
+    url = await presigned_get_url(minio, settings.MINIO_BUCKET, key, expires)
     return RedirectResponse(url)

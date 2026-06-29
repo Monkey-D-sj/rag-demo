@@ -47,14 +47,14 @@ async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
             _parse_and_chunk,
             data,
             doc["content_type"],
-            settings.chunk_size,
-            settings.chunk_overlap,
+            settings.CHUNK_SIZE,
+            settings.CHUNK_OVERLAP,
         )
         if not chunks:
             raise ValueError("切块结果为空,无可入库内容")
 
         embedded: list[tuple[int, str, list[float]]] = []
-        batch = settings.embedding_batch_size
+        batch = settings.EMBEDDING_BATCH_SIZE
         index = 0
         for i in range(0, len(chunks), batch):
             window = chunks[i : i + batch]

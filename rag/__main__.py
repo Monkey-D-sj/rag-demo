@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> None:
         host=host,
         port=port,
         reload=True,
-        log_level=settings.log_level.lower(),
+        log_level=settings.LOG_LEVEL.lower(),
     )
 
 

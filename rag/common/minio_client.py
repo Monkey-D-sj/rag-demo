@@ -9,13 +9,13 @@ from rag.config import Settings
 def create_minio_client(settings: Settings) -> Minio:
     """创建 minio 客户端并确保 bucket 存在。"""
     client = Minio(
-        settings.minio_endpoint,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
-        secure=settings.minio_secure,
+        settings.MINIO_ENDPOINT,
+        access_key=settings.MINIO_ACCESS_KEY,
+        secret_key=settings.MINIO_SECRET_KEY,
+        secure=settings.MINIO_SECURE,
     )
-    if not client.bucket_exists(settings.minio_bucket):
-        client.make_bucket(settings.minio_bucket)
+    if not client.bucket_exists(settings.MINIO_BUCKET):
+        client.make_bucket(settings.MINIO_BUCKET)
     return client
 
 

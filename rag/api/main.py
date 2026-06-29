@@ -1,3 +1,13 @@
+import sys
+
+if sys.platform == "win32":
+    import asyncio
+
+    # psycopg 异步只支持 SelectorEventLoop。本模块是 ASGI 入口,reload 开启时
+    # uvicorn 的 worker 子进程也会导入它(而不会执行 rag/__main__.py),在此设定
+    # policy 才能同时覆盖 reload 开/关两种进程模型。须在任何事件循环创建前执行。
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 

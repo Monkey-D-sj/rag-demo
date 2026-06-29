@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from arq import create_pool
@@ -21,72 +21,95 @@ from rag.models.normal import NormalModel
 
 logger = get_logger()
 
+
+def _close(name: str, closer):
+    """包装资源关闭回调,附带日志。供 AsyncExitStack 登记使用。"""
+
+    async def _callback():
+        logger.info("关闭 %s", name)
+        await closer()
+        logger.info("关闭 %s 完成", name)
+
+    return _callback
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
     settings = get_settings()
     settings.check_required()
 
-    # ------ 初始化 pg -------
-    logger.info("初始化 pg 数据库连接池")
-    pool = await create_pg_pool(settings)
-    app.state.pg = pool
-    logger.info("pg 数据库连接池初始化完成")
+    logger.info("--------------------------------------------------------")
+    logger.info("---------------------  初始化依赖项  ---------------------")
+    logger.info("--------------------------------------------------------")
 
-    # ------ 初始化 redis -------
-    logger.info("初始化 redis 连接池")
-    app.state.redis = create_redis_client(settings)
-    logger.info("redis 连接池初始化完成")
+    # AsyncExitStack:每创建一个资源就登记其关闭回调,
+    # 启动中途失败时按 LIFO 逆序回滚已创建的资源,正常退出时优雅关闭。
+    async with AsyncExitStack() as stack:
+        # ------ 初始化 pg -------
+        logger.info("初始化 pg 数据库连接池")
+        pool = await create_pg_pool(settings)
+        stack.push_async_callback(_close("pg 数据库连接池", pool.close))
+        app.state.pg = pool
+        logger.info("pg 数据库连接池初始化完成")
 
-    # ------ 初始化 agent 依赖单例 -------
-    logger.info("初始化 agent 依赖单例")
-    logger.info("初始化嵌入模型")
-    embedding = EmbeddingModel(settings)
-    logger.info("嵌入模型初始化完成")
-    logger.info("初始化内存管理器")
-    app.state.memory_manager = MemoryManager(
-        long_term=PgVectorLongTermMemory(pool, embedding),
-        short_term=RedisShortTermMemory(app.state.redis),
-    )
-    logger.info("内存管理器初始化完成")
-    logger.info("初始化 LLM 模型")
-    app.state.llm = NormalModel(settings)
-    logger.info("LLM 模型初始化完成")
-    logger.info("初始化知识检索器")
-    app.state.retriever = KnowledgeRetriever(pool, embedding)
-    logger.info("知识检索器初始化完成")
+        # ------ 初始化 redis -------
+        logger.info("初始化 redis 连接池")
+        app.state.redis = create_redis_client(settings)
+        stack.push_async_callback(_close("redis 连接池", app.state.redis.aclose))
+        logger.info("redis 连接池初始化完成")
 
-    # ------ 初始化对象存储与任务队列 -------
-    logger.info("初始化对象存储与任务队列")
-    logger.info("初始化 minio 客户端")
-    app.state.minio = create_minio_client(settings)
-    logger.info("minio 客户端初始化完成")
-    logger.info("初始化 arq 任务队列")
-    app.state.arq_pool = await create_pool(
-        RedisSettings(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            database=settings.arq_redis_db,
-            password=settings.redis_password,
+        # ------ 初始化 agent 依赖单例 -------
+        logger.info("初始化 agent 依赖单例")
+        logger.info("初始化嵌入模型")
+        embedding = EmbeddingModel(settings)
+        logger.info("嵌入模型初始化完成")
+        logger.info("初始化内存管理器")
+        app.state.memory_manager = MemoryManager(
+            long_term=PgVectorLongTermMemory(pool, embedding),
+            short_term=RedisShortTermMemory(app.state.redis),
         )
-    )
+        logger.info("内存管理器初始化完成")
+        logger.info("初始化 LLM 模型")
+        app.state.llm = NormalModel(settings)
+        logger.info("LLM 模型初始化完成")
+        logger.info("初始化知识检索器")
+        app.state.retriever = KnowledgeRetriever(pool, embedding)
+        logger.info("知识检索器初始化完成")
 
-    yield
+        # ------ 初始化对象存储与任务队列 -------
+        logger.info("初始化对象存储与任务队列")
+        logger.info("初始化 minio 客户端")
+        # minio 为同步 SDK,内部 urllib3 连接池随对象回收,无需显式关闭
+        app.state.minio = create_minio_client(settings)
+        logger.info("minio 客户端初始化完成")
+        logger.info("初始化 arq 任务队列")
+        app.state.arq_pool = await create_pool(
+            RedisSettings(
+                host=settings.redis_host,
+                port=settings.redis_port,
+                database=settings.arq_redis_db,
+                password=settings.redis_password,
+            )
+        )
+        stack.push_async_callback(_close("arq 任务队列", app.state.arq_pool.aclose))
+        logger.info("arq 任务队列初始化完成")
+        logger.info("---------------------------------------------------------")
+        logger.info("---------------------  初始化依赖项完成  -------------------")
+        logger.info("---------------------------------------------------------")
 
-    # ------ 关闭资源 -------
-    logger.info("关闭资源")
-    logger.info("关闭 pg 数据库连接池")
-    await pool.close()
-    logger.info("关闭 pg 数据库连接池完成")
-    logger.info("关闭 redis 连接池")
-    await app.state.redis.aclose()
-    logger.info("关闭 redis 连接池完成")
-    logger.info("关闭 arq 任务队列")
-    await app.state.arq_pool.aclose()
-    logger.info("关闭 arq 任务队列完成")
-    logger.info("关闭 minio 客户端")
-    await app.state.minio.close()
-    logger.info("关闭 minio 客户端完成")
+        yield
+
+        # 退出 async with 时,stack 按 LIFO 逆序执行已登记的关闭回调
+        logger.info("--------------------------------------------------------")
+        logger.info("---------------------  关闭资源  -------------------------")
+        logger.info("--------------------------------------------------------")
+
+    logger.info("--------------------------------------------------------")
+    logger.info("---------------------  关闭资源完成  ---------------------")
+    logger.info("--------------------------------------------------------")
+
+
 
 def start_app() -> FastAPI:
     logger.info("rag-demo 启动")

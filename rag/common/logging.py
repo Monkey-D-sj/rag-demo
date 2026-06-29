@@ -2,6 +2,7 @@ import datetime
 import inspect
 import json
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -23,8 +24,9 @@ def get_logger() -> logging.Logger:
     """
     frame = inspect.currentframe()
     try:
-        caller_globals = frame.f_back.f_back.f_globals  # type: ignore[union-attr]
-        module_name = caller_globals.get("__name__", "__unknown__")
+        # 模块顶层调用时栈深度不足（只有 2 层），回退到 f_back
+        f = frame.f_back.f_back or frame.f_back  # type: ignore[union-attr]
+        module_name = f.f_globals.get("__name__", "__unknown__")
     finally:
         del frame
     return logging.getLogger(module_name)
@@ -53,18 +55,47 @@ _LEVEL_COLORS = {
     "ERROR": "\x1b[31m",     # red
     "CRITICAL": "\x1b[1;31m",
 }
+_TIME_COLOR = "\x1b[90m"     # dim gray
 _RESET = "\x1b[0m"
+
+_BANNER = """\x1b[1;36m
+   ╔══════════════════════════════════════════╗
+   ║                                          ║
+   ║\x1b[0m\x1b[1;36m     ██████╗  \x1b[1;35m █████╗  \x1b[1;36m ██████╗  \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██╗\x1b[1;36m ██╔════╝  \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██████╔╝\x1b[1;35m ███████║\x1b[1;36m ██║  ███╗ \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██║  ██║\x1b[1;35m ██║  ██║\x1b[1;36m ╚██████╔╝ \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ╚═╝  ╚═╝\x1b[1;35m ╚═╝  ╚═╝\x1b[1;36m  ╚═════╝  \x1b[0m\x1b[1;36m     ║
+   ║                                          ║
+   ║\x1b[0m\x1b[1;35m     ██████╗  \x1b[1;36m ███████╗\x1b[1;35m ███╗   ███╗\x1b[1;36m  ██████╗  \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██╔══██╗\x1b[1;36m ██╔════╝\x1b[1;35m ████╗ ████║\x1b[1;36m ██╔═══██╗ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██║  ██║\x1b[1;36m █████╗  \x1b[1;35m ██╔████╔██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██║  ██║\x1b[1;36m ██╔══╝  \x1b[1;35m ██║╚██╔╝██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██████╔╝\x1b[1;36m ███████╗\x1b[1;35m ██║ ╚═╝ ██║\x1b[1;36m ╚██████╔╝ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ╚═════╝ \x1b[1;36m ╚══════╝\x1b[1;35m ╚═╝     ╚═╝\x1b[1;36m  ╚═════╝  \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║                                          ║
+   ║  \x1b[1;33m⚡\x1b[1;37m RAG 知识库 \x1b[0;90m│\x1b[1;33m 本地开发 \x1b[0;90m│\x1b[1;32m 就绪 \x1b[1;33m⚡\x1b[0m\x1b[1;36m    ║
+   ║                                          ║
+   ╚══════════════════════════════════════════╝\x1b[0m
+"""
 
 _TEXT_FMT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 _DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 
 class ColorTextFormatter(logging.Formatter):
-    """可读文本格式器；use_color=True 时给 level 上 ANSI 颜色。"""
+    """可读文本格式器；use_color=True 时给时间/level 上 ANSI 颜色。"""
 
     def __init__(self, use_color: bool = True):
         super().__init__(fmt=_TEXT_FMT, datefmt=_DATE_FMT)
         self._use_color = use_color
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        s = super().formatTime(record, datefmt)
+        if self._use_color:
+            s = f"{_TIME_COLOR}{s}{_RESET}"
+        return s
 
     def format(self, record: logging.LogRecord) -> str:
         if self._use_color:
@@ -72,11 +103,26 @@ class ColorTextFormatter(logging.Formatter):
             if color:
                 # 复制以免污染原始 record（影响其他 handler）
                 record = logging.makeLogRecord(record.__dict__)
-                record.levelname = f"{color}{record.levelname}{_RESET}"
+                visible = record.levelname
+                pad = max(0, 8 - len(visible))
+                record.levelname = f"{color}{visible}{_RESET}{' ' * pad}"
         return super().format(record)
 
 
+_LOGGER_ALIASES = {
+    "uvicorn.error": "uvicorn",
+}
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+class _NameRewriter(logging.Filter):
+    """重命名形如 ``uvicorn.error`` 的 logger 名称。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        alias = _LOGGER_ALIASES.get(record.name)
+        if alias:
+            record.name = alias
+        return True
 
 
 def _build_formatter(log_format: str, *, use_color: bool) -> logging.Formatter:
@@ -105,6 +151,7 @@ def setup_logging(settings: Settings | None = None) -> None:
 
     # 控制台 handler（默认 stderr）
     stream_handler = logging.StreamHandler()
+    stream_handler.addFilter(_NameRewriter())
     use_color = bool(getattr(stream_handler.stream, "isatty", lambda: False)())
     stream_handler.setFormatter(
         _build_formatter(settings.log_format, use_color=use_color)
@@ -126,8 +173,8 @@ def setup_logging(settings: Settings | None = None) -> None:
         )
         root.addHandler(file_handler)
 
-    # 收编 uvicorn，统一走 root
-    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+    # 收编 uvicorn / watchfiles，统一走 root
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error", "watchfiles.main"):
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.propagate = True

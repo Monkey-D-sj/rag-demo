@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { RefreshCw, RotateCcw } from "lucide-react";
+import { Download, RefreshCw, RotateCcw } from "lucide-react";
 import { getDocumentStatus, retryDocument } from "@/api/client";
 import type { DocumentItem } from "@/types";
 
@@ -105,6 +105,15 @@ export default function DocumentList({ docs, onDocsChange }: Props) {
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
                     </button>
+                    {d.status === "done" && (
+                      <a
+                        href={`/api/documents/${d.document_id}/download`}
+                        className="p-1.5 text-emerald-500 hover:text-emerald-400 transition-colors"
+                        title="下载原文件"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+                    )}
                     {d.status === "failed" && (
                       <button
                         onClick={() => handleRetry(d.document_id)}

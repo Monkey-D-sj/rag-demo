@@ -9,7 +9,7 @@ from rag.api.modules.document.schemas import (
     DocumentRetryResponse,
     DocumentStatusResponse,
 )
-from rag.common.minio_client import put_object
+from rag.common.minio_client import presigned_get_url, put_object
 from rag.config import get_settings
 from rag.document import store
 
@@ -98,4 +98,15 @@ async def retry_document(pg, arq_pool, document_id: str) -> DocumentRetryRespons
         status="pending",
         retry_count=0,
         message="已重置重试计数并投递入库任务",
+    )
+
+
+async def get_download_url(pg, minio, document_id: str, expires: int = 3600) -> str:
+    """生成文档原始文件的预签名下载链接。"""
+    settings = get_settings()
+    doc = await store.get_document(pg, document_id)
+    if doc is None:
+        raise DocumentNotFound("文档不存在")
+    return await presigned_get_url(
+        minio, settings.minio_bucket, doc["object_key"], expires
     )

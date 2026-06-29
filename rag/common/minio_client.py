@@ -42,3 +42,33 @@ async def get_object(client: Minio, bucket: str, key: str) -> bytes:
                 resp.release_conn()
 
     return await asyncio.to_thread(_get)
+
+
+async def list_objects(
+    client: Minio, bucket: str, prefix: str = ""
+) -> list[dict]:
+    """列出 bucket 中的对象元数据（线程池化）。"""
+
+    def _list() -> list[dict]:
+        return [
+            {
+                "key": obj.object_name,
+                "size": obj.size,
+                "content_type": obj.content_type or "",
+                "last_modified": obj.last_modified.isoformat() if obj.last_modified else "",
+            }
+            for obj in client.list_objects(bucket, prefix=prefix)
+        ]
+
+    return await asyncio.to_thread(_list)
+
+
+async def presigned_get_url(
+    client: Minio, bucket: str, key: str, expires_seconds: int = 3600
+) -> str:
+    """生成预签名下载 URL（默认 1 小时有效）。"""
+
+    def _presign() -> str:
+        return client.presigned_get_object(bucket, key, expires=expires_seconds)
+
+    return await asyncio.to_thread(_presign)

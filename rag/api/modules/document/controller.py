@@ -1,7 +1,9 @@
 from typing import Annotated
 
 from arq import ArqRedis
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi.responses import RedirectResponse
+from minio import Minio
 from psycopg_pool import AsyncConnectionPool
 
 from rag.api.common.schemas import ErrorResponse
@@ -55,6 +57,23 @@ async def upload_document(
 )
 async def get_document_status(document_id: str, pg=Depends(get_pg)):
     return await service.get_status(pg, document_id)
+
+
+@document_router.get(
+    "/{document_id}/download",
+    responses={
+        302: {"description": "重定向到 MinIO 预签名下载链接"},
+        404: {"model": ErrorResponse, "description": "文档不存在"},
+    },
+)
+async def download_document(
+    document_id: str,
+    pg: Annotated[AsyncConnectionPool, Depends(get_pg)],
+    minio: Annotated[Minio, Depends(get_minio)],
+    expires: int = Query(3600, ge=60, le=86400, description="预签名有效期（秒）"),
+) -> RedirectResponse:
+    url = await service.get_download_url(pg, minio, document_id, expires)
+    return RedirectResponse(url)
 
 
 @document_router.post(

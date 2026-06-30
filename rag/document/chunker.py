@@ -15,6 +15,8 @@ def chunk(text: str, chunk_size: int = 800, chunk_overlap: int = 100) -> list[st
     纯 CPU 同步函数;调用方(pipeline)负责把 parse+chunk 合并到一次线程池调用,
     避免在 worker event loop 上阻塞其他并发 job。
     """
+    # PostgreSQL text 字段不接受 NUL (0x00) 字节，PDF 解析文本可能包含
+    text = text.replace("\x00", "")
     if not text.strip():
         return []
     splitter = RecursiveCharacterTextSplitter(

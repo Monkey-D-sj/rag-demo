@@ -1,5 +1,6 @@
 """Document 模块请求/响应 Schema。"""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -51,6 +52,30 @@ class DocumentStatusResponse(BaseModel):
             }
         ]
     }}
+
+
+class DocumentListItem(BaseModel):
+    """GET /documents/ — 列表中的单个文档。"""
+
+    document_id: str = Field(..., description="文档 UUID")
+    knowledge_base_id: str = Field(..., description="所属知识库 UUID")
+    filename: str = Field(..., description="原始文件名")
+    content_type: str = Field(..., description="文件类型(txt/md/pdf)")
+    size_bytes: int = Field(..., description="文件大小(字节)")
+    status: DocumentStatus = Field(..., description="当前处理状态")
+    chunk_count: int = Field(..., description="切块数量")
+    error: str | None = Field(default=None, description="失败原因(仅 failed)")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="最近更新时间")
+
+
+class DocumentListResponse(BaseModel):
+    """GET /documents/ — 分页文档列表。"""
+
+    total: int = Field(..., description="满足过滤条件的文档总数")
+    limit: int = Field(..., description="本页请求的最大条数")
+    offset: int = Field(..., description="本页偏移量")
+    items: list[DocumentListItem] = Field(..., description="当前页文档")
 
 
 class DocumentRetryResponse(BaseModel):

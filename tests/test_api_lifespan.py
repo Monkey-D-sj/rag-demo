@@ -1,11 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from rag.api.main import app
+from rag.api.main import start_app
 
 
 @pytest.mark.integration
 def test_lifespan_populates_app_state():
+    app = start_app()
     # TestClient 上下文进入即触发 lifespan 启动,退出触发关闭
     with TestClient(app):
         assert app.state.pg is not None
@@ -16,7 +17,7 @@ def test_lifespan_populates_app_state():
 
 @pytest.mark.integration
 def test_lifespan_populates_storage():
-    from rag.api.main import app
+    app = start_app()
 
     with TestClient(app):
         assert app.state.minio is not None

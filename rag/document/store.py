@@ -70,6 +70,48 @@ async def get_document(pool: AsyncConnectionPool, document_id: str) -> dict | No
         return await cur.fetchone()
 
 
+async def list_documents(
+    pool: AsyncConnectionPool,
+    *,
+    knowledge_base_id: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """分页列出文档(按创建时间倒序),返回 (当前页行, 满足过滤条件的总数)。
+
+    用 COUNT(*) OVER() 窗口函数在同一次查询里带出总数,省去额外的 count 查询。
+    """
+    conditions = []
+    params: dict = {"limit": limit, "offset": offset}
+    if knowledge_base_id is not None:
+        conditions.append("knowledge_base_id = %(kb)s")
+        params["kb"] = knowledge_base_id
+    if status is not None:
+        conditions.append("status = %(status)s")
+        params["status"] = status
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            f"""
+            SELECT id, knowledge_base_id, filename, content_type,
+                   size_bytes, status, chunk_count, error,
+                   created_at, updated_at,
+                   COUNT(*) OVER() AS total
+            FROM documents
+            {where}
+            ORDER BY created_at DESC
+            LIMIT %(limit)s OFFSET %(offset)s
+            """,
+            params,
+        )
+        rows = await cur.fetchall()
+
+    total = rows[0]["total"] if rows else 0
+    return rows, total
+
+
 async def claim_for_processing(
     pool: AsyncConnectionPool, document_id: str, *, stale_after_seconds: int = 600
 ) -> bool:

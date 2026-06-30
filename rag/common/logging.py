@@ -2,6 +2,7 @@ import datetime
 import inspect
 import json
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -16,9 +17,6 @@ _logger = logging.getLogger(__name__)
 def get_logger() -> logging.Logger:
     """获取调用者模块的 logger —— ``logging.getLogger(__name__)`` 的便利封装。
 
-    沿栈帧向上找到第一个不在本模块内的帧，取它的 ``__name__``。
-    兼容模块顶层调用、函数内调用、嵌套调用等各种场景。
-
     用法（模块顶部一行）::
 
         from rag.common.logging import get_logger
@@ -26,16 +24,12 @@ def get_logger() -> logging.Logger:
     """
     frame = inspect.currentframe()
     try:
-        f = frame.f_back  # 跳过 get_logger 自身
-        while f is not None:
-            module_name = f.f_globals.get("__name__")
-            # 跳过本模块自身的内部调用
-            if module_name and module_name != __name__:
-                return logging.getLogger(module_name)
-            f = f.f_back
-        return logging.getLogger("__unknown__")
+        # 模块顶层调用时栈深度不足（只有 2 层），回退到 f_back
+        f = frame.f_back.f_back or frame.f_back  # type: ignore[union-attr]
+        module_name = f.f_globals.get("__name__", "__unknown__")
     finally:
         del frame
+    return logging.getLogger(module_name)
 
 
 class JsonFormatter(logging.Formatter):
@@ -61,18 +55,47 @@ _LEVEL_COLORS = {
     "ERROR": "\x1b[31m",     # red
     "CRITICAL": "\x1b[1;31m",
 }
+_TIME_COLOR = "\x1b[90m"     # dim gray
 _RESET = "\x1b[0m"
+
+_BANNER = """\x1b[1;36m
+   ╔══════════════════════════════════════════╗
+   ║                                          ║
+   ║\x1b[0m\x1b[1;36m     ██████╗  \x1b[1;35m █████╗  \x1b[1;36m ██████╗  \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██╗\x1b[1;36m ██╔════╝  \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██████╔╝\x1b[1;35m ███████║\x1b[1;36m ██║  ███╗ \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ██║  ██║\x1b[1;35m ██║  ██║\x1b[1;36m ╚██████╔╝ \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;36m     ╚═╝  ╚═╝\x1b[1;35m ╚═╝  ╚═╝\x1b[1;36m  ╚═════╝  \x1b[0m\x1b[1;36m     ║
+   ║                                          ║
+   ║\x1b[0m\x1b[1;35m     ██████╗  \x1b[1;36m ███████╗\x1b[1;35m ███╗   ███╗\x1b[1;36m  ██████╗  \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██╔══██╗\x1b[1;36m ██╔════╝\x1b[1;35m ████╗ ████║\x1b[1;36m ██╔═══██╗ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██║  ██║\x1b[1;36m █████╗  \x1b[1;35m ██╔████╔██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██║  ██║\x1b[1;36m ██╔══╝  \x1b[1;35m ██║╚██╔╝██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ██████╔╝\x1b[1;36m ███████╗\x1b[1;35m ██║ ╚═╝ ██║\x1b[1;36m ╚██████╔╝ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║\x1b[0m\x1b[1;35m     ╚═════╝ \x1b[1;36m ╚══════╝\x1b[1;35m ╚═╝     ╚═╝\x1b[1;36m  ╚═════╝  \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ║                                          ║
+   ║  \x1b[1;33m⚡\x1b[1;37m RAG 知识库 \x1b[0;90m│\x1b[1;33m 本地开发 \x1b[0;90m│\x1b[1;32m 就绪 \x1b[1;33m⚡\x1b[0m\x1b[1;36m    ║
+   ║                                          ║
+   ╚══════════════════════════════════════════╝\x1b[0m
+"""
 
 _TEXT_FMT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 _DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 
 class ColorTextFormatter(logging.Formatter):
-    """可读文本格式器；use_color=True 时给 level 上 ANSI 颜色。"""
+    """可读文本格式器；use_color=True 时给时间/level 上 ANSI 颜色。"""
 
     def __init__(self, use_color: bool = True):
         super().__init__(fmt=_TEXT_FMT, datefmt=_DATE_FMT)
         self._use_color = use_color
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        s = super().formatTime(record, datefmt)
+        if self._use_color:
+            s = f"{_TIME_COLOR}{s}{_RESET}"
+        return s
 
     def format(self, record: logging.LogRecord) -> str:
         if self._use_color:
@@ -80,11 +103,26 @@ class ColorTextFormatter(logging.Formatter):
             if color:
                 # 复制以免污染原始 record（影响其他 handler）
                 record = logging.makeLogRecord(record.__dict__)
-                record.levelname = f"{color}{record.levelname}{_RESET}"
+                visible = record.levelname
+                pad = max(0, 8 - len(visible))
+                record.levelname = f"{color}{visible}{_RESET}{' ' * pad}"
         return super().format(record)
 
 
+_LOGGER_ALIASES = {
+    "uvicorn.error": "uvicorn",
+}
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+class _NameRewriter(logging.Filter):
+    """重命名形如 ``uvicorn.error`` 的 logger 名称。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        alias = _LOGGER_ALIASES.get(record.name)
+        if alias:
+            record.name = alias
+        return True
 
 
 def _build_formatter(log_format: str, *, use_color: bool) -> logging.Formatter:
@@ -106,41 +144,42 @@ def setup_logging(settings: Settings | None = None) -> None:
     root.handlers.clear()
 
     # 解析 level（非法则回退 INFO）
-    level_name = settings.LOG_LEVEL.upper()
+    level_name = settings.log_level.upper()
     invalid_level = level_name not in _VALID_LEVELS
     level = logging.INFO if invalid_level else getattr(logging, level_name)
     root.setLevel(level)
 
     # 控制台 handler（默认 stderr）
     stream_handler = logging.StreamHandler()
+    stream_handler.addFilter(_NameRewriter())
     use_color = bool(getattr(stream_handler.stream, "isatty", lambda: False)())
     stream_handler.setFormatter(
-        _build_formatter(settings.LOG_FORMAT, use_color=use_color)
+        _build_formatter(settings.log_format, use_color=use_color)
     )
     root.addHandler(stream_handler)
 
     # 可选文件 handler（始终非彩色）
-    if settings.LOG_FILE:
-        path = Path(settings.LOG_FILE)
+    if settings.log_file:
+        path = Path(settings.log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             filename=str(path),
-            maxBytes=settings.LOG_FILE_MAX_BYTES,
-            backupCount=settings.LOG_FILE_BACKUP_COUNT,
+            maxBytes=settings.log_file_max_bytes,
+            backupCount=settings.log_file_backup_count,
             encoding="utf-8",
         )
         file_handler.setFormatter(
-            _build_formatter(settings.LOG_FORMAT, use_color=False)
+            _build_formatter(settings.log_format, use_color=False)
         )
         root.addHandler(file_handler)
 
-    # 收编 uvicorn，统一走 root
-    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+    # 收编 uvicorn / watchfiles，统一走 root
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error", "watchfiles.main"):
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.propagate = True
 
     if invalid_level:
         _logger.warning(
-            "未知 log_level %r，已回退为 INFO", settings.LOG_LEVEL
+            "未知 log_level %r，已回退为 INFO", settings.log_level
         )

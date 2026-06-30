@@ -60,7 +60,7 @@ class WorkerSettings:
     on_startup = on_startup
     on_shutdown = on_shutdown
     cron_jobs = [
-        cron(retry_failed_documents, minute="*/5")  # 每 5 分钟扫描一次
+        cron(retry_failed_documents, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55})
     ]
     max_tries = 3
     job_timeout = 300
@@ -80,6 +80,13 @@ def run() -> None:
 
     也可直接 ``arq rag.worker.main.WorkerSettings`` 启动。
     """
+    import sys
+
+    if sys.platform == "win32":
+        import asyncio
+
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     from rag.common.logging import setup_logging
 
     setup_logging()

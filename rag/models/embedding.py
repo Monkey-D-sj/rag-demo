@@ -1,3 +1,5 @@
+import logging
+
 from openai import AsyncOpenAI
 from tenacity import (
     AsyncRetrying,

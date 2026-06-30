@@ -1,4 +1,10 @@
-import type { ChatEvent, DocumentItem, RetryResult } from "@/types";
+import type {
+  ChatEvent,
+  DocumentItem,
+  DocumentListResponse,
+  DocumentStatus,
+  RetryResult,
+} from "@/types";
 
 const BASE = "/api";
 
@@ -51,7 +57,7 @@ export async function* streamChat(
 
 export async function uploadDocument(
   file: File,
-  knowledgeBaseId: string = "default",
+  knowledgeBaseId: string = "00000000-0000-0000-0000-000000000001",
 ): Promise<{ document_id: string; status: string }> {
   const form = new FormData();
   form.append("file", file);
@@ -61,6 +67,27 @@ export async function uploadDocument(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "upload failed");
+  }
+  return res.json();
+}
+
+export async function listDocuments(params?: {
+  knowledgeBaseId?: string;
+  status?: DocumentStatus;
+  limit?: number;
+  offset?: number;
+}): Promise<DocumentListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.knowledgeBaseId) qs.set("knowledge_base_id", params.knowledgeBaseId);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
+  const query = qs.toString();
+
+  const res = await fetch(`${BASE}/documents/${query ? `?${query}` : ""}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "list documents failed");
   }
   return res.json();
 }

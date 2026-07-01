@@ -1,7 +1,12 @@
+from enum import Enum
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+class SplitStrategy(Enum):
+    fixed_size = "fixed_size"
+    recursive_character = "recursive_character"
+    paragraph_semantic = "paragraph_semantic"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -44,6 +49,7 @@ class Settings(BaseSettings):
     ARQ_REDIS_DB: int = 1
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 100
+    SPLIT_STRATEGY: SplitStrategy = SplitStrategy.paragraph_semantic
     EMBEDDING_BATCH_SIZE: int = 16
     MAX_UPLOAD_MB: int = 20
     # 死信自愈：arq 单轮重试用尽后，cron 每 5 min 扫描 failed 文档按指数退避重试，

@@ -49,6 +49,34 @@ async def test_write_then_rerun_is_idempotent(driver):
     assert await _counts(driver) == (2, 1)
 
 
+async def test_rewrite_same_doc_dedups_list_contents(driver):
+    ents = [
+        {"name": "孙悟空", "type": "Person", "chunk_ids": ["d1:0"]},
+        {"name": "唐僧", "type": "Person", "chunk_ids": ["d1:0"]},
+    ]
+    rels = [{"source": "孙悟空", "target": "唐僧", "keywords": ["师徒"]}]
+
+    # 同一文档重复写入,中间不 purge,直接验证列表去重算术本身的幂等性
+    await write_graph(driver, "neo4j", "d1", ents, rels)
+    await write_graph(driver, "neo4j", "d1", ents, rels)
+
+    async with driver.session() as s:
+        r = await s.run(
+            "MATCH (e:Entity {name:'孙悟空'}) RETURN e.chunk_ids AS c, e.doc_ids AS d"
+        )
+        node = await r.single()
+        r2 = await s.run(
+            "MATCH (:Entity {name:'孙悟空'})-[rel:RELATES]-(:Entity {name:'唐僧'}) "
+            "RETURN rel.keywords AS k, rel.doc_ids AS d"
+        )
+        edge = await r2.single()
+
+    assert node["c"] == ["d1:0"]
+    assert node["d"] == ["d1"]
+    assert edge["k"] == ["师徒"]
+    assert edge["d"] == ["d1"]
+
+
 async def test_shared_entity_not_deleted_on_other_doc_purge(driver):
     await write_graph(
         driver, "neo4j", "d1",

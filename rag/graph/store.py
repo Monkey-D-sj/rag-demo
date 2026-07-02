@@ -7,6 +7,7 @@ _WRITE_ENTITIES = """
 UNWIND $entities AS ent
 MERGE (e:Entity {name: ent.name})
 ON CREATE SET e.type = ent.type
+// type 仅在首次创建时写入(first-write-wins);同名实体后续以不同 type 重新抽取不会覆盖,属预期行为
 SET e.chunk_ids = [x IN coalesce(e.chunk_ids, []) WHERE NOT x IN ent.chunk_ids] + ent.chunk_ids,
     e.doc_ids   = [x IN coalesce(e.doc_ids, []) WHERE x <> $doc] + [$doc]
 """
@@ -29,6 +30,8 @@ DELETE r
 """
 
 _PURGE_NODES = """
+// 依赖调用方不变式:一条关系的两端始终属于同一文档的实体列表,
+// 因此边的 doc_ids 必是其两端节点 doc_ids 的子集;节点 doc_ids 清空后必无残留的跨文档边可依附,DETACH DELETE 安全。
 MATCH (e:Entity)
 WHERE $doc IN e.doc_ids
 SET e.chunk_ids = [c IN e.chunk_ids WHERE NOT c STARTS WITH $prefix],

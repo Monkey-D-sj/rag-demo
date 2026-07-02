@@ -70,10 +70,17 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
   约束:`CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE (e.kb_id, e.name) IS UNIQUE`
 - `type` 取首次写入值;后续冲突保留原值并记 warning(不覆盖)。
 - **溯源标识 `chunk_uid = f"{document_id}:{chunk_index}"`**:**不用** PG 主键 uuid。
-  原因:图抽取任务在 `ingest` 之后运行,此时旧 chunk 已被「删旧插新」、uuid 全变,
-  用 uuid 无法在重跑时对上旧数据、也无法精确清理。而 `chunk_index`(0..n)对同一文档重跑稳定,
-  故复合标识稳定可对齐。回 Postgres 取原文时拆出 `document_id` + `chunk_index`,
+  注意:重新入库会重新分 chunk,`chunk_index` 指向的文本会变、总数也可能变 ——
+  **本设计不依赖 chunk_uid 跨版本对齐同一内容**。一致性靠「重跑 = 全量 purge + 全量重写」保证
+  (见 §4):purge 按 `"{doc}:"` 前缀清掉该文档**所有**旧 chunk_uid,再写入当前版本的 chunk_uid;
+  图与 PG(同样删旧插新)始终反映当前版本。回 Postgres 取原文时拆出 `document_id` + `chunk_index`,
   用 `WHERE document_id=? AND chunk_index=?` 查询(该组合天然唯一)。
+  - **为何不用 uuid**:PG 主键 uuid 每次重插都变**且不含文档归属信息**。对跨文档共享的实体,
+    purge 时无法从其 `chunk_ids` 里识别哪些 uuid 属于本文档(uuid 无归属、且旧行已删无法反查),
+    悬空 uuid 永远清不掉。`chunk_uid` 含 `"{doc}:"` 前缀,用 `NOT c STARTS WITH "{doc}:"` 即可精确移除。
+    真正起作用的是**前缀归属**,而非 index 的语义稳定性。
+  - **缓存标识另算**:抽取结果缓存的 key 是 `sha256(chunk_text)`(内容 hash),与 chunk_uid 无关;
+    内容一变 hash 即变、缓存自然 miss(见 §5.2)。
 - **不存 descriptions**:溯源方案是回 Postgres 取原文 chunk 喂 LLM,实体描述属冗余信息。
   抽取仍产出描述,但不落库;将来若需要,加字段回填即可,零损失。
 
@@ -134,7 +141,7 @@ DETACH DELETE e
 参数:`$kb`=知识库 ID,`$doc`=document_id,`$prefix = f"{doc}:"`。
 **顺序先边后节点**:先收敛边 `doc_ids` 并删空边,再收敛节点并 `DETACH DELETE` 兜底残留边。
 
-由于 `chunk_uid` 用稳定复合标识(见 3.1),按 `"{doc}:"` 前缀过滤即可**精确**移除该文档贡献,
+由于 `chunk_uid` 含 `"{doc}:"` 前缀(见 3.1),按前缀过滤即可**精确**移除该文档贡献,
 无需额外的 chunk→doc 映射。又因不存 descriptions,清理完全干净、无残留取舍。清理先于写入执行。
 
 ## 5. 任务编排
@@ -146,7 +153,8 @@ DETACH DELETE e
 2. `get_chunks_for_graph(doc_id)`:返回 `[{chunk_index, text, title}]`(title 取自 chunk metadata,
    作章节上下文)。抽取时用 `chunk_uid = f"{doc_id}:{chunk_index}"` 作为实体的溯源标识。
 3. 幂等清理:`graph.store.purge_document(doc_id)`。
-4. 逐 chunk 调 `extract_entities(llm, text, chapter_context=title)`,汇总实体与关系。
+4. 逐 chunk 抽取:**先查抽取结果缓存**(见 §5.2),命中直接用,未命中再调
+   `extract_entities(llm, text, chapter_context=title)` 并回写缓存;汇总实体与关系。
 5. `graph.store.write_entities_and_relations(...)`:MERGE 写入,累积 chunk_ids/doc_ids。
    **批量写入**:用 `UNWIND $entities`/`UNWIND $relations` 把整篇文档的实体、关系各一条语句
    批量 `MERGE`(禁止逐实体一次往返)。累积用 `coalesce` + 列表去重,示例:
@@ -162,13 +170,28 @@ DETACH DELETE e
 6. `graph_status → done`。
 7. 异常:`graph_status=failed` 记 error,**re-raise** 交 arq 重试。
 
-### 5.2 投递点(`rag/document/pipeline.py`)
+### 5.2 抽取结果缓存(避免重试重复调 LLM)
+
+图抽取任务失败重试 / cron 自愈会重跑整篇文档;若不缓存,已抽过的 chunk 会重复调 LLM
+(大文档浪费显著)。**只缓存「LLM 抽取结果」这一步,不改变「purge + 批量写」的原子模型**:
+重试时照常全量 purge、遍历每个 chunk,但 LLM 调用被缓存命中省掉,既省成本又不破坏幂等。
+
+- **key**:`f"entity_extract:{sha256(chunk_text)}"` —— 用**内容 hash**,不是 chunk_uid。
+  内容变(重新入库、重新分 chunk)→ hash 变 → 自然 miss 重抽,天然正确失效。
+- **value**:该 chunk 抽取出的实体/关系 JSON(`ExtractionResult` 序列化)。
+- **存储**:Redis + TTL(如 `ENTITY_CACHE_TTL` 默认 30 天)。选 Redis 因:项目已有 Redis
+  基础设施(`rag/db/redis.py`);TTL 自动清理内容变化后产生的垃圾条目;缓存丢失只回退到重抽、
+  不影响正确性 —— 契合缓存语义。需给图抽取任务注入 redis 连接(`WorkerCtx` 加 `redis`)。
+- **流程**:抽取单 chunk 前查缓存;命中→反序列化直接用;未命中→调 LLM→写缓存(带 TTL)。
+- **可选开关**:缓存读写失败(Redis 抖动)降级为直接调 LLM,仅告警,不影响任务。
+
+### 5.3 投递点(`rag/document/pipeline.py`)
 
 `ingest_document` 在 `store_chunks_and_complete` 成功后,若 `settings.ENABLE_ENTITY_EXTRACTION`,
 投递 `extract_document_entities(document_id)`;开关关闭时,把 `graph_status` 记为 `skipped`。
 投递本身失败仅告警,不影响文档 `status=done`。
 
-### 5.3 死信自愈
+### 5.4 死信自愈
 
 新增**独立平行 cron**(与向量的 `retry_failed_documents` 解耦):扫描
 `graph_status='failed'` 且 `graph_retry_count < MAX_RETRY_ROUNDS` 的文档,按指数退避
@@ -195,6 +218,7 @@ NEO4J_URI:      str = "bolt://localhost:7687"
 NEO4J_USER:     str = "neo4j"
 NEO4J_PASSWORD: str = "neo4j_pass"
 NEO4J_DATABASE: str = "neo4j"
+ENTITY_CACHE_TTL: int = 30 * 24 * 3600   # 抽取结果缓存 TTL(秒),默认 30 天
 ```
 
 `NEO4J_*` **仅在 `ENABLE_ENTITY_EXTRACTION=true` 时校验必填**(在 `check_required` 内条件校验),
@@ -225,7 +249,8 @@ neo4j:
 - 用 `neo4j.AsyncGraphDatabase`(原生异步,无需 `to_thread`),仿 `rag/db/postgres.py` 风格。
 - `create_neo4j_driver(settings) -> AsyncDriver`。
 - 约束初始化:worker `on_startup` 执行一次 `CREATE CONSTRAINT IF NOT EXISTS`。
-- worker `on_startup` 建 driver + `NormalModel`(注入 `WorkerCtx`);`on_shutdown` 关闭 driver。
+- worker `on_startup` 建 driver + `NormalModel` + redis 连接(均注入 `WorkerCtx`);
+  `on_shutdown` 关闭 driver 与 redis。redis 复用 `rag/db/redis.py` 的现有客户端构造。
 - API 端只负责投递任务,不需要 driver。
 
 ### `WorkerCtx` 扩展
@@ -239,6 +264,7 @@ class WorkerCtx(TypedDict):
     embedding: EmbeddingModel
     neo4j: AsyncDriver          # 新增
     llm: ChatModel             # 新增
+    redis: Redis               # 新增:抽取结果缓存(§5.2)
 ```
 
 ## 10. 文件清单
@@ -247,12 +273,13 @@ class WorkerCtx(TypedDict):
 - `rag/db/neo4j.py` —— driver 封装 + 约束初始化
 - `rag/graph/__init__.py`
 - `rag/graph/store.py` —— MERGE 写实体/关系、`purge_document` 幂等清理
+- `rag/graph/cache.py` —— 抽取结果缓存读写(Redis + TTL,内容 hash 作 key,失败降级)
 - `rag/graph/pipeline.py` —— `extract_document_entities` 任务 + 自愈 cron 函数
 - `alembic/versions/0004_graph_status.py`
 
 **修改**
-- `rag/config.py` —— `ENABLE_ENTITY_EXTRACTION` + `NEO4J_*` + 条件必填校验
-- `rag/worker/main.py` —— `WorkerCtx` 注入 `neo4j` + `llm`,注册新任务与自愈 cron,`on_startup`/`on_shutdown`
+- `rag/config.py` —— `ENABLE_ENTITY_EXTRACTION` + `NEO4J_*` + `ENTITY_CACHE_TTL` + 条件必填校验
+- `rag/worker/main.py` —— `WorkerCtx` 注入 `neo4j` + `llm` + `redis`,注册新任务与自愈 cron,`on_startup`/`on_shutdown`
 - `rag/document/pipeline.py` —— 入库成功后按开关投递图抽取任务
 - `rag/document/store.py` —— `get_chunks_for_graph` + graph_status 领取/置位/自愈领取函数
 - `docker-compose.yaml` —— `neo4j` 服务与卷
@@ -263,7 +290,9 @@ class WorkerCtx(TypedDict):
 - **单元**:
   - `extract_entities` 的 JSON 解析(纯 JSON、```json 代码块、非法 JSON 兜底)——已可测
   - 无向关系 name 排序规范化
+  - 同一任务内多 chunk 同名实体预聚合(chunk_ids 并集、type 众数、关系 keywords 并集)
   - `purge_document` / MERGE 的 Cypher 语句构造
+  - 抽取结果缓存:命中跳过 LLM、未命中回写、Redis 异常降级为直接调 LLM(内容 hash 作 key)
 - **集成**(`@pytest.mark.integration`,需 docker 起 neo4j):
   - 抽取 → 写图 → 查询验证节点/边
   - 重跑同一文档验证幂等(无残留、无重复、共享实体不误删)

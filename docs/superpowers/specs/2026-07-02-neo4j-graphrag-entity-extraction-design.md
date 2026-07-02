@@ -69,7 +69,6 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
 
 ```
 (:Entity {
-    kb_id:     知识库 ID (字符串)
     name:      实体名 (规范化后, 标题大小写)
     type:      实体类型 (Person / Location / ... / 其他)
     chunk_ids: [字符串数组]   ← 复合标识 chunk_uid = "doc:index", 累积去重
@@ -77,8 +76,11 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
 })
 ```
 
-- **唯一键 / 去重键**:`(kb_id, name)`。
-  约束:`CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE (e.kb_id, e.name) IS UNIQUE`
+> **单库简化**:本期(单知识库 demo)**不带 `kb_id`**,去重与检索均为全局。将来若需多知识库
+> 隔离,须把 `kb_id` 加入去重键 `(kb_id, name)` 与所有 Cypher 过滤,并重建图(见 §12)。
+
+- **唯一键 / 去重键**:`name`(全局同名即同一实体)。
+  约束:`CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE`
 - `type` 取首次写入值;后续冲突保留原值并记 warning(不覆盖)。
 - **溯源标识 `chunk_uid = f"{document_id}:{chunk_index}"`**:**不用** PG 主键 uuid。
   注意:重新入库会重新分 chunk,`chunk_index` 指向的文本会变、总数也可能变 ——
@@ -99,7 +101,7 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
 
 ```
 (:Entity)-[:RELATES {
-    kb_id, keywords:[...], doc_ids:[...]
+    keywords:[...], doc_ids:[...]
 }]->(:Entity)
 ```
 
@@ -110,7 +112,7 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
 
 ### 3.3 去重与冲突合并语义
 
-「同名合并」是设计目标(去重键 `(kb_id, name)`),但同一次抽取里多个 chunk 会产出重复项、
+「同名合并」是设计目标(去重键 `name`),但同一次抽取里多个 chunk 会产出重复项、
 且字段可能冲突(如 `type` 不一致)。**在 Python 侧先做一次内存预聚合,再批量写 Neo4j**,
 让冲突裁决集中、可单测,并减少写入行数(一个实体一行,而非每 chunk 一行):
 
@@ -134,14 +136,14 @@ purge 用 **2 条批量语句**在一个事务里完成,往返次数与文档 ch
 
 ```cypher
 -- ① 边:整体重写 doc_ids,空了就删
-MATCH (:Entity {kb_id:$kb})-[r:RELATES {kb_id:$kb}]-(:Entity)
+MATCH (:Entity)-[r:RELATES]-(:Entity)
 WHERE $doc IN r.doc_ids
 SET r.doc_ids = [d IN r.doc_ids WHERE d <> $doc]
 WITH r WHERE size(r.doc_ids) = 0
 DELETE r
 
 -- ② 节点:批量剔除该 doc 的 chunk_uid 与 doc_id,doc_ids 空则删节点
-MATCH (e:Entity {kb_id:$kb})
+MATCH (e:Entity)
 WHERE $doc IN e.doc_ids
 SET e.chunk_ids = [c IN e.chunk_ids WHERE NOT c STARTS WITH $prefix],
     e.doc_ids   = [d IN e.doc_ids WHERE d <> $doc]
@@ -149,7 +151,7 @@ WITH e WHERE size(e.doc_ids) = 0
 DETACH DELETE e
 ```
 
-参数:`$kb`=知识库 ID,`$doc`=document_id,`$prefix = f"{doc}:"`。
+参数:`$doc`=document_id,`$prefix = f"{doc}:"`。
 **顺序先边后节点**:先收敛边 `doc_ids` 并删空边,再收敛节点并 `DETACH DELETE` 兜底残留边。
 
 由于 `chunk_uid` 含 `"{doc}:"` 前缀(见 3.1),按前缀过滤即可**精确**移除该文档贡献,
@@ -171,7 +173,7 @@ DETACH DELETE e
    批量 `MERGE`(禁止逐实体一次往返)。累积用 `coalesce` + 列表去重,示例:
    ```cypher
    UNWIND $entities AS ent
-   MERGE (e:Entity {kb_id:$kb, name:ent.name})
+   MERGE (e:Entity {name:ent.name})
    ON CREATE SET e.type = ent.type
    SET e.chunk_ids = apoc.coll.toSet(coalesce(e.chunk_ids, []) + ent.chunk_ids),
        e.doc_ids   = apoc.coll.toSet(coalesce(e.doc_ids, []) + [$doc])
@@ -321,4 +323,5 @@ class WorkerCtx(TypedDict):
 - retriever / agent 侧的图查询与 GraphRAG 召回改造(后续独立迭代)
 - 实体消歧(同义不同名、别名归并)超出简单同名合并的部分
 - 实体 / 关系描述的持久化(本期精简掉)
+- **多知识库隔离**:本期去掉 `kb_id`,去重/检索为全局;多库隔离需加回 `kb_id` 并重建图(见 §3.1)
 - 前端知识图谱可视化

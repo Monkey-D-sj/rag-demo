@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from rag.common.logging import get_logger
 from rag.common.minio_client import get_object
+from rag.config import SplitStrategy
 from rag.document import store
 from rag.document.chunker import chunk
 from rag.document.parser import parse
@@ -17,11 +18,27 @@ logger = get_logger()
 
 
 def _parse_and_chunk(
-    data: bytes, content_type: str, chunk_size: int, chunk_overlap: int
-) -> list[str]:
-    """CPU 密集段(PDF 解析 + 切块)合并到一次调用,由调用方 to_thread 整体 offload。"""
+    data: bytes,
+    content_type: str,
+    strategy: SplitStrategy,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[tuple[str, dict[str, str]]]:
+    """CPU 密集段(PDF 解析 + 切块)合并到一次调用,由调用方 to_thread 整体 offload。
+
+    统一归一化为 (text, metadata):
+    - list[str] 策略 → metadata 为空 {}
+    - paragraph_semantic → text 取 content,章节标题存入 metadata["title"]
+    """
     text = parse(data, content_type)
-    return chunk(text, chunk_size, chunk_overlap)
+    chunks = chunk(strategy, text, chunk_size, chunk_overlap)
+    normalized: list[tuple[str, dict[str, str]]] = []
+    for c in chunks:
+        if isinstance(c, dict):
+            normalized.append((c["content"], {"title": c["title"]} if c["title"] else {}))
+        else:
+            normalized.append((c, {}))
+    return normalized
 
 
 async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
@@ -47,20 +64,21 @@ async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
             _parse_and_chunk,
             data,
             doc["content_type"],
+            settings.SPLIT_STRATEGY,
             settings.CHUNK_SIZE,
             settings.CHUNK_OVERLAP,
         )
         if not chunks:
             raise ValueError("切块结果为空,无可入库内容")
 
-        embedded: list[tuple[int, str, list[float]]] = []
+        embedded: list[tuple[int, str, list[float], dict[str, str]]] = []
         batch = settings.EMBEDDING_BATCH_SIZE
         index = 0
         for i in range(0, len(chunks), batch):
             window = chunks[i : i + batch]
-            vectors = await embedding.embed(window)
-            for text_piece, vector in zip(window, vectors):
-                embedded.append((index, text_piece, vector))
+            vectors = await embedding.embed([text for text, _ in window])
+            for (text_piece, meta), vector in zip(window, vectors):
+                embedded.append((index, text_piece, vector, meta))
                 index += 1
 
         await store.store_chunks_and_complete(

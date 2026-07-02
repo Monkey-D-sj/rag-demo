@@ -1,4 +1,5 @@
 import re
+from typing import assert_never
 
 from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 
@@ -32,6 +33,9 @@ def chunk_by_recursive_character(text: str, chunk_size: int, chunk_overlap: int)
         separators=_SEPARATORS,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        # _SEPARATORS 含章节标题正则；默认 is_separator_regex=False 会把它们 re.escape
+        # 成字面量导致永不命中，故显式开启正则模式。
+        is_separator_regex=True,
     )
     return splitter.split_text(text)
 
@@ -54,6 +58,8 @@ def chunk(
             return chunk_by_recursive_character(text, chunk_size, overlap)
         case SplitStrategy.paragraph_semantic:
             return chunk_by_paragraph_semantic(text, chunk_size, overlap)
+        case _:
+            assert_never(strategy)
 
 
 # 章内二次切分后，低于此阈值的碎片会被合并到相邻 chunk

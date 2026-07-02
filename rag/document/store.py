@@ -1,6 +1,7 @@
 import datetime
 import uuid
 
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from rag.db.postgres import get_cursor
@@ -239,9 +240,13 @@ async def store_chunks_and_complete(
     pool: AsyncConnectionPool,
     document_id: str,
     knowledge_base_id: str,
-    embedded: list[tuple[int, str, list[float]]],
+    embedded: list[tuple[int, str, list[float], dict[str, str]]],
 ) -> None:
-    """单事务:删旧 chunk → 插新 chunk → 置 done + chunk_count。可安全重放。"""
+    """单事务:删旧 chunk → 插新 chunk → 置 done + chunk_count。可安全重放。
+
+    embedded 每项为 (chunk_index, text, embedding, metadata);metadata 存入 JSONB 列
+    (如 paragraph_semantic 策略的章节标题 {"title": ...})。
+    """
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -252,9 +257,9 @@ async def store_chunks_and_complete(
                 await cur.executemany(
                     """
                     INSERT INTO document_chunks
-                        (document_id, knowledge_base_id, chunk_index, text, embedding)
+                        (document_id, knowledge_base_id, chunk_index, text, embedding, metadata)
                     VALUES
-                        (%(doc)s, %(kb)s, %(idx)s, %(text)s, %(emb)s)
+                        (%(doc)s, %(kb)s, %(idx)s, %(text)s, %(emb)s, %(meta)s)
                     """,
                     [
                         {
@@ -263,8 +268,9 @@ async def store_chunks_and_complete(
                             "idx": chunk_index,
                             "text": text,
                             "emb": embedding,
+                            "meta": Jsonb(metadata),
                         }
-                        for chunk_index, text, embedding in embedded
+                        for chunk_index, text, embedding, metadata in embedded
                     ],
                 )
             await cur.execute(

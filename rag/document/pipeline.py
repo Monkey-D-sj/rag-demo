@@ -84,6 +84,12 @@ async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
         await store.store_chunks_and_complete(
             pool, document_id, doc["knowledge_base_id"], embedded
         )
+
+        # 向量入库已完成;实体图抽取为 best-effort 增强,投递独立任务(阶段一)。
+        if settings.ENABLE_ENTITY_EXTRACTION:
+            await ctx["redis"].enqueue_job("extract_document_entities", document_id)
+        else:
+            await store.set_graph_status(pool, document_id, "skipped")
     except Exception as e:
         logger.exception("文档入库失败: %s", document_id)
         await store.set_status(pool, document_id, "failed", error=str(e)[:500])

@@ -117,3 +117,87 @@ async def test_ingest_empty_chunks_marks_failed(monkeypatch):
         await pipe.ingest_document(ctx, "d1")
     assert len(statuses) == 1
     assert statuses[0][0] == "failed" and statuses[0][1] is not None
+
+
+async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
+    enqueued = []
+
+    async def fake_claim(pool, doc_id):
+        return True
+
+    async def fake_get_document(pool, doc_id):
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
+
+    async def fake_store_complete(pool, doc_id, kb, embedded):
+        pass
+
+    async def fake_get_object(*a, **k):
+        return b"data"
+
+    class _Redis:
+        async def enqueue_job(self, name, *args):
+            enqueued.append((name, args))
+
+    monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
+    monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
+    monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
+    monkeypatch.setattr(pipe, "get_object", fake_get_object)
+    monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
+
+    class _FakeEmbedding:
+        async def embed(self, texts):
+            return [[0.0, 0.0, 0.0, 0.0] for _ in texts]
+
+    from types import SimpleNamespace
+    settings = SimpleNamespace(
+        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=True,
+    )
+    ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),
+           "settings": settings, "redis": _Redis()}
+
+    await pipe.ingest_document(ctx, "d1")
+    assert ("extract_document_entities", ("d1",)) in enqueued
+
+
+async def test_ingest_marks_graph_skipped_when_disabled(monkeypatch):
+    skipped = []
+
+    async def fake_claim(pool, doc_id):
+        return True
+
+    async def fake_get_document(pool, doc_id):
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
+
+    async def fake_store_complete(pool, doc_id, kb, embedded):
+        pass
+
+    async def fake_get_object(*a, **k):
+        return b"data"
+
+    async def fake_set_graph_status(pool, doc_id, status, error=None):
+        skipped.append((doc_id, status))
+
+    monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
+    monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
+    monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
+    monkeypatch.setattr(pipe.store, "set_graph_status", fake_set_graph_status)
+    monkeypatch.setattr(pipe, "get_object", fake_get_object)
+    monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
+
+    class _FakeEmbedding:
+        async def embed(self, texts):
+            return [[0.0, 0.0, 0.0, 0.0] for _ in texts]
+
+    from types import SimpleNamespace
+    settings = SimpleNamespace(
+        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=False,
+    )
+    ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),
+           "settings": settings, "redis": None}
+
+    await pipe.ingest_document(ctx, "d1")
+    assert ("d1", "skipped") in skipped

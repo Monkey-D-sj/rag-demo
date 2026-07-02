@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     MODEL_NAME: str = ""
     MODEL_URL: str = ""
 
+    # ── Graph / 实体抽取 ──
+    ENABLE_ENTITY_EXTRACTION: bool = False
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "neo4j_pass"
+    NEO4J_DATABASE: str = "neo4j"
+
     # ── Embedding ──
     EMBEDDING_KEY: str = ""
     EMBEDDING_URL: str = ""
@@ -72,6 +79,11 @@ class Settings(BaseSettings):
     def check_required(self) -> None:
         """校验必填配置项已设置；未设置则抛 ValueError，启动即失败。"""
         missing = [f for f in self._REQUIRED_FIELDS if not getattr(self, f)]
+        if self.ENABLE_ENTITY_EXTRACTION:
+            missing += [
+                f for f in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD", "NEO4J_DATABASE")
+                if not getattr(self, f)
+            ]
         if missing:
             raise ValueError(
                 f"缺少必要配置: {', '.join(missing)}，请检查 .env 文件"

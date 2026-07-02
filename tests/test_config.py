@@ -50,3 +50,35 @@ def test_settings_has_dlq_defaults():
     s = Settings()
     assert s.max_retry_rounds == 10
     assert s.retry_backoff_base == 60
+
+
+def test_settings_has_graph_defaults():
+    s = Settings()
+    assert s.ENABLE_ENTITY_EXTRACTION is False
+    assert s.NEO4J_URI == "bolt://localhost:7687"
+    assert s.NEO4J_USER == "neo4j"
+    assert s.NEO4J_DATABASE == "neo4j"
+
+
+def test_check_required_ignores_neo4j_when_extraction_disabled(monkeypatch):
+    monkeypatch.setenv("MODEL_KEY", "k")
+    monkeypatch.setenv("MODEL_NAME", "m")
+    monkeypatch.setenv("MODEL_URL", "u")
+    monkeypatch.setenv("EMBEDDING_KEY", "ek")
+    monkeypatch.setenv("EMBEDDING_URL", "eu")
+    monkeypatch.setenv("ENABLE_ENTITY_EXTRACTION", "false")
+    monkeypatch.setenv("NEO4J_PASSWORD", "")
+    Settings().check_required()  # 不抛
+
+
+def test_check_required_needs_neo4j_when_extraction_enabled(monkeypatch):
+    monkeypatch.setenv("MODEL_KEY", "k")
+    monkeypatch.setenv("MODEL_NAME", "m")
+    monkeypatch.setenv("MODEL_URL", "u")
+    monkeypatch.setenv("EMBEDDING_KEY", "ek")
+    monkeypatch.setenv("EMBEDDING_URL", "eu")
+    monkeypatch.setenv("ENABLE_ENTITY_EXTRACTION", "true")
+    monkeypatch.setenv("NEO4J_PASSWORD", "")
+    import pytest
+    with pytest.raises(ValueError):
+        Settings().check_required()

@@ -281,3 +281,58 @@ async def store_chunks_and_complete(
                 """,
                 {"n": len(embedded), "id": document_id},
             )
+
+
+async def get_chunks_for_graph(
+    pool: AsyncConnectionPool, document_id: str
+) -> list[dict]:
+    """读取文档所有 chunk 供实体抽取:chunk_index、text、章节标题(metadata.title)。"""
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT chunk_index,
+                   text,
+                   metadata ->> 'title' AS title
+            FROM document_chunks
+            WHERE document_id = %(id)s
+            ORDER BY chunk_index
+            """,
+            {"id": document_id},
+        )
+        return await cur.fetchall()
+
+
+async def claim_graph_processing(
+    pool: AsyncConnectionPool, document_id: str
+) -> bool:
+    """原子领取图抽取:graph_status pending/failed → processing,返回是否成功。"""
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            UPDATE documents
+            SET graph_status = 'processing', updated_at = now()
+            WHERE id = %(id)s AND graph_status IN ('pending', 'failed')
+            RETURNING id
+            """,
+            {"id": document_id},
+        )
+        return await cur.fetchone() is not None
+
+
+async def set_graph_status(
+    pool: AsyncConnectionPool,
+    document_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> None:
+    """设置 graph_status(与向量入库 status 独立)。"""
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            UPDATE documents
+            SET graph_status = %(s)s, graph_error = %(e)s, updated_at = now()
+            WHERE id = %(id)s
+            """,
+            {"s": status, "e": error, "id": document_id},
+        )

@@ -35,8 +35,21 @@ services:
       - minio_data:/data
     restart: unless-stopped
 
+  neo4j:
+    image: neo4j:5-community
+    container_name: rag-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/neo4j_pass
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
 volumes:
   redis_data:
   pg_data:
   minio_data:
+  neo4j_data:
   # pg_data mounts to /var/lib/postgresql (not /data) for paradedb/postgres 18+ compatibility

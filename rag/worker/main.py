@@ -2,6 +2,7 @@ from arq.connections import RedisSettings
 from arq.cron import cron
 from arq.worker import run_worker
 from minio import Minio
+from neo4j import AsyncDriver
 from psycopg_pool import AsyncConnectionPool
 from typing import TypedDict
 
@@ -9,9 +10,13 @@ from rag.common.logging import get_logger, setup_logging
 from rag.common.minio_client import create_minio_client
 from rag.config import Settings, get_settings
 from rag.db import create_pg_pool
+from rag.db.neo4j import create_neo4j_driver, ensure_graph_constraints
 from rag.document import store
 from rag.document.pipeline import ingest_document
+from rag.graph.pipeline import extract_document_entities
+from rag.models.base import ChatModel
 from rag.models.embedding import EmbeddingModel
+from rag.models.normal import NormalModel
 
 logger = get_logger()
 
@@ -22,6 +27,8 @@ class WorkerCtx(TypedDict):
     minio: Minio
     bucket: str
     embedding: EmbeddingModel
+    neo4j: AsyncDriver
+    llm: ChatModel
 
 async def on_startup(ctx: dict) -> None:
     setup_logging()
@@ -32,10 +39,14 @@ async def on_startup(ctx: dict) -> None:
     ctx["minio"] = create_minio_client(settings)
     ctx["bucket"] = settings.MINIO_BUCKET
     ctx["embedding"] = EmbeddingModel(settings)
+    ctx["neo4j"] = create_neo4j_driver(settings)
+    ctx["llm"] = NormalModel(settings)
+    await ensure_graph_constraints(ctx["neo4j"], settings.NEO4J_DATABASE)
 
 
 async def on_shutdown(ctx: dict) -> None:
     await ctx["pg"].close()
+    await ctx["neo4j"].close()
 
 
 async def retry_failed_documents(ctx: dict) -> None:
@@ -56,7 +67,7 @@ async def retry_failed_documents(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [ingest_document]
+    functions = [ingest_document, extract_document_entities]
     on_startup = on_startup
     on_shutdown = on_shutdown
     cron_jobs = [
@@ -68,10 +79,10 @@ class WorkerSettings:
     # 控制在低并发,吞吐靠多开 worker 进程横向扩展。
     max_jobs = 4
     redis_settings = RedisSettings(
-        host=get_settings().redis_host,
-        port=get_settings().redis_port,
-        database=get_settings().arq_redis_db,
-        password=get_settings().redis_password,
+        host=get_settings().REDIS_HOST,
+        port=get_settings().REDIS_PORT,
+        database=get_settings().ARQ_REDIS_DB,
+        password=get_settings().REDIS_PASSWORD,
     )
 
 

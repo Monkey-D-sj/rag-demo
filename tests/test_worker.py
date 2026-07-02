@@ -20,3 +20,9 @@ def test_worker_retry_and_timeout_configured():
 
 def test_worker_uses_arq_redis_db():
     assert WorkerSettings.redis_settings.database == 1
+
+
+def test_worker_registers_extract_function():
+    from rag.graph.pipeline import extract_document_entities
+    from rag.worker.main import WorkerSettings
+    assert extract_document_entities in WorkerSettings.functions

@@ -28,7 +28,7 @@ target_metadata = None
 
 
 def _get_url() -> str:
-    return get_settings().pg_sync_url
+    return get_settings().PG_SYNC_URL
 
 
 def run_migrations_offline() -> None:

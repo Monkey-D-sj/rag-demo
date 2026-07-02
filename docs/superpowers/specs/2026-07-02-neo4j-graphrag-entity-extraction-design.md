@@ -90,19 +90,52 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
 - 同一对实体的边 `MERGE` 去重;`keywords` 累积去重。
 - 关系上**不存 descriptions**(同实体,冗余;需要时回 chunk)。
 
+### 3.3 去重与冲突合并语义
+
+「同名合并」是设计目标(去重键 `(kb_id, name)`),但同一次抽取里多个 chunk 会产出重复项、
+且字段可能冲突(如 `type` 不一致)。**在 Python 侧先做一次内存预聚合,再批量写 Neo4j**,
+让冲突裁决集中、可单测,并减少写入行数(一个实体一行,而非每 chunk 一行):
+
+- **实体**:按 `name` 分组 → `chunk_ids` 取并集;`type` 冲突用**众数**决定(平票取首次出现),
+  并记 warning。
+- **关系**:按「规范化方向后的 (源, 目标)」分组 → `keywords` 取并集。
+- **跨任务累积**(节点/边已存在):`type` 用 `ON CREATE SET`(仅新建时写),已存节点不覆盖 ——
+  即「最早写入者胜出」;`chunk_ids`/`doc_ids`/`keywords` 始终取并集累积。
+
+**已知局限(本期不解决)**:该策略是「同名即同一实体」。**同名不同义**的实体会被错误合并
+(如两个不同的「李明」,或「苹果」公司 vs 水果)。彻底解决需实体消歧(结合 type、上下文向量、
+别名库),已在 §12 列为范围之外;雏形阶段接受此取舍。
+
 ## 4. 幂等(文档重跑)
 
 文档重新入库时 PG 里 chunk 被删旧插新、`chunk_id` 变化;图侧必须清掉该文档旧贡献,
-否则残留悬空 chunk_id。实体跨文档共享(`MERGE`),不能直接删节点。**重跑前按 `doc_id` 清理**:
+否则残留悬空 chunk_id。实体跨文档共享(`MERGE`),不能直接删节点。**重跑前按 `doc_id` 清理**。
 
-1. `RELATES` 边:从 `doc_ids` 移除该 doc;数组空 → 删边。
-2. `Entity` 节点:从 `chunk_ids` 移除以 `"{doc_id}:"` 开头的项(即该文档的所有 chunk_uid)、
-   从 `doc_ids` 移除该 doc;`doc_ids` 变空 → 删节点(说明仅该文档提到它)。
-3. 再写入本次抽取结果。
+Cypher 是集合式语言,列表属性用列表推导可整体重写,**禁止逐边 / 逐节点遍历往返**(N+1 反模式)。
+purge 用 **2 条批量语句**在一个事务里完成,往返次数与文档 chunk 数无关,只和受影响子图大小有关:
 
-由于 `chunk_uid` 用稳定复合标识(见 3.1),按 `"{doc_id}:"` 前缀过滤即可**精确**移除该文档贡献,
-无需额外的 chunk→doc 映射。又因不存 descriptions,清理完全干净、无残留取舍。
-清理先于写入执行。
+```cypher
+-- ① 边:整体重写 doc_ids,空了就删
+MATCH (:Entity {kb_id:$kb})-[r:RELATES {kb_id:$kb}]-(:Entity)
+WHERE $doc IN r.doc_ids
+SET r.doc_ids = [d IN r.doc_ids WHERE d <> $doc]
+WITH r WHERE size(r.doc_ids) = 0
+DELETE r
+
+-- ② 节点:批量剔除该 doc 的 chunk_uid 与 doc_id,doc_ids 空则删节点
+MATCH (e:Entity {kb_id:$kb})
+WHERE $doc IN e.doc_ids
+SET e.chunk_ids = [c IN e.chunk_ids WHERE NOT c STARTS WITH $prefix],
+    e.doc_ids   = [d IN e.doc_ids WHERE d <> $doc]
+WITH e WHERE size(e.doc_ids) = 0
+DETACH DELETE e
+```
+
+参数:`$kb`=知识库 ID,`$doc`=document_id,`$prefix = f"{doc}:"`。
+**顺序先边后节点**:先收敛边 `doc_ids` 并删空边,再收敛节点并 `DETACH DELETE` 兜底残留边。
+
+由于 `chunk_uid` 用稳定复合标识(见 3.1),按 `"{doc}:"` 前缀过滤即可**精确**移除该文档贡献,
+无需额外的 chunk→doc 映射。又因不存 descriptions,清理完全干净、无残留取舍。清理先于写入执行。
 
 ## 5. 任务编排
 
@@ -115,6 +148,17 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
 3. 幂等清理:`graph.store.purge_document(doc_id)`。
 4. 逐 chunk 调 `extract_entities(llm, text, chapter_context=title)`,汇总实体与关系。
 5. `graph.store.write_entities_and_relations(...)`:MERGE 写入,累积 chunk_ids/doc_ids。
+   **批量写入**:用 `UNWIND $entities`/`UNWIND $relations` 把整篇文档的实体、关系各一条语句
+   批量 `MERGE`(禁止逐实体一次往返)。累积用 `coalesce` + 列表去重,示例:
+   ```cypher
+   UNWIND $entities AS ent
+   MERGE (e:Entity {kb_id:$kb, name:ent.name})
+   ON CREATE SET e.type = ent.type
+   SET e.chunk_ids = apoc.coll.toSet(coalesce(e.chunk_ids, []) + ent.chunk_ids),
+       e.doc_ids   = apoc.coll.toSet(coalesce(e.doc_ids, []) + [$doc])
+   ```
+   若不引入 APOC,列表去重改用纯 Cypher 列表推导(`[x IN a WHERE NOT x IN b] + b`);
+   实施计划阶段确定是否依赖 APOC(neo4j:5-community 默认不含,倾向纯 Cypher 去重)。
 6. `graph_status → done`。
 7. 异常:`graph_status=failed` 记 error,**re-raise** 交 arq 重试。
 

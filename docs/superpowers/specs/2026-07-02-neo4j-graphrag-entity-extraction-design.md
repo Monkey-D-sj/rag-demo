@@ -27,6 +27,17 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
 | 编排形态 | 独立 arq 任务 `extract_document_entities`(彻底解耦,生产级) |
 | 实体属性 | 精简版,**不存 descriptions**(溯源回 PG 取原文,描述冗余) |
 
+### 实施阶段划分(渐进)
+
+为控制首期复杂度,分两阶段。**本 spec 的实施计划只覆盖阶段一**;阶段二内容在文中标注 `[阶段二]`,
+保留设计但暂不实现。
+
+- **阶段一(MVP · 跑通链路)**:Neo4j 依赖/服务/连接封装、config、`graph_status`(不含 retry_count)、
+  `purge + 批量写`(幂等,正确性地基,必做)、`extract_document_entities` 任务、worker 注入
+  `neo4j`+`llm`、投递。失败置 `graph_status=failed` 记日志,**不自动重试、不缓存**。
+- **阶段二(健壮性 · 后续)**:抽取结果缓存(Redis+TTL)、arq 重试 + 死信自愈 cron + `graph_retry_count`。
+  两者配套 —— 有缓存,重试才不重复烧 LLM。
+
 ## 2. 架构与数据流
 
 ```
@@ -46,11 +57,11 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
      4. 逐 chunk 调 extract_entities(llm) → 实体/关系
      5. 写 Neo4j (MERGE 去重, chunk_ids/doc_ids 累积)
      6. graph_status → done
-     失败 → graph_status=failed, re-raise 交 arq 重试(不影响向量入库)
+     失败 → graph_status=failed 记日志(阶段一不自动重试;[阶段二]再加重试+自愈)
 ```
 
 向量入库(`status`)与图抽取(`graph_status`)**状态字段互相独立**,是 best-effort 语义的落点:
-图抽取失败 / 重试不影响已 `done` 的向量检索能力。
+图抽取失败不影响已 `done` 的向量检索能力。
 
 ## 3. Neo4j Schema
 
@@ -61,7 +72,7 @@ embedding → 写入 Postgres `document_chunks`(向量检索)。`rag/document/en
     kb_id:     知识库 ID (字符串)
     name:      实体名 (规范化后, 标题大小写)
     type:      实体类型 (Person / Location / ... / 其他)
-    chunk_ids: [字符串数组]   ← 稳定复合标识 chunk_uid, 累积去重
+    chunk_ids: [字符串数组]   ← 复合标识 chunk_uid = "doc:index", 累积去重
     doc_ids:   [字符串数组]   ← 来源 document_id, 用于重跑时精准清理
 })
 ```
@@ -153,8 +164,8 @@ DETACH DELETE e
 2. `get_chunks_for_graph(doc_id)`:返回 `[{chunk_index, text, title}]`(title 取自 chunk metadata,
    作章节上下文)。抽取时用 `chunk_uid = f"{doc_id}:{chunk_index}"` 作为实体的溯源标识。
 3. 幂等清理:`graph.store.purge_document(doc_id)`。
-4. 逐 chunk 抽取:**先查抽取结果缓存**(见 §5.2),命中直接用,未命中再调
-   `extract_entities(llm, text, chapter_context=title)` 并回写缓存;汇总实体与关系。
+4. 逐 chunk 调 `extract_entities(llm, text, chapter_context=title)`,汇总实体与关系。
+   `[阶段二]` 抽取前先查结果缓存(见 §5.2),命中跳过 LLM。
 5. `graph.store.write_entities_and_relations(...)`:MERGE 写入,累积 chunk_ids/doc_ids。
    **批量写入**:用 `UNWIND $entities`/`UNWIND $relations` 把整篇文档的实体、关系各一条语句
    批量 `MERGE`(禁止逐实体一次往返)。累积用 `coalesce` + 列表去重,示例:
@@ -168,9 +179,11 @@ DETACH DELETE e
    若不引入 APOC,列表去重改用纯 Cypher 列表推导(`[x IN a WHERE NOT x IN b] + b`);
    实施计划阶段确定是否依赖 APOC(neo4j:5-community 默认不含,倾向纯 Cypher 去重)。
 6. `graph_status → done`。
-7. 异常:`graph_status=failed` 记 error,**re-raise** 交 arq 重试。
+7. **异常处理(阶段一)**:置 `graph_status=failed` 并记 error,**不 re-raise、不自动重试**
+   (没有缓存,arq 重试会重复烧 LLM)。失败靠日志观测,人工重投。
+   `[阶段二]` 改为 re-raise 交 arq 重试 + 死信自愈(见 §5.4),配合缓存避免浪费。
 
-### 5.2 抽取结果缓存(避免重试重复调 LLM)
+### 5.2 抽取结果缓存(避免重试重复调 LLM)`[阶段二]`
 
 图抽取任务失败重试 / cron 自愈会重跑整篇文档;若不缓存,已抽过的 chunk 会重复调 LLM
 (大文档浪费显著)。**只缓存「LLM 抽取结果」这一步,不改变「purge + 批量写」的原子模型**:
@@ -191,7 +204,7 @@ DETACH DELETE e
 投递 `extract_document_entities(document_id)`;开关关闭时,把 `graph_status` 记为 `skipped`。
 投递本身失败仅告警,不影响文档 `status=done`。
 
-### 5.4 死信自愈
+### 5.4 死信自愈 `[阶段二]`
 
 新增**独立平行 cron**(与向量的 `retry_failed_documents` 解耦):扫描
 `graph_status='failed'` 且 `graph_retry_count < MAX_RETRY_ROUNDS` 的文档,按指数退避
@@ -203,12 +216,15 @@ DETACH DELETE e
 documents 表新增:
 
 ```sql
+-- 阶段一(0004)
 graph_status      TEXT DEFAULT 'pending'   -- pending/processing/done/failed/skipped
 graph_error       TEXT
+-- [阶段二](单独迁移 0005,配合死信自愈)
 graph_retry_count INT  NOT NULL DEFAULT 0
 ```
 
-downgrade 删除以上三列。
+阶段一迁移(0004)只加 `graph_status` + `graph_error`;`graph_retry_count` 留到阶段二单独迁移。
+downgrade 各自删除对应列。
 
 ## 7. 配置(`rag/config.py`)
 
@@ -218,7 +234,7 @@ NEO4J_URI:      str = "bolt://localhost:7687"
 NEO4J_USER:     str = "neo4j"
 NEO4J_PASSWORD: str = "neo4j_pass"
 NEO4J_DATABASE: str = "neo4j"
-ENTITY_CACHE_TTL: int = 30 * 24 * 3600   # 抽取结果缓存 TTL(秒),默认 30 天
+ENTITY_CACHE_TTL: int = 30 * 24 * 3600   # [阶段二] 抽取结果缓存 TTL(秒),默认 30 天
 ```
 
 `NEO4J_*` **仅在 `ENABLE_ENTITY_EXTRACTION=true` 时校验必填**(在 `check_required` 内条件校验),
@@ -249,8 +265,8 @@ neo4j:
 - 用 `neo4j.AsyncGraphDatabase`(原生异步,无需 `to_thread`),仿 `rag/db/postgres.py` 风格。
 - `create_neo4j_driver(settings) -> AsyncDriver`。
 - 约束初始化:worker `on_startup` 执行一次 `CREATE CONSTRAINT IF NOT EXISTS`。
-- worker `on_startup` 建 driver + `NormalModel` + redis 连接(均注入 `WorkerCtx`);
-  `on_shutdown` 关闭 driver 与 redis。redis 复用 `rag/db/redis.py` 的现有客户端构造。
+- worker `on_startup` 建 driver + `NormalModel`(注入 `WorkerCtx`);`on_shutdown` 关闭 driver。
+  `[阶段二]` 再加 redis 连接(复用 `rag/db/redis.py`),用于抽取结果缓存。
 - API 端只负责投递任务,不需要 driver。
 
 ### `WorkerCtx` 扩展
@@ -264,7 +280,7 @@ class WorkerCtx(TypedDict):
     embedding: EmbeddingModel
     neo4j: AsyncDriver          # 新增
     llm: ChatModel             # 新增
-    redis: Redis               # 新增:抽取结果缓存(§5.2)
+    redis: Redis               # [阶段二] 抽取结果缓存(§5.2)
 ```
 
 ## 10. 文件清单
@@ -273,13 +289,15 @@ class WorkerCtx(TypedDict):
 - `rag/db/neo4j.py` —— driver 封装 + 约束初始化
 - `rag/graph/__init__.py`
 - `rag/graph/store.py` —— MERGE 写实体/关系、`purge_document` 幂等清理
-- `rag/graph/cache.py` —— 抽取结果缓存读写(Redis + TTL,内容 hash 作 key,失败降级)
-- `rag/graph/pipeline.py` —— `extract_document_entities` 任务 + 自愈 cron 函数
-- `alembic/versions/0004_graph_status.py`
+- `rag/graph/pipeline.py` —— `extract_document_entities` 任务(`[阶段二]` 再加自愈 cron 函数)
+- `alembic/versions/0004_graph_status.py` —— 加 `graph_status` + `graph_error`
+- `[阶段二]` `rag/graph/cache.py` —— 抽取结果缓存读写(Redis + TTL,内容 hash 作 key,失败降级)
+- `[阶段二]` `alembic/versions/0005_graph_retry_count.py`
 
 **修改**
-- `rag/config.py` —— `ENABLE_ENTITY_EXTRACTION` + `NEO4J_*` + `ENTITY_CACHE_TTL` + 条件必填校验
-- `rag/worker/main.py` —— `WorkerCtx` 注入 `neo4j` + `llm` + `redis`,注册新任务与自愈 cron,`on_startup`/`on_shutdown`
+- `rag/config.py` —— `ENABLE_ENTITY_EXTRACTION` + `NEO4J_*` + 条件必填校验(`[阶段二]` `ENTITY_CACHE_TTL`)
+- `rag/worker/main.py` —— `WorkerCtx` 注入 `neo4j` + `llm`,注册新任务,`on_startup`/`on_shutdown`
+  (`[阶段二]` 再加 `redis` 与自愈 cron)
 - `rag/document/pipeline.py` —— 入库成功后按开关投递图抽取任务
 - `rag/document/store.py` —— `get_chunks_for_graph` + graph_status 领取/置位/自愈领取函数
 - `docker-compose.yaml` —— `neo4j` 服务与卷
@@ -292,7 +310,7 @@ class WorkerCtx(TypedDict):
   - 无向关系 name 排序规范化
   - 同一任务内多 chunk 同名实体预聚合(chunk_ids 并集、type 众数、关系 keywords 并集)
   - `purge_document` / MERGE 的 Cypher 语句构造
-  - 抽取结果缓存:命中跳过 LLM、未命中回写、Redis 异常降级为直接调 LLM(内容 hash 作 key)
+  - `[阶段二]` 抽取结果缓存:命中跳过 LLM、未命中回写、Redis 异常降级为直接调 LLM(内容 hash 作 key)
 - **集成**(`@pytest.mark.integration`,需 docker 起 neo4j):
   - 抽取 → 写图 → 查询验证节点/边
   - 重跑同一文档验证幂等(无残留、无重复、共享实体不误删)

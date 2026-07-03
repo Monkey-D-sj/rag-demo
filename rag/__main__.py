@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             i += 1
 
-    level = settings.log_level.upper()
+    level = settings.LOG_LEVEL.upper()
     # 开发用 RAG_RELOAD=1 开启热重载;生产保持关闭(默认),交由进程管理器/容器重启
     reload = _env_flag("RAG_RELOAD")
     logger.info("FastAPI 启动 → %s:%s (reload=%s)", host, port, reload)

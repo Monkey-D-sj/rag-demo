@@ -25,11 +25,11 @@ def test_settings_has_log_defaults():
     from rag.config import Settings
 
     s = Settings()
-    assert s.log_level == "INFO"
-    assert s.log_format == "text"
-    assert s.log_file is None
-    assert s.log_file_max_bytes == 10 * 1024 * 1024
-    assert s.log_file_backup_count == 5
+    assert s.LOG_LEVEL == "INFO"
+    assert s.LOG_FORMAT == "text"
+    assert s.LOG_FILE is None
+    assert s.LOG_FILE_MAX_BYTES == 10 * 1024 * 1024
+    assert s.LOG_FILE_BACKUP_COUNT == 5
 
 
 def test_settings_has_document_ingestion_defaults():

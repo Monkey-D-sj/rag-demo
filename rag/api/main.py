@@ -96,10 +96,10 @@ async def lifespan(app: FastAPI):
         logger.info("初始化 arq 任务队列")
         app.state.arq_pool = await create_pool(
             RedisSettings(
-                host=settings.redis_host,
-                port=settings.redis_port,
-                database=settings.arq_redis_db,
-                password=settings.redis_password,
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                database=settings.ARQ_REDIS_DB,
+                password=settings.REDIS_PASSWORD,
             )
         )
         stack.push_async_callback(_close("arq 任务队列", app.state.arq_pool.aclose))

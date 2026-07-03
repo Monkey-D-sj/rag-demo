@@ -144,7 +144,7 @@ def setup_logging(settings: Settings | None = None) -> None:
     root.handlers.clear()
 
     # 解析 level（非法则回退 INFO）
-    level_name = settings.log_level.upper()
+    level_name = settings.LOG_LEVEL.upper()
     invalid_level = level_name not in _VALID_LEVELS
     level = logging.INFO if invalid_level else getattr(logging, level_name)
     root.setLevel(level)
@@ -154,22 +154,22 @@ def setup_logging(settings: Settings | None = None) -> None:
     stream_handler.addFilter(_NameRewriter())
     use_color = bool(getattr(stream_handler.stream, "isatty", lambda: False)())
     stream_handler.setFormatter(
-        _build_formatter(settings.log_format, use_color=use_color)
+        _build_formatter(settings.LOG_FORMAT, use_color=use_color)
     )
     root.addHandler(stream_handler)
 
     # 可选文件 handler（始终非彩色）
-    if settings.log_file:
-        path = Path(settings.log_file)
+    if settings.LOG_FILE:
+        path = Path(settings.LOG_FILE)
         path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             filename=str(path),
-            maxBytes=settings.log_file_max_bytes,
-            backupCount=settings.log_file_backup_count,
+            maxBytes=settings.LOG_FILE_MAX_BYTES,
+            backupCount=settings.LOG_FILE_BACKUP_COUNT,
             encoding="utf-8",
         )
         file_handler.setFormatter(
-            _build_formatter(settings.log_format, use_color=False)
+            _build_formatter(settings.LOG_FORMAT, use_color=False)
         )
         root.addHandler(file_handler)
 
@@ -181,5 +181,5 @@ def setup_logging(settings: Settings | None = None) -> None:
 
     if invalid_level:
         _logger.warning(
-            "未知 log_level %r，已回退为 INFO", settings.log_level
+            "未知 LOG_LEVEL %r，已回退为 INFO", settings.LOG_LEVEL
         )

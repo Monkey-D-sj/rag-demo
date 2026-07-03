@@ -60,26 +60,26 @@ def _clean_root_handlers():
 
 
 def test_setup_logging_text_adds_stream_handler():
-    setup_logging(Settings(log_format="text"))
+    setup_logging(Settings(LOG_FORMAT="text"))
     root = logging.getLogger()
     assert len(root.handlers) == 1
     assert isinstance(root.handlers[0], logging.StreamHandler)
 
 
 def test_setup_logging_is_idempotent():
-    s = Settings(log_format="text")
+    s = Settings(LOG_FORMAT="text")
     setup_logging(s)
     setup_logging(s)
     assert len(logging.getLogger().handlers) == 1
 
 
 def test_setup_logging_respects_level():
-    setup_logging(Settings(log_level="WARNING"))
+    setup_logging(Settings(LOG_LEVEL="WARNING"))
     assert logging.getLogger().level == logging.WARNING
 
 
 def test_setup_logging_json_output_is_valid_json(capsys):
-    setup_logging(Settings(log_format="json"))
+    setup_logging(Settings(LOG_FORMAT="json"))
     logging.getLogger("rag.test").error("boom")
     err = capsys.readouterr().err
     line = [ln for ln in err.splitlines() if ln.strip()][-1]
@@ -90,7 +90,7 @@ def test_setup_logging_json_output_is_valid_json(capsys):
 
 def test_setup_logging_creates_file_and_parent_dir(tmp_path):
     log_path = tmp_path / "logs" / "app.log"
-    setup_logging(Settings(log_file=str(log_path)))
+    setup_logging(Settings(LOG_FILE=str(log_path)))
     from logging.handlers import RotatingFileHandler
     root = logging.getLogger()
     assert any(isinstance(h, RotatingFileHandler) for h in root.handlers)
@@ -102,7 +102,7 @@ def test_setup_logging_creates_file_and_parent_dir(tmp_path):
 
 
 def test_setup_logging_invalid_level_falls_back_to_info():
-    setup_logging(Settings(log_level="NOTALEVEL"))
+    setup_logging(Settings(LOG_LEVEL="NOTALEVEL"))
     assert logging.getLogger().level == logging.INFO
 
 
@@ -112,7 +112,7 @@ def test_setup_logging_tames_uvicorn_loggers():
     uv.addHandler(logging.NullHandler())
     uv.propagate = False
 
-    setup_logging(Settings(log_format="text"))
+    setup_logging(Settings(LOG_FORMAT="text"))
 
     for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
         lg = logging.getLogger(name)

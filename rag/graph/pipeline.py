@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from rag.common.logging import get_logger
 from rag.document import store
-from rag.document.entity_extraction import extract_entities
+from rag.document.entity_extraction import ExtractionResult, extract_entities
 from rag.graph.aggregate import aggregate
 from rag.graph.store import purge_document, write_graph
 
@@ -33,16 +34,43 @@ async def extract_document_entities(ctx: "WorkerCtx", document_id: str) -> None:
         return
 
     try:
+        logger.info("开始抽取文档 %s 实体/关系", document_id)
+        logger.info("开始从数据库获取文档 %s 的所有 chunk", document_id)
         chunks = await store.get_chunks_for_graph(pool, document_id)
-        extracted: list[tuple[str, object]] = []
-        for row in chunks:
+        logger.info("文档 %s 有 %d 个 chunk", document_id, len(chunks))
+
+        # 并发抽取:Semaphore 限制同时在飞的 LLM 请求数,防限流。
+        # 单 chunk 失败仅记日志并跳过(返回 None),不拖垮整篇;顺序无关,aggregate 按 name 合并。
+        concurrency = ctx["settings"].GRAPH_EXTRACT_CONCURRENCY
+        sem = asyncio.BoundedSemaphore(concurrency)
+
+        async def _extract_one(row) -> tuple[str, ExtractionResult] | None:
             chunk_uid = f"{document_id}:{row['chunk_index']}"
-            result = await extract_entities(
-                llm, row["text"],
-                chapter_context=row.get("title"),
-                language=_LANGUAGE,
+            async with sem:
+                try:
+                    result = await extract_entities(
+                        llm, row["text"],
+                        chapter_context=row.get("title"),
+                        language=_LANGUAGE,
+                    )
+                except Exception:  # noqa: BLE001 - 单 chunk 失败跳过,best-effort
+                    logger.exception("chunk %s 抽取失败,已跳过", chunk_uid)
+                    return None
+                return (chunk_uid, result)
+
+        results = await asyncio.gather(*(_extract_one(row) for row in chunks))
+        extracted = [r for r in results if r is not None]
+
+        failed = len(chunks) - len(extracted)
+        if chunks and not extracted:
+            # 全部 chunk 抽取失败(疑似 LLM 整体不可用):不 purge 旧图,
+            # 抛出走 except 分支标 failed,由 cron 退避重试自愈。
+            raise RuntimeError(f"全部 {len(chunks)} 个 chunk 抽取失败")
+        if failed:
+            logger.warning(
+                "文档 %s 有 %d/%d 个 chunk 抽取失败,已跳过",
+                document_id, failed, len(chunks),
             )
-            extracted.append((chunk_uid, result))
 
         entities, relations = aggregate(extracted)
 

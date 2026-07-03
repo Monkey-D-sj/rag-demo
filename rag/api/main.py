@@ -22,6 +22,7 @@ from rag.common.logging import get_logger, setup_logging
 from rag.common.minio_client import create_minio_client
 from rag.config import get_settings
 from rag.db import create_pg_pool, create_redis_client
+from rag.db.neo4j import create_neo4j_driver
 from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.memory.adapters.long_term_pgsql import PgVectorLongTermMemory
@@ -93,6 +94,10 @@ async def lifespan(app: FastAPI):
         # minio 为同步 SDK,内部 urllib3 连接池随对象回收,无需显式关闭
         app.state.minio = create_minio_client(settings)
         logger.info("minio 客户端初始化完成")
+        logger.info("初始化 neo4j 图数据库")
+        app.state.neo4j = create_neo4j_driver(settings)
+        stack.push_async_callback(_close("neo4j 图数据库", app.state.neo4j.close))
+        logger.info("neo4j 图数据库初始化完成")
         logger.info("初始化 arq 任务队列")
         app.state.arq_pool = await create_pool(
             RedisSettings(

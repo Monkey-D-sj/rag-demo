@@ -39,6 +39,15 @@ async def health(request: Request):
         checks["minio"] = f"error: {e}"
         healthy = False
 
+    # ── Neo4j ──
+    try:
+        neo4j = request.app.state.neo4j
+        await neo4j.verify_connectivity()
+        checks["neo4j"] = "ok"
+    except Exception as e:
+        checks["neo4j"] = f"error: {e}"
+        healthy = False
+
     return JSONResponse(
         status_code=200 if healthy else 503,
         content={"status": "ok" if healthy else "degraded", "checks": checks},

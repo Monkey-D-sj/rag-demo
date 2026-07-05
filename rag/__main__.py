@@ -64,39 +64,13 @@ def main(argv: list[str] | None = None) -> None:
         # factory,改用上面 set_event_loop_policy 设定的 SelectorEventLoop。
         loop="none",
         log_level=level,
-        log_config={
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "colored": {
-                    "()": "rag.common.logging.ColorTextFormatter",
-                    "use_color": True,
-                },
-            },
-            "filters": {
-                "namer": {
-                    "()": "rag.common.logging._NameRewriter",
-                },
-            },
-            "handlers": {
-                "default": {
-                    "class": "logging.StreamHandler",
-                    "stream": "ext://sys.stderr",
-                    "formatter": "colored",
-                    "filters": ["namer"],
-                },
-            },
-            "root": {
-                "level": level,
-                "handlers": ["default"],
-            },
-            "loggers": {
-                "uvicorn": {"handlers": [], "propagate": True},
-                "uvicorn.access": {"handlers": [], "propagate": True},
-                "uvicorn.error": {"handlers": [], "propagate": True},
-                "watchfiles.main": {"handlers": [], "propagate": True},
-            },
-        },
+        # log_config=None:不让 uvicorn 用它自带的默认配置执行
+        # logging.config.dictConfig() 重新构建 root handler —— 那会整个覆盖掉
+        # 上面 setup_logging() 已经装好的、挂了 _SessionContextFilter 的 console
+        # handler(session=<id> 后缀因此丢失)。uvicorn/uvicorn.access/
+        # uvicorn.error/watchfiles.main 的收编(handlers 清空 + propagate=True)
+        # 已由 setup_logging() 统一做过,这里不需要重复配置。
+        log_config=None,
     )
 
 

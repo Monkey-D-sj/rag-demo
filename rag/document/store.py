@@ -1,6 +1,7 @@
 import datetime
 import uuid
 
+from pgvector import Vector
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
@@ -59,7 +60,7 @@ async def search_chunks(
             ORDER BY embedding <=> %(emb)s
             LIMIT %(k)s
             """,
-            {"emb": embedding, "kb": knowledge_base_id, "k": top_k},
+            {"emb": Vector(embedding), "kb": knowledge_base_id, "k": top_k},
         )
         return await cur.fetchall()
 
@@ -269,7 +270,7 @@ async def store_chunks_and_complete(
                             "kb": knowledge_base_id,
                             "idx": chunk_index,
                             "text": text,
-                            "emb": embedding,
+                            "emb": Vector(embedding),
                             "meta": Jsonb(metadata),
                         }
                         for chunk_index, text, embedding, metadata in embedded

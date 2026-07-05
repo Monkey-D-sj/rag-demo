@@ -18,7 +18,7 @@ logger = get_logger()
 _LANGUAGE = "中文"
 
 
-async def extract_document_entities(ctx: "WorkerCtx", document_id: str) -> None:
+async def extract_document_entities(ctx: WorkerCtx, document_id: str) -> None:
     """独立 arq 任务:抽取整篇文档实体/关系并写入 Neo4j。
 
     best-effort(阶段一):失败置 graph_status=failed 记日志,不 re-raise、不重试。

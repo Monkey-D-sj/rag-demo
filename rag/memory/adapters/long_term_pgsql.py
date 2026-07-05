@@ -1,5 +1,6 @@
 import uuid
 
+from pgvector import Vector
 from psycopg.types.json import Json
 
 from rag.db.postgres import get_cursor
@@ -24,7 +25,7 @@ class PgVectorLongTermMemory(LongTermMemoryAdapter):
                 INSERT INTO long_term_memories (id, text, embedding, metadata)
                 VALUES (%(id)s, %(text)s, %(embedding)s, %(metadata)s)
                 """,
-                {"id": memory_id, "text": text, "embedding": embedding, "metadata": Json(merged)},
+                {"id": memory_id, "text": text, "embedding": Vector(embedding), "metadata": Json(merged)},
             )
         return memory_id
 
@@ -39,7 +40,7 @@ class PgVectorLongTermMemory(LongTermMemoryAdapter):
             WHERE metadata->>'session_id' = %(session_id)s
         """
         params: dict = {
-            "embedding": query_embedding,
+            "embedding": Vector(query_embedding),
             "session_id": session_id,
             "top_k": top_k,
         }
@@ -69,7 +70,7 @@ class PgVectorLongTermMemory(LongTermMemoryAdapter):
                     updated_at = now()
                 WHERE id = %(id)s
                 """,
-                {"id": memory_id, "text": text, "embedding": embedding, "metadata": payload},
+                {"id": memory_id, "text": text, "embedding": Vector(embedding), "metadata": payload},
             )
 
     async def delete(self, memory_id: str) -> None:

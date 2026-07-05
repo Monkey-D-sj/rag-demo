@@ -42,8 +42,7 @@ export interface GraphRetryResult {
 
 /** 后端 /chat SSE 下发的事件的联合类型 */
 export type ChatEvent =
-  | { type: "query"; data: string }
-  | { type: "recall"; data: unknown }
-  | { type: "generate"; data: string }
-  | { type: "error"; data: string }
-  | { type: "done"; data: null };
+  | { type: "status";  data: string }
+  | { type: "message"; data: string }
+  | { type: "error";   data: string }
+  | { type: "done";    data: null };

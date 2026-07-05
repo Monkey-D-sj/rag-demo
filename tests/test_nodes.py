@@ -113,5 +113,5 @@ async def test_generate_streams_tokens_and_accumulates(monkeypatch):
     out = await generate_mod.generate(state, runtime)
 
     assert out["generated"] == "答案"
-    assert {"type": "token", "data": "答"} in emitted
-    assert {"type": "token", "data": "案"} in emitted
+    assert {"type": "message", "data": "答"} in emitted
+    assert {"type": "message", "data": "案"} in emitted

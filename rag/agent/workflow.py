@@ -24,19 +24,12 @@ graph = builder.compile()
 
 
 async def invoke(session_id: str, query: str, context: ContextSchema):
-    """归一化事件流:
-
-    - custom 通道:节点 writer 发出的 {"type": "status"|"token", ...},原样透传;
-      最终生成节点接入时,逐 token 走 {"type": "token"} 即可。
-    - updates 通道:节点产出的 state 增量,包装为 {"type": "update", "node", "data"}。
+    """归一化事件流:仅保留 custom 通道事件(status/message/error),
+    updates 通道(state 增量)不再下发。
     """
     async for mode, chunk in graph.astream(
         {"session_id": session_id, "raw_query": query},
         context=context,
-        stream_mode=["custom", "updates"],
+        stream_mode=["custom"],
     ):
-        if mode == "custom":
-            yield chunk
-        else:
-            for node, payload in chunk.items():
-                yield {"type": "update", "node": node, "data": payload}
+        yield chunk

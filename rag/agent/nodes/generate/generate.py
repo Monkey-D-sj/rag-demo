@@ -34,7 +34,7 @@ async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
         if not token:
             continue
         parts.append(token)
-        writer({"type": "token", "data": token})
+        writer({"type": "message", "data": token})
 
     state["generated"] = "".join(parts)
     return state

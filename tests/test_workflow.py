@@ -34,25 +34,21 @@ async def test_invoke_runs_full_graph_with_context():
         llm=_FakeLLM(), memory_manager=_FakeMM(), retriever=retriever
     )
 
-    merged = {}
-    statuses = []
-    tokens = []
+    statuses: list[str] = []
+    messages: list[str] = []
     async for event in wf.invoke("s1", "q1", ctx):
-        if event["type"] == "update":
-            merged.update(event["data"])
-        elif event["type"] == "status":
+        if event["type"] == "status":
             statuses.append(event["data"])
-        elif event["type"] == "token":
-            tokens.append(event["data"])
+        elif event["type"] == "message":
+            messages.append(event["data"])
 
-    assert merged["context"] == "S1\nL1"
-    assert merged["rewrite_query"] == "rw"
-    # recall 节点用改写后的查询检索知识库,结果进入 state
+    # recall 节点用改写后的查询检索知识库
     assert retriever.calls == [("rw", "00000000-0000-0000-0000-000000000001")]
-    assert merged["recall_vec_results"] == [{"text": "KB1"}]
-    # 最终生成逐 token 流式,并累积为完整 generated
-    assert tokens == ["你好", "世界"]
-    assert merged["generated"] == "你好世界"
-    # 节点经由 custom 通道发出的进度事件也应透传
+
+    # 节点经由 custom 通道发出的进度事件
     assert "检索记忆中..." in statuses
     assert "检索知识库中..." in statuses
+    assert "生成回答中" in statuses
+
+    # 最终生成逐 token 流式
+    assert messages == ["你好", "世界"]

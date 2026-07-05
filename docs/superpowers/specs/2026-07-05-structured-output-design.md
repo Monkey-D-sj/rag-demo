@@ -79,6 +79,15 @@ function_calling 依赖提供方 tool calling 质量；DeepSeek 偶发 tool 参�
 若 smoke test 表现不佳，退路是在 `ainvoke_structured` 同一接口内改用
 `method="json_mode"` + Pydantic 校验，接口签名不变，调用方无感。
 
+### 实施修订（2026-07-05，smoke test 后）
+
+真实探测结果：`deepseek-v4-pro` thinking 模式拒绝强制 tool_choice（HTTP 400），
+`method="json_schema"` 返回 400 "unavailable"，裸 `json_mode` 不向模型传递 schema
+（字段名靠模型自猜，校验必败）。最终实现为退路的完整版：**`json_mode` + 在消息中
+注入 `schema.model_json_schema()` 的 SystemMessage**（插在开头 system 消息之后）。
+注入发生在 `NormalModel.ainvoke_structured` 内部，接口签名与调用方均不变。
+smoke 验证通过（西游记片段：6 实体含孙悟空、6 关系、全中文、类型在词表内）。
+
 ## 非目标
 
 - 实体命名归一（跨 chunk 别名合并）——后续单独立项。

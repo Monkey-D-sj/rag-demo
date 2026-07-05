@@ -145,10 +145,15 @@ class ColorTextFormatter(logging.Formatter):
                 pad = max(0, 8 - len(visible))
                 record.levelname = f"{color}{visible}{_RESET}{' ' * pad}"
         line = super().format(record)
-        # 文本格式不输出全量 extra(避免终端刷屏),仅追加关联 ID
-        sid = getattr(record, "session_id", None)
-        if sid:
-            line = f"{line} | session={sid}"
+        # extra 字段以紧凑 key=value 形式追加(排除标准属性和内部键)
+        extras: list[str] = []
+        for key in sorted(record.__dict__):
+            if key in _STD_RECORD_KEYS or key.startswith("_"):
+                continue
+            value = getattr(record, key, None)
+            extras.append(f"{key}={value}")
+        if extras:
+            line = f"{line} | {' '.join(extras)}"
         return line
 
 

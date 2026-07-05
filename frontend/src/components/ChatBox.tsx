@@ -1,9 +1,8 @@
 import { Component, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
 import { createChatStream } from "@/api/stream";
 
-// 将文本中 [n] 引用标记拆分为 React 节点（用于纯文本渲染）
+// 将文本中 [n] 引用标记拆分为 React 节点
 function renderContent(text: string): React.ReactNode[] {
   const parts = text.split(/(\[\d+\])/);
   return parts.map((part, i) => {
@@ -12,12 +11,7 @@ function renderContent(text: string): React.ReactNode[] {
   });
 }
 
-// 将 [1] [2] 等引用标记转为 <sup> HTML（用于 rehype-raw 渲染）
-function toSupHtml(text: string): string {
-  return text.replace(/\[(\d+)\]/g, "<sup>[$1]</sup>");
-}
-
-// ReactMarkdown 解析失败时降级为纯文本
+// ReactMarkdown 解析失败时降级为纯文本（含上标）
 class MarkdownSafe extends Component<{ content: string }> {
   state = { error: false };
 
@@ -27,10 +21,9 @@ class MarkdownSafe extends Component<{ content: string }> {
 
   render() {
     if (this.state.error) {
-      return <span className="whitespace-pre-wrap">{this.props.content}</span>;
+      return <span className="whitespace-pre-wrap">{renderContent(this.props.content)}</span>;
     }
-    const html = toSupHtml(this.props.content);
-    return <ReactMarkdown rehypePlugins={[rehypeRaw]}>{html}</ReactMarkdown>;
+    return <ReactMarkdown>{this.props.content}</ReactMarkdown>;
   }
 }
 

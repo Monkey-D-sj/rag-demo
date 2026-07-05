@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     LOG_FILE_MAX_BYTES: int = 10 * 1024 * 1024     # 单文件 10MB
     LOG_FILE_BACKUP_COUNT: int = 5                 # 轮转保留份数
 
+    # ── Loki ──
+    LOKI_ENABLED: bool = False
+    LOKI_URL: str = "http://localhost:3100"
+    LOKI_APP_LABEL: str = "rag-demo"
+
     _REQUIRED_FIELDS = (
         "MODEL_KEY", "MODEL_NAME", "MODEL_URL",
         "EMBEDDING_KEY", "EMBEDDING_URL",

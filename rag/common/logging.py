@@ -1,8 +1,12 @@
+import atexit
 import contextvars
 import datetime
 import inspect
 import json
 import logging
+import queue
+import threading
+import urllib.request
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -97,25 +101,25 @@ _TIME_COLOR = "\x1b[90m"     # dim gray
 _RESET = "\x1b[0m"
 
 _BANNER = """\x1b[1;36m
-   ╔══════════════════════════════════════════╗
-   ║                                          ║
-   ║\x1b[0m\x1b[1;36m     ██████╗  \x1b[1;35m █████╗  \x1b[1;36m ██████╗  \x1b[0m\x1b[1;36m     ║
-   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██╗\x1b[1;36m ██╔════╝  \x1b[0m\x1b[1;36m     ║
-   ║\x1b[0m\x1b[1;36m     ██████╔╝\x1b[1;35m ███████║\x1b[1;36m ██║  ███╗ \x1b[0m\x1b[1;36m     ║
-   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;36m     ║
-   ║\x1b[0m\x1b[1;36m     ██║  ██║\x1b[1;35m ██║  ██║\x1b[1;36m ╚██████╔╝ \x1b[0m\x1b[1;36m     ║
-   ║\x1b[0m\x1b[1;36m     ╚═╝  ╚═╝\x1b[1;35m ╚═╝  ╚═╝\x1b[1;36m  ╚═════╝  \x1b[0m\x1b[1;36m     ║
-   ║                                          ║
-   ║\x1b[0m\x1b[1;35m     ██████╗  \x1b[1;36m ███████╗\x1b[1;35m ███╗   ███╗\x1b[1;36m  ██████╗  \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
+   ╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+   ║                                                                                                                                    ║
+   ║\x1b[0m\x1b[1;36m     ██████╗  \x1b[1;35m █████╗  \x1b[1;36m ██████╗  \x1b[0m\x1b[1;36m                                             ║
+   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██╗\x1b[1;36m ██╔════╝  \x1b[0m\x1b[1;36m                                             ║
+   ║\x1b[0m\x1b[1;36m     ██████╔╝\x1b[1;35m ███████║\x1b[1;36m ██║  ███╗ \x1b[0m\x1b[1;36m                                             ║
+   ║\x1b[0m\x1b[1;36m     ██╔══██╗\x1b[1;35m ██╔══██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;36m                                             ║
+   ║\x1b[0m\x1b[1;36m     ██║  ██║\x1b[1;35m ██║  ██║\x1b[1;36m ╚██████╔╝ \x1b[0m\x1b[1;36m                                             ║
+   ║\x1b[0m\x1b[1;36m     ╚═╝  ╚═╝\x1b[1;35m ╚═╝  ╚═╝\x1b[1;36m  ╚═════╝  \x1b[0m\x1b[1;36m                                             ║
+   ║                                                                                                                                    ║
+   ║\x1b[0m\x1b[1;35m     ██████╗  \x1b[1;36m ███████╗\x1b[1;35m ███╗   ███╗\x1b[1;36m  ██████╗  \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m    ║
    ║\x1b[0m\x1b[1;35m     ██╔══██╗\x1b[1;36m ██╔════╝\x1b[1;35m ████╗ ████║\x1b[1;36m ██╔═══██╗ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
    ║\x1b[0m\x1b[1;35m     ██║  ██║\x1b[1;36m █████╗  \x1b[1;35m ██╔████╔██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
    ║\x1b[0m\x1b[1;35m     ██║  ██║\x1b[1;36m ██╔══╝  \x1b[1;35m ██║╚██╔╝██║\x1b[1;36m ██║   ██║ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
    ║\x1b[0m\x1b[1;35m     ██████╔╝\x1b[1;36m ███████╗\x1b[1;35m ██║ ╚═╝ ██║\x1b[1;36m ╚██████╔╝ \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
    ║\x1b[0m\x1b[1;35m     ╚═════╝ \x1b[1;36m ╚══════╝\x1b[1;35m ╚═╝     ╚═╝\x1b[1;36m  ╚═════╝  \x1b[0m\x1b[1;35m \x1b[0m\x1b[1;36m     ║
-   ║                                          ║
-   ║  \x1b[1;33m⚡\x1b[1;37m RAG 知识库 \x1b[0;90m│\x1b[1;33m 本地开发 \x1b[0;90m│\x1b[1;32m 就绪 \x1b[1;33m⚡\x1b[0m\x1b[1;36m    ║
-   ║                                          ║
-   ╚══════════════════════════════════════════╝\x1b[0m
+   ║                                                                                                                                    ║
+   ║\x1b[1;33m⚡\x1b[1;37m RAG 知识库 \x1b[0;90m│\x1b[1;33m 本地开发 \x1b[0;90m│\x1b[1;32m 就绪 \x1b[1;33m⚡\x1b[0m\x1b[1;36m                ║
+   ║                                                                                                                                    ║
+   ╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝\x1b[0m
 """
 
 _TEXT_FMT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
@@ -186,6 +190,114 @@ class _NameRewriter(logging.Filter):
         return True
 
 
+_LOKI_BATCH_SIZE = 100
+_LOKI_FLUSH_INTERVAL = 2.0  # 秒
+_LOKI_TIMEOUT = 3.0
+
+
+class _LokiHandler(logging.Handler):
+    """后台线程批量推送 JSON 日志到 Grafana Loki。
+
+    每条日志以 ``JsonFormatter`` 序列化,按 ``_LOKI_BATCH_SIZE`` 攒批,
+    ``_LOKI_FLUSH_INTERVAL`` 定时刷盘,避免同步 HTTP 阻塞调用线程。
+    Loki 不可达时静默丢日志(调高自身 logger 级别可查看丢弃计数)。
+    """
+
+    def __init__(self, url: str, labels: dict[str, str]):
+        super().__init__()
+        self._url = url.rstrip("/") + "/loki/api/v1/push"
+        self._labels = labels
+        self._queue: queue.Queue[tuple[int, str] | None] = queue.Queue()
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        atexit.register(self.close)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not self._running:
+            return
+        try:
+            ts_ns = str(int(record.created * 1e9))
+            line = self.format(record)
+            self._queue.put_nowait((record.levelno, f"{ts_ns} {line}"))
+        except Exception:
+            self.handleError(record)
+
+    def close(self) -> None:
+        self._running = False
+        self._queue.put_nowait(None)  # 通知后台线程退出
+        if self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+        super().close()
+
+    def _run(self) -> None:
+        """后台线程:攒批 → 推送。"""
+        batch: list[tuple[int, str]] = []
+        last_flush = datetime.datetime.now()
+
+        def _flush() -> None:
+            nonlocal batch, last_flush
+            if not batch:
+                return
+            payload = _build_loki_payload(batch, self._labels)
+            batch.clear()
+            last_flush = datetime.datetime.now()
+            try:
+                req = urllib.request.Request(
+                    self._url,
+                    data=json.dumps(payload, ensure_ascii=False).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(req, timeout=_LOKI_TIMEOUT)
+            except Exception:
+                pass  # Loki 不可达,静默丢弃(避免日志写日志的死循环)
+
+        while self._running:
+            try:
+                item = self._queue.get(timeout=_LOKI_FLUSH_INTERVAL)
+                if item is None:
+                    _flush()
+                    return
+                batch.append(item)
+                if len(batch) >= _LOKI_BATCH_SIZE:
+                    _flush()
+            except queue.Empty:
+                _flush()  # 超时,刷盘当前批次
+        _flush()
+
+
+def _build_loki_payload(
+    batch: list[tuple[int, str]], base_labels: dict[str, str]
+) -> dict:
+    """将批次合并为 Loki push API 的 streams 结构。
+    按 (level, logger) 分组,同组共享 stream labels,减少 HTTP body。
+    """
+    from collections import defaultdict
+
+    groups: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+    for levelno, line in batch:
+        try:
+            ts, body = line.split(" ", 1)
+        except ValueError:
+            ts, body = str(int(datetime.datetime.now().timestamp() * 1e9)), line
+        level = logging.getLevelName(levelno)
+        # 从 JSON line 中提取 logger(省得再传一遍)
+        try:
+            entry = json.loads(body)
+            logger_name = entry.get("logger", "unknown")
+        except Exception:
+            logger_name = "unknown"
+        groups[(level, logger_name)].append((ts, body))
+
+    streams = []
+    for (level, logger_name), values in groups.items():
+        streams.append({
+            "stream": {**base_labels, "level": level, "logger": logger_name},
+            "values": [[ts, body] for ts, body in values],
+        })
+    return {"streams": streams}
+
+
 def _build_formatter(log_format: str, *, use_color: bool) -> logging.Formatter:
     if log_format == "json":
         return JsonFormatter()
@@ -235,6 +347,16 @@ def setup_logging(settings: Settings | None = None) -> None:
             _build_formatter(settings.LOG_FORMAT, use_color=False)
         )
         root.addHandler(file_handler)
+
+    # 可选 Loki handler（JSON 格式,后台线程批量推送）
+    if settings.LOKI_ENABLED:
+        loki = _LokiHandler(
+            settings.LOKI_URL,
+            {"app": settings.LOKI_APP_LABEL},
+        )
+        loki.addFilter(_SessionContextFilter())
+        loki.setFormatter(JsonFormatter())
+        root.addHandler(loki)
 
     # 收编 uvicorn / watchfiles，统一走 root
     for name in ("uvicorn", "uvicorn.access", "uvicorn.error", "watchfiles.main"):

@@ -2,13 +2,18 @@ import { Component, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { createChatStream } from "@/api/stream";
 
-// 将文本中 [n] 引用标记拆分为 React 节点
+// 将文本中 [n] 引用标记拆分为 React 节点（用于流式 / 降级渲染）
 function renderContent(text: string): React.ReactNode[] {
   const parts = text.split(/(\[\d+\])/);
   return parts.map((part, i) => {
     const m = part.match(/^\[(\d+)\]$/);
     return m ? <sup key={i}>[{m[1]}]</sup> : part;
   });
+}
+
+// 转义 [n] 防止 ReactMarkdown 把它当成链接引用
+function escapeCitations(text: string): string {
+  return text.replace(/\[(\d+)\]/g, "\\[$1\\]");
 }
 
 // ReactMarkdown 解析失败时降级为纯文本（含上标）
@@ -23,7 +28,7 @@ class MarkdownSafe extends Component<{ content: string }> {
     if (this.state.error) {
       return <span className="whitespace-pre-wrap">{renderContent(this.props.content)}</span>;
     }
-    return <ReactMarkdown>{this.props.content}</ReactMarkdown>;
+    return <ReactMarkdown>{escapeCitations(this.props.content)}</ReactMarkdown>;
   }
 }
 

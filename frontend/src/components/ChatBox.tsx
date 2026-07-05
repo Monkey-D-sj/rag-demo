@@ -126,7 +126,7 @@ export default function ChatBox({
   };
 
   return (
-    <div className={`flex flex-col h-full ${className ?? ""}`}>
+    <div className={`flex flex-col h-full min-h-0 ${className ?? ""}`}>
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">

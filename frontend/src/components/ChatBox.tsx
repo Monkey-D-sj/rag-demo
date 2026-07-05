@@ -1,5 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { createChatStream } from "@/api/stream";
+
+// ReactMarkdown 解析失败时降级为纯文本
+class MarkdownSafe extends Component<{ content: string }> {
+  state = { error: false };
+
+  static getDerivedStateFromError() {
+    return { error: true };
+  }
+
+  render() {
+    if (this.state.error) {
+      return <span className="whitespace-pre-wrap">{this.props.content}</span>;
+    }
+    return <ReactMarkdown>{this.props.content}</ReactMarkdown>;
+  }
+}
 
 interface Message {
   role: "user" | "assistant";
@@ -120,7 +137,11 @@ export default function ChatBox({
                   {m.status && (
                     <p className="text-xs text-gray-500 mb-1">{m.status}</p>
                   )}
-                  <span className="whitespace-pre-wrap">{m.content}</span>
+                  {m.isStreaming ? (
+                    <span className="whitespace-pre-wrap">{m.content}</span>
+                  ) : (
+                    <MarkdownSafe content={m.content} />
+                  )}
                   {m.isStreaming && (
                     <span className="inline-block w-2 h-4 bg-emerald-400 ml-0.5 animate-pulse align-text-bottom" />
                   )}

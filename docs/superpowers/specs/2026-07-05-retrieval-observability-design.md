@@ -71,9 +71,15 @@ top-k）目前零日志：查询内容、召回结果、分数、耗时全部不
 
 - `LangfuseSettings(BaseSettings)`：`LANGFUSE_ENABLED: bool = False`、
   `LANGFUSE_HOST`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`（均从 env/.env 读取）。
-- `get_callback_handler(session_id: str) -> CallbackHandler | None` 工厂：
+- `get_callback_handler() -> CallbackHandler | None` 工厂：
   `LANGFUSE_ENABLED=false` 时返回 None（零开销，langfuse 容器未启动不影响服务）；
-  开启时返回配置好的 LangChain `CallbackHandler`，trace 以 session_id 关联。
+  开启时返回 LangChain `CallbackHandler`。
+  **实施修订（langfuse SDK v4 适配）**：v4 的 handler 构造不再接收凭据/session 参数，
+  改为工厂内显式初始化全局客户端（进程级 lru_cache），session 关联经
+  `session_scope`（`propagate_attributes`）与 astream config 的 metadata 传播；
+  另有 `observe_root` 让 producer 成为 trace 根 span，使 CallbackHandler 与
+  retriever 的 `@observe` span 嵌进同一条 trace。三个入口统一 `_tracing_active`
+  判据（开关 + 双 key 齐备）。
 
 ### 2.3 接线
 

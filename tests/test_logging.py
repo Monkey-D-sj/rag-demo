@@ -191,3 +191,10 @@ def test_text_formatter_appends_session_suffix():
 def test_text_formatter_no_suffix_without_session():
     line = ColorTextFormatter(use_color=False).format(_make_record())
     assert "session=" not in line
+
+
+def test_get_logger_returns_caller_module_name():
+    # 存量 bug 回归:模块顶层 get_logger() 曾错误追溯到 importlib 帧
+    import rag.document.retriever as m
+
+    assert m.logger.name == "rag.document.retriever"

@@ -25,8 +25,9 @@ def get_logger() -> logging.Logger:
     """
     frame = inspect.currentframe()
     try:
-        # 模块顶层调用时栈深度不足（只有 2 层），回退到 f_back
-        f = frame.f_back.f_back or frame.f_back  # type: ignore[union-attr]
+        # f_back 即调用方帧(模块顶层或函数内均可),其 __name__ 就是调用方模块名。
+        # 注意不能再往上走一层:模块顶层调用时 f_back.f_back 是 importlib 的帧。
+        f = frame.f_back  # type: ignore[union-attr]
         module_name = f.f_globals.get("__name__", "__unknown__")
     finally:
         del frame

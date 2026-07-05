@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { createChatStream } from "@/api/stream";
 
 interface Message {
@@ -121,12 +120,7 @@ export default function ChatBox({
                   {m.status && (
                     <p className="text-xs text-gray-500 mb-1">{m.status}</p>
                   )}
-                  {/* 流式中纯文本，完成后 ReactMarkdown */}
-                  {m.isStreaming ? (
-                    <span className="whitespace-pre-wrap">{m.content}</span>
-                  ) : (
-                    <ReactMarkdown>{m.content}</ReactMarkdown>
-                  )}
+                  <span className="whitespace-pre-wrap">{m.content}</span>
                   {m.isStreaming && (
                     <span className="inline-block w-2 h-4 bg-emerald-400 ml-0.5 animate-pulse align-text-bottom" />
                   )}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from pydantic import BaseModel, Field, field_validator
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -113,25 +113,58 @@ human_extract_prompt = """{chapter_block}**---输入文本---**
 """
 
 
-@dataclass(slots=True)
-class Entity:
-    name: str
-    type: str
-    description: str
+# 实体类型封闭集合;validator 兜底非法值,与 prompt 类型指南保持同步。
+ENTITY_TYPES = frozenset({
+    "Person", "Creature", "Organization", "Location", "Event", "Concept",
+    "Method", "Content", "Data", "Artifact", "NaturalObject", "其他",
+})
 
 
-@dataclass(slots=True)
-class Relationship:
-    source: str
-    target: str
-    keywords: str
-    description: str
+class Entity(BaseModel):
+    name: str = Field(description="实体名称;不区分大小写时用标题大小写,整篇命名保持一致")
+    type: str = Field(
+        default="其他",
+        description="实体类型,必须是类型指南给出的类型之一;均不适用时用「其他」",
+    )
+    description: str = Field(
+        default="", description="仅基于输入文本的实体属性与活动的简明描述"
+    )
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip_name(cls, v: object) -> str:
+        return str(v or "").strip()
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _coerce_type(cls, v: object) -> str:
+        v = str(v or "").strip()
+        return v if v in ENTITY_TYPES else "其他"
 
 
-@dataclass(slots=True)
-class ExtractionResult:
-    entities: list[Entity] = field(default_factory=list)
-    relationships: list[Relationship] = field(default_factory=list)
+class Relationship(BaseModel):
+    source: str = Field(description="源实体名称,须与实体列表中的 name 一致")
+    target: str = Field(description="目标实体名称,须与实体列表中的 name 一致")
+    keywords: str = Field(
+        default="", description="概括关系总体性质、概念或主题的高级关键词,逗号分隔"
+    )
+    description: str = Field(
+        default="", description="源实体与目标实体关系性质的简要说明"
+    )
+
+    @field_validator("source", "target", mode="before")
+    @classmethod
+    def _strip_endpoint(cls, v: object) -> str:
+        return str(v or "").strip()
+
+
+class ExtractionResult(BaseModel):
+    entities: list[Entity] = Field(
+        default_factory=list, description="从输入文本提取的实体列表"
+    )
+    relationships: list[Relationship] = Field(
+        default_factory=list, description="已提取实体之间的关系列表"
+    )
 
 
 def _strip_code_fence(raw: str) -> str:

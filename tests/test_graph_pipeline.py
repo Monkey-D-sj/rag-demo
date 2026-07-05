@@ -41,8 +41,13 @@ async def test_happy_path_writes_graph_and_marks_done(monkeypatch):
 
     async def fake_extract(llm, text, *, chapter_context=None, **kw):
         return ExtractionResult(
-            entities=[Entity("孙悟空", "Person", ""), Entity("唐僧", "Person", "")],
-            relationships=[Relationship("孙悟空", "唐僧", "师徒", "")],
+            entities=[
+                Entity(name="孙悟空", type="Person"),
+                Entity(name="唐僧", type="Person"),
+            ],
+            relationships=[
+                Relationship(source="孙悟空", target="唐僧", keywords="师徒"),
+            ],
         )
 
     async def fake_purge(driver, database, doc_id):
@@ -87,8 +92,13 @@ async def test_partial_chunk_failure_skips_and_marks_done(monkeypatch):
         if "BOOM" in text:
             raise RuntimeError("llm down")
         return ExtractionResult(
-            entities=[Entity("孙悟空", "Person", ""), Entity("唐僧", "Person", "")],
-            relationships=[Relationship("孙悟空", "唐僧", "师徒", "")],
+            entities=[
+                Entity(name="孙悟空", type="Person"),
+                Entity(name="唐僧", type="Person"),
+            ],
+            relationships=[
+                Relationship(source="孙悟空", target="唐僧", keywords="师徒"),
+            ],
         )
 
     async def fake_purge(driver, database, doc_id):

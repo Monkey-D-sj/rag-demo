@@ -97,7 +97,10 @@ ENTITY_TYPES = frozenset({
 
 
 class Entity(BaseModel):
-    name: str = Field(description="实体名称;不区分大小写时用标题大小写,整篇命名保持一致")
+    name: str = Field(
+        default="",
+        description="实体名称(必填);不区分大小写时用标题大小写,整篇命名保持一致",
+    )
     type: str = Field(
         default="其他",
         description="实体类型,必须是类型指南给出的类型之一;均不适用时用「其他」",
@@ -109,18 +112,18 @@ class Entity(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def _strip_name(cls, v: object) -> str:
-        return str(v or "").strip()
+        return "" if v is None else str(v).strip()
 
     @field_validator("type", mode="before")
     @classmethod
     def _coerce_type(cls, v: object) -> str:
-        v = str(v or "").strip()
+        v = "" if v is None else str(v).strip()
         return v if v in ENTITY_TYPES else "其他"
 
 
 class Relationship(BaseModel):
-    source: str = Field(description="源实体名称,须与实体列表中的 name 一致")
-    target: str = Field(description="目标实体名称,须与实体列表中的 name 一致")
+    source: str = Field(default="", description="源实体名称(必填),须与实体列表中的 name 一致")
+    target: str = Field(default="", description="目标实体名称(必填),须与实体列表中的 name 一致")
     keywords: str = Field(
         default="", description="概括关系总体性质、概念或主题的高级关键词,逗号分隔"
     )
@@ -131,7 +134,7 @@ class Relationship(BaseModel):
     @field_validator("source", "target", mode="before")
     @classmethod
     def _strip_endpoint(cls, v: object) -> str:
-        return str(v or "").strip()
+        return "" if v is None else str(v).strip()
 
 
 class ExtractionResult(BaseModel):

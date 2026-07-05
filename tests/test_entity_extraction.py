@@ -70,3 +70,16 @@ async def test_happy_path_passes_through():
     assert len(result.entities) == 2
     assert len(result.relationships) == 1
     assert llm.calls == 1
+
+
+async def test_entity_missing_name_dropped_not_fatal():
+    # 模型漏掉 name 字段时整个结果仍可解析,该记录被过滤而不是整 chunk 失败
+    raw = ExtractionResult.model_validate(
+        {
+            "entities": [{"type": "Person"}, {"name": "唐僧", "type": "Person"}],
+            "relationships": [],
+        }
+    )
+    llm = _FakeLLM(raw)
+    result = await extract_entities(llm, "text")
+    assert [e.name for e in result.entities] == ["唐僧"]

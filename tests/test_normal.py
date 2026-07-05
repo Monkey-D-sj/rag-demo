@@ -1,5 +1,6 @@
 import pytest
 from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ValidationError
 from tenacity import wait_none
 
@@ -99,16 +100,25 @@ async def test_non_retryable_llm_error_propagates_immediately():
     assert fake.calls == 1
 
 
-async def test_schema_instruction_injected_after_leading_system_messages():
-    from langchain_core.messages import HumanMessage, SystemMessage
-
+async def test_schema_instruction_merged_into_leading_system_message():
     m, fake = _model_with([_Out(x=1)])
     await m.ainvoke_structured(
         [SystemMessage(content="sys"), HumanMessage(content="hi")], _Out
     )
     msgs = fake.last_messages
-    assert isinstance(msgs[1], SystemMessage)
-    assert "JSON Schema" in msgs[1].content
-    assert '"x"' in msgs[1].content  # schema 字段名确实传给了模型
-    assert msgs[0].content == "sys"
-    assert msgs[2].content == "hi"
+    assert len(msgs) == 2
+    assert isinstance(msgs[0], SystemMessage)
+    assert msgs[0].content.startswith("sys")
+    assert "JSON Schema" in msgs[0].content
+    assert '"x"' in msgs[0].content  # schema 字段名确实传给了模型
+    assert msgs[1].content == "hi"
+
+
+async def test_schema_instruction_prepended_when_no_system_message():
+    m, fake = _model_with([_Out(x=1)])
+    await m.ainvoke_structured([HumanMessage(content="hi")], _Out)
+    msgs = fake.last_messages
+    assert len(msgs) == 2
+    assert isinstance(msgs[0], SystemMessage)
+    assert "JSON Schema" in msgs[0].content
+    assert msgs[1].content == "hi"

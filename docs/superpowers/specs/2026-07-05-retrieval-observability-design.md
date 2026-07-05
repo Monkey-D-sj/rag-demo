@@ -45,9 +45,9 @@ top-k）目前零日志：查询内容、召回结果、分数、耗时全部不
 ### 1.2 埋点
 
 - **`rag/document/retriever.py::search`**：INFO 一条，extra 含 `kb_id`、`query`（截断
-  200 字符）、`top_k`、`hits`（每项 chunk 标识 + score，具体字段名以
-  `store.search_chunks` 返回列为准）、`embed_ms`、`search_ms`（`time.perf_counter`）。
-  命中为空时改用 WARNING（检索质量最直接的信号）。
+  200 字符）、`top_k`、`hits`（每项 chunk 标识 + score + `text_preview` 正文前 80
+  字符——预览供日常排查，全文看 Langfuse trace）、`embed_ms`、`search_ms`
+  （`time.perf_counter`）。命中为空时改用 WARNING（检索质量最直接的信号）。
 - **`rag/agent/nodes/recall/recall.py`**：INFO 记录本次使用 `rewrite_query` 还是
   `raw_query`（rewrite 节点当前被禁用，此日志持续暴露该事实）。
 - **`rag/api/modules/chat/service.py::stream_chat`**：入口 `bind_session(session_id)`，

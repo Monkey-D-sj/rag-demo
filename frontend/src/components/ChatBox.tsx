@@ -117,7 +117,11 @@ export default function ChatBox({
                   {m.status && (
                     <p className="text-xs text-gray-500 mb-1">{m.status}</p>
                   )}
-                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                  {m.isStreaming ? (
+                    <span className="whitespace-pre-wrap">{m.content}</span>
+                  ) : (
+                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                  )}
                   {m.isStreaming && (
                     <span className="inline-block w-2 h-4 bg-emerald-400 ml-0.5 animate-pulse align-text-bottom" />
                   )}

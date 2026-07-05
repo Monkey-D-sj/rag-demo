@@ -58,9 +58,14 @@ top-k）目前零日志：查询内容、召回结果、分数、耗时全部不
 ### 2.1 依赖与部署
 
 - `pyproject.toml` 新增 `langfuse`（v3 SDK）。
-- `docker-compose.yaml` 新增 `langfuse-web`、`langfuse-worker`、`clickhouse` 三个服务；
-  postgres / redis / minio 复用现有实例（langfuse 使用独立 database、独立 Redis DB
-  index、独立 minio bucket），控制容器增量。
+- `docker-compose.yaml` 新增 `langfuse-web`、`langfuse-worker`、`clickhouse`、
+  `langfuse-postgres` 四个服务。postgres 不复用现有实例：现有的是 paradedb 镜像且
+  数据卷已初始化（init 脚本不会再执行，建第二个 database 需手工步骤，且 langfuse
+  迁移对 paradedb 的兼容性未验证），专用容器更确定。redis / minio 复用现有实例
+  （独立 DB index / 独立 bucket）。
+- 用 Langfuse v3 headless init 环境变量（`LANGFUSE_INIT_ORG_ID`、
+  `LANGFUSE_INIT_PROJECT_PUBLIC_KEY`/`SECRET_KEY` 等）预置组织/项目/API key，
+  使部署与验证全程无需人工点 UI，key 直接进 `.env`。
 
 ### 2.2 `rag/observability/langfuse.py`（新模块）
 

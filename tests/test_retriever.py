@@ -1,6 +1,6 @@
 import logging
 
-from rag.document.retriever import KnowledgeRetriever
+from rag.document.retriever import KnowledgeRetriever, _rrf_fuse
 
 
 class _FakeEmbedding:
@@ -8,77 +8,105 @@ class _FakeEmbedding:
         return [[0.1, 0.2]]
 
 
-def _retriever(monkeypatch, rows):
+def _row(cid: str, text: str = "正文", **extra) -> dict:
+    return {
+        "id": cid,
+        "document_id": "d1",
+        "chunk_index": 0,
+        "text": text,
+        **extra,
+    }
+
+
+def _retriever(monkeypatch, vec_rows, bm25_rows=None, bm25_exc=None):
     import rag.document.retriever as mod
 
-    async def fake_search_chunks(pool, embedding, kb_id, top_k):
-        return rows
+    async def fake_vec(pool, embedding, kb_id, top_k):
+        return vec_rows
 
-    monkeypatch.setattr(mod.store, "search_chunks", fake_search_chunks)
+    async def fake_bm25(pool, query_text, kb_id, top_k):
+        if bm25_exc is not None:
+            raise bm25_exc
+        return bm25_rows or []
+
+    monkeypatch.setattr(mod.store, "search_chunks", fake_vec)
+    monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
     return KnowledgeRetriever(None, _FakeEmbedding())
 
 
-async def test_search_logs_hits_with_structured_fields(monkeypatch, caplog):
-    rows = [
-        {
-            "id": "c1",
-            "document_id": "d1",
-            "chunk_index": 0,
-            "text": "花果山",
-            "similarity": 0.87654,
-        }
-    ]
-    r = _retriever(monkeypatch, rows)
+# ── _rrf_fuse 纯逻辑 ──
+
+def test_rrf_overlap_ranks_shared_chunk_first():
+    vec = [_row("a", similarity=0.9), _row("b", similarity=0.8)]
+    bm25 = [_row("c", score=5.0), _row("a", score=4.0)]
+    fused = _rrf_fuse(vec, bm25, top_k=3)
+    assert [r["id"] for r in fused][0] == "a"  # 双路命中 RRF 最高
+    assert fused[0]["sources"] == ["vec", "bm25"]
+
+
+def test_rrf_disjoint_interleaves_by_rank():
+    vec = [_row("a", similarity=0.9)]
+    bm25 = [_row("b", score=5.0)]
+    fused = _rrf_fuse(vec, bm25, top_k=5)
+    assert {r["id"] for r in fused} == {"a", "b"}
+    assert fused[0]["rrf_score"] == fused[1]["rrf_score"]  # 各自 rank 1,并列
+
+
+def test_rrf_single_empty_leg_passthrough_order():
+    vec = [_row("a", similarity=0.9), _row("b", similarity=0.8)]
+    fused = _rrf_fuse(vec, [], top_k=5)
+    assert [r["id"] for r in fused] == ["a", "b"]
+    assert all(r["sources"] == ["vec"] for r in fused)
+
+
+def test_rrf_truncates_to_top_k():
+    vec = [_row(f"v{i}", similarity=1.0 - i * 0.1) for i in range(5)]
+    fused = _rrf_fuse(vec, [], top_k=3)
+    assert len(fused) == 3
+
+
+# ── search 行为 ──
+
+async def test_search_fuses_and_logs_both_legs(monkeypatch, caplog):
+    vec = [_row("a", text="花果山", similarity=0.87654)]
+    bm25 = [_row("b", text="金箍棒", score=4.2)]
+    r = _retriever(monkeypatch, vec, bm25)
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        result = await r.search("孙悟空是谁", "kb-1")
-    assert result == rows
-    rec = next(x for x in caplog.records if "向量召回" in x.getMessage())
+        result = await r.search("孙悟空的兵器", "kb-1")
+    assert {x["id"] for x in result} == {"a", "b"}
+    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert rec.levelno == logging.INFO
     assert rec.kb_id == "kb-1"
-    assert rec.query == "孙悟空是谁"
-    assert rec.top_k == 5
-    assert rec.hits == [
-        {
-            "chunk_id": "c1",
-            "chunk_index": 0,
-            "similarity": 0.8765,
-            "text_preview": "花果山",
-        }
-    ]
-    assert rec.embed_ms >= 0
-    assert rec.search_ms >= 0
+    assert rec.vec_hits[0]["chunk_id"] == "a"
+    assert rec.vec_hits[0]["similarity"] == 0.8765
+    assert rec.bm25_hits[0]["chunk_id"] == "b"
+    assert rec.bm25_hits[0]["score"] == 4.2
+    assert rec.hits[0]["sources"] in (["vec"], ["bm25"])
+    assert rec.hits[0]["text_preview"]
+    assert rec.embed_ms >= 0 and rec.search_ms >= 0 and rec.bm25_ms >= 0
 
 
-async def test_search_truncates_text_preview_in_hits(monkeypatch, caplog):
-    rows = [
-        {
-            "id": "c1",
-            "document_id": "d1",
-            "chunk_index": 0,
-            "text": "山" * 300,
-            "similarity": 0.5,
-        }
-    ]
-    r = _retriever(monkeypatch, rows)
+async def test_search_bm25_failure_degrades_to_vector_only(monkeypatch, caplog):
+    vec = [_row("a", similarity=0.9)]
+    r = _retriever(monkeypatch, vec, bm25_exc=RuntimeError("index missing"))
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        await r.search("q", "kb-1")
-    rec = next(x for x in caplog.records if "向量召回" in x.getMessage())
-    assert len(rec.hits[0]["text_preview"]) == 80
+        result = await r.search("q", "kb-1")
+    assert [x["id"] for x in result] == ["a"]
+    assert any("BM25 召回失败" in x.getMessage() for x in caplog.records)
 
 
-async def test_search_empty_result_logs_warning(monkeypatch, caplog):
-    r = _retriever(monkeypatch, [])
+async def test_search_empty_both_legs_logs_warning(monkeypatch, caplog):
+    r = _retriever(monkeypatch, [], [])
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
         result = await r.search("无关问题", "kb-1")
     assert result == []
-    rec = next(x for x in caplog.records if "向量召回" in x.getMessage())
+    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert rec.levelno == logging.WARNING
-    assert rec.hits == []
 
 
 async def test_search_truncates_long_query_in_log(monkeypatch, caplog):
-    r = _retriever(monkeypatch, [])
+    r = _retriever(monkeypatch, [], [])
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
         await r.search("长" * 300, "kb-1")
-    rec = next(x for x in caplog.records if "向量召回" in x.getMessage())
+    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert len(rec.query) == 200

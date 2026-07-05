@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { createChatStream } from "@/api/stream";
 
@@ -21,27 +21,6 @@ export default function ChatBox({
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // 用 ref 累积流式内容，避免 100+ 次 setState
-  const streamContentRef = useRef("");
-  const streamStatusRef = useRef("");
-  const streamMsgIdxRef = useRef(-1);
-  const rafRef = useRef(0);
-
-  const flushStream = useCallback(() => {
-    const idx = streamMsgIdxRef.current;
-    if (idx < 0) return;
-    setMessages((prev) => {
-      const next = [...prev];
-      if (!next[idx]) return prev;
-      next[idx] = {
-        ...next[idx],
-        content: streamContentRef.current,
-        status: streamStatusRef.current || next[idx].status,
-      };
-      return next;
-    });
-  }, []);
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -54,74 +33,70 @@ export default function ChatBox({
     setInput("");
     setSending(true);
 
-    // 占位
     const assistantIdx = messages.length + 1;
     setMessages((prev) => [
       ...prev,
       { role: "assistant", content: "", isStreaming: true },
     ]);
 
-    // 初始化 ref
-    streamContentRef.current = "";
-    streamStatusRef.current = "";
-    streamMsgIdxRef.current = assistantIdx;
-
-    // 定时刷新：每 60ms 把累积内容同步到 state
-    const tick = () => {
-      flushStream();
-      rafRef.current = requestAnimationFrame(() => {
-        tick();
-      });
-    };
-    rafRef.current = requestAnimationFrame(() => {
-      tick();
-    });
-
+    let eventCount = 0;
     try {
       for await (const ev of createChatStream(sessionId, q)) {
-        switch (ev.type) {
-          case "status":
-            streamStatusRef.current = ev.data;
-            break;
-          case "message":
-            streamContentRef.current += ev.data;
-            break;
-          case "error":
-            streamContentRef.current += `\n\n> ⚠️ ${ev.data}`;
-            break;
-          case "done":
-            break;
+        eventCount++;
+        if (eventCount <= 5 || ev.type === "done" || ev.type === "error") {
+          console.log(`[SSE #${eventCount}]`, ev.type, ev.type === "message" ? `"${ev.data}"` : ev.data);
         }
+        setMessages((prev) => {
+          const next = [...prev];
+          const msg = next[assistantIdx];
+          if (!msg) return prev;
+
+          switch (ev.type) {
+            case "status":
+              next[assistantIdx] = { ...msg, status: ev.data };
+              break;
+            case "message":
+              next[assistantIdx] = {
+                ...msg,
+                content: msg.content + ev.data,
+              };
+              break;
+            case "error":
+              next[assistantIdx] = {
+                ...msg,
+                content: msg.content + `\n\n> ⚠️ ${ev.data}`,
+                isStreaming: false,
+              };
+              break;
+            case "done":
+              next[assistantIdx] = { ...msg, isStreaming: false };
+              break;
+          }
+          return next;
+        });
+
         if (ev.type === "done" || ev.type === "error") break;
       }
+      console.log(`[SSE] stream complete, total events: ${eventCount}`);
     } catch (err: unknown) {
+      console.error("[SSE] stream error:", err);
       const msg = err instanceof Error ? err.message : "unknown error";
-      streamContentRef.current = `> ❌ 请求失败: ${msg}`;
-    } finally {
-      cancelAnimationFrame(rafRef.current);
-      setSending(false);
-      // 最后一次同步：更新 content 并取消 streaming 标记
-      const idx = streamMsgIdxRef.current;
-      const finalContent = streamContentRef.current;
-      const finalStatus = streamStatusRef.current;
       setMessages((prev) => {
         const next = [...prev];
-        if (next[idx]) {
-          next[idx] = {
-            ...next[idx],
-            content: finalContent,
-            status: finalStatus || next[idx].status,
-            isStreaming: false,
-          };
-        }
+        next[assistantIdx] = {
+          role: "assistant",
+          content: `> ❌ 请求失败: ${msg}`,
+          isStreaming: false,
+        };
         return next;
       });
+    } finally {
+      setSending(false);
     }
   };
 
   return (
     <div className={`flex flex-col h-full ${className ?? ""}`}>
-      {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
@@ -146,6 +121,7 @@ export default function ChatBox({
                   {m.status && (
                     <p className="text-xs text-gray-500 mb-1">{m.status}</p>
                   )}
+                  {/* 流式中纯文本，完成后 ReactMarkdown */}
                   {m.isStreaming ? (
                     <span className="whitespace-pre-wrap">{m.content}</span>
                   ) : (
@@ -164,7 +140,6 @@ export default function ChatBox({
         <div ref={bottomRef} />
       </div>
 
-      {/* 输入框 */}
       <div className="border-t border-gray-800 p-4">
         <div className="flex gap-3">
           <input

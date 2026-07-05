@@ -2,9 +2,11 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Callable
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, ValidationError
 from tenacity import (
     AsyncRetrying,
     before_sleep_log,
@@ -22,6 +24,13 @@ logger = get_logger()
 
 ErrorHandler = Callable[[LLMException], None]
 ErrorHandlers = dict[int | str, ErrorHandler]
+
+
+def _is_retryable_structured(exc: BaseException) -> bool:
+    """结构化输出重试谓词:schema 解析/校验失败重新采样通常可修复,也视为可重试。"""
+    if isinstance(exc, (OutputParserException, ValidationError)):
+        return True
+    return is_retryable(exc)
 
 
 def dispatch_error(exc: LLMException, handlers: ErrorHandlers | None) -> None:
@@ -83,6 +92,28 @@ class NormalModel(ChatModel):
                 async with self._translate():
                     rsp = await self._model.ainvoke(messages)
                     return rsp.content
+        raise AssertionError("unreachable")
+
+    async def ainvoke_structured(
+        self, messages: list[BaseMessage | str], schema: type[BaseModel]
+    ) -> BaseModel:
+        """带重试的结构化输出调用:function_calling 方式强制模型按 schema 返回。"""
+        structured = self._model.with_structured_output(
+            schema, method="function_calling"
+        )
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
+            retry=retry_if_exception(_is_retryable_structured),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        ):
+            with attempt:
+                async with self._translate():
+                    result = await structured.ainvoke(messages)
+                    if result is None:
+                        raise OutputParserException("模型未返回结构化输出(未调用工具)")
+                    return result
         raise AssertionError("unreachable")
 
     async def astream(self, messages: list[BaseMessage | str]):

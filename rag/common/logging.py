@@ -1,3 +1,4 @@
+import contextvars
 import datetime
 import inspect
 import json
@@ -32,8 +33,41 @@ def get_logger() -> logging.Logger:
     return logging.getLogger(module_name)
 
 
+# ── session 关联:contextvars 贯穿单次请求内的所有日志 ──
+
+_session_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "log_session_id", default=None
+)
+
+
+def bind_session(session_id: str) -> contextvars.Token:
+    """绑定当前上下文的 session_id,返回 token 供 reset_session 恢复。"""
+    return _session_id_var.set(session_id)
+
+
+def reset_session(token: contextvars.Token) -> None:
+    _session_id_var.reset(token)
+
+
+class _SessionContextFilter(logging.Filter):
+    """把 contextvar 中的 session_id 注入日志记录;显式 extra 优先。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        sid = _session_id_var.get()
+        if sid and not hasattr(record, "session_id"):
+            record.session_id = sid
+        return True
+
+
+# LogRecord 标准属性集合;record.__dict__ 中此外的键视为 extra 结构化字段。
+# taskName 是 3.12 asyncio 加的,message/asctime 由 Formatter 动态注入。
+_STD_RECORD_KEYS = frozenset(
+    logging.LogRecord("", 0, "", 0, "", (), None).__dict__
+) | {"message", "asctime", "taskName"}
+
+
 class JsonFormatter(logging.Formatter):
-    """每行一个 JSON 的日志格式器（纯标准库）。"""
+    """每行一个 JSON 的日志格式器（纯标准库）;extra 字段自动并入输出。"""
 
     def format(self, record: logging.LogRecord) -> str:
         ts = datetime.datetime.fromtimestamp(record.created).isoformat()
@@ -43,9 +77,13 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        for key, value in record.__dict__.items():
+            if key not in _STD_RECORD_KEYS and key not in data:
+                data[key] = value
         if record.exc_info:
             data["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(data, ensure_ascii=False)
+        # default=str 兜底不可序列化值(datetime/UUID 等),日志不因序列化炸掉
+        return json.dumps(data, ensure_ascii=False, default=str)
 
 
 _LEVEL_COLORS = {
@@ -106,7 +144,12 @@ class ColorTextFormatter(logging.Formatter):
                 visible = record.levelname
                 pad = max(0, 8 - len(visible))
                 record.levelname = f"{color}{visible}{_RESET}{' ' * pad}"
-        return super().format(record)
+        line = super().format(record)
+        # 文本格式不输出全量 extra(避免终端刷屏),仅追加关联 ID
+        sid = getattr(record, "session_id", None)
+        if sid:
+            line = f"{line} | session={sid}"
+        return line
 
 
 _LOGGER_ALIASES = {
@@ -152,6 +195,7 @@ def setup_logging(settings: Settings | None = None) -> None:
     # 控制台 handler（默认 stderr）
     stream_handler = logging.StreamHandler()
     stream_handler.addFilter(_NameRewriter())
+    stream_handler.addFilter(_SessionContextFilter())
     use_color = bool(getattr(stream_handler.stream, "isatty", lambda: False)())
     stream_handler.setFormatter(
         _build_formatter(settings.LOG_FORMAT, use_color=use_color)
@@ -168,6 +212,7 @@ def setup_logging(settings: Settings | None = None) -> None:
             backupCount=settings.LOG_FILE_BACKUP_COUNT,
             encoding="utf-8",
         )
+        file_handler.addFilter(_SessionContextFilter())
         file_handler.setFormatter(
             _build_formatter(settings.LOG_FORMAT, use_color=False)
         )

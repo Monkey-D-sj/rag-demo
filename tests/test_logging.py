@@ -1,9 +1,17 @@
+import datetime
 import json
 import logging
 
 import pytest
 
-from rag.common.logging import JsonFormatter, ColorTextFormatter, setup_logging
+from rag.common.logging import (
+    ColorTextFormatter,
+    JsonFormatter,
+    _SessionContextFilter,
+    bind_session,
+    reset_session,
+    setup_logging,
+)
 from rag.config import Settings
 
 
@@ -118,3 +126,68 @@ def test_setup_logging_tames_uvicorn_loggers():
         lg = logging.getLogger(name)
         assert lg.handlers == []
         assert lg.propagate is True
+
+
+def _make_record(msg: str = "hello", **extra) -> logging.LogRecord:
+    record = logging.LogRecord(
+        "rag.test", logging.INFO, __file__, 1, msg, (), None
+    )
+    for k, v in extra.items():
+        setattr(record, k, v)
+    return record
+
+
+def test_json_formatter_includes_extra_fields():
+    out = json.loads(JsonFormatter().format(_make_record(kb_id="kb1", top_k=5)))
+    assert out["kb_id"] == "kb1"
+    assert out["top_k"] == 5
+
+
+def test_json_formatter_serializes_non_json_values_via_str():
+    rec = _make_record(when=datetime.datetime(2026, 7, 5, 12, 0, 0))
+    out = json.loads(JsonFormatter().format(rec))
+    assert "2026-07-05" in out["when"]
+
+
+def test_json_formatter_does_not_leak_std_attrs():
+    out = json.loads(JsonFormatter().format(_make_record()))
+    assert "args" not in out
+    assert "lineno" not in out
+    assert "levelno" not in out
+
+
+def test_session_filter_injects_and_resets():
+    f = _SessionContextFilter()
+    token = bind_session("s-1")
+    try:
+        record = _make_record()
+        assert f.filter(record) is True
+        assert record.session_id == "s-1"
+    finally:
+        reset_session(token)
+    record2 = _make_record()
+    f.filter(record2)
+    assert not hasattr(record2, "session_id")
+
+
+def test_session_filter_keeps_explicit_extra():
+    f = _SessionContextFilter()
+    token = bind_session("ctx-session")
+    try:
+        record = _make_record(session_id="explicit")
+        f.filter(record)
+        assert record.session_id == "explicit"
+    finally:
+        reset_session(token)
+
+
+def test_text_formatter_appends_session_suffix():
+    line = ColorTextFormatter(use_color=False).format(
+        _make_record(session_id="s-9")
+    )
+    assert line.endswith("| session=s-9")
+
+
+def test_text_formatter_no_suffix_without_session():
+    line = ColorTextFormatter(use_color=False).format(_make_record())
+    assert "session=" not in line

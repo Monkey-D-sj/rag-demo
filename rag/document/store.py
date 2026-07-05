@@ -1,6 +1,7 @@
 import datetime
 import uuid
 
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
@@ -98,6 +99,7 @@ async def list_documents(
             f"""
             SELECT id, knowledge_base_id, filename, content_type,
                    size_bytes, status, chunk_count, error,
+                   graph_status, graph_error,
                    created_at, updated_at,
                    COUNT(*) OVER() AS total
             FROM documents
@@ -162,7 +164,7 @@ async def claim_failed_for_retry(
     多个 cron 并发安全;只返回实际更新成功的 id。
     """
     async with pool.connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             # 1. 锁所有 candidate（避免并发 cron 抢同一行）
             await cur.execute(
                 """

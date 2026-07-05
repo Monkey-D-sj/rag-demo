@@ -1,6 +1,6 @@
 from arq.connections import RedisSettings
 from arq.cron import cron
-from arq.worker import run_worker
+from arq.worker import func, run_worker
 from minio import Minio
 from neo4j import AsyncDriver
 from psycopg_pool import AsyncConnectionPool
@@ -67,7 +67,7 @@ async def retry_failed_documents(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [ingest_document, extract_document_entities]
+    functions = [func(ingest_document), func(extract_document_entities, timeout=900)]
     on_startup = on_startup
     on_shutdown = on_shutdown
     cron_jobs = [

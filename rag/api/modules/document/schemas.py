@@ -40,6 +40,14 @@ class DocumentStatusResponse(BaseModel):
         default=None,
         description="失败原因（仅 failed 状态时有值）",
     )
+    graph_status: str | None = Field(
+        default=None,
+        description="实体抽取状态：pending/processing/done/failed/skipped",
+    )
+    graph_error: str | None = Field(
+        default=None,
+        description="实体抽取失败原因（仅 graph_status=failed 时有值）",
+    )
 
     model_config = {"json_schema_extra": {
         "examples": [
@@ -65,6 +73,8 @@ class DocumentListItem(BaseModel):
     status: DocumentStatus = Field(..., description="当前处理状态")
     chunk_count: int = Field(..., description="切块数量")
     error: str | None = Field(default=None, description="失败原因(仅 failed)")
+    graph_status: str | None = Field(default=None, description="实体抽取状态")
+    graph_error: str | None = Field(default=None, description="实体抽取失败原因")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="最近更新时间")
 
@@ -104,4 +114,20 @@ class DocumentRetryResponse(BaseModel):
                 "retry_count": None,
             },
         ]
+    }}
+
+
+class GraphRetryResponse(BaseModel):
+    """POST /documents/{id}/retry-graph — 仅重跑实体图抽取结果。"""
+
+    document_id: str = Field(..., description="文档 UUID")
+    graph_status: str = Field(..., description="实体抽取当前状态")
+    message: str = Field(..., description="操作结果说明")
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "document_id": "550e8400-e29b-41d4-a716-446655440000",
+            "graph_status": "pending",
+            "message": "已投递实体抽取任务",
+        }
     }}

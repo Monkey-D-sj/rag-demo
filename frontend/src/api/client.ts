@@ -3,6 +3,7 @@ import type {
   DocumentItem,
   DocumentListResponse,
   DocumentStatus,
+  GraphRetryResult,
   RetryResult,
 } from "@/types";
 
@@ -112,6 +113,19 @@ export async function retryDocument(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "retry failed");
+  }
+  return res.json();
+}
+
+export async function retryGraph(
+  documentId: string,
+): Promise<GraphRetryResult> {
+  const res = await fetch(`${BASE}/documents/${documentId}/retry-graph`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "retry graph failed");
   }
   return res.json();
 }

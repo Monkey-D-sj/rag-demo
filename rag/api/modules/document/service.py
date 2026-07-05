@@ -10,6 +10,7 @@ from rag.api.modules.document.schemas import (
     DocumentListResponse,
     DocumentRetryResponse,
     DocumentStatusResponse,
+    GraphRetryResponse,
 )
 from rag.common.minio_client import presigned_get_url, put_object
 from rag.config import get_settings
@@ -75,6 +76,8 @@ async def get_status(pg, document_id: str) -> DocumentStatusResponse:
         status=doc["status"],
         chunk_count=doc["chunk_count"],
         error=doc["error"],
+        graph_status=doc.get("graph_status"),
+        graph_error=doc.get("graph_error"),
     )
 
 
@@ -104,6 +107,8 @@ async def list_documents(
             status=row["status"],
             chunk_count=row["chunk_count"],
             error=row["error"],
+            graph_status=row.get("graph_status"),
+            graph_error=row.get("graph_error"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -134,6 +139,34 @@ async def retry_document(pg, arq_pool, document_id: str) -> DocumentRetryRespons
         status="pending",
         retry_count=0,
         message="已重置重试计数并投递入库任务",
+    )
+
+
+async def retry_graph(pg, arq_pool, document_id: str) -> GraphRetryResponse:
+    """仅重跑实体图抽取：跳过切块+向量，直接投递 extract_document_entities。"""
+    doc = await store.get_document(pg, document_id)
+    if doc is None:
+        raise DocumentNotFound("文档不存在")
+    if doc["status"] != "done":
+        return GraphRetryResponse(
+            document_id=str(doc["id"]),
+            graph_status=doc.get("graph_status", "unknown"),
+            message="文档尚未完成向量入库，请先等入库完成后再重试图抽取",
+        )
+
+    gs = doc.get("graph_status")
+    if gs not in ("failed", "skipped", "pending", None):
+        return GraphRetryResponse(
+            document_id=str(doc["id"]),
+            graph_status=gs or "unknown",
+            message=f"实体抽取状态为 {gs}，无需重试",
+        )
+
+    await arq_pool.enqueue_job("extract_document_entities", document_id)
+    return GraphRetryResponse(
+        document_id=str(doc["id"]),
+        graph_status="pending",
+        message="已投递实体抽取任务",
     )
 
 

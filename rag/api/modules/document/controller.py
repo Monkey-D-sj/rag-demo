@@ -16,6 +16,7 @@ from rag.api.modules.document.schemas import (
     DocumentStatus,
     DocumentStatusResponse,
     DocumentUploadResponse,
+    GraphRetryResponse,
 )
 from rag.document import DEFAULT_KB_ID
 
@@ -114,3 +115,19 @@ async def retry_document(
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> DocumentRetryResponse:
     return await service.retry_document(pg, arq_pool, document_id)
+
+
+@document_router.post(
+    "/{document_id}/retry-graph",
+    status_code=202,
+    response_model=GraphRetryResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "文档不存在"},
+    },
+)
+async def retry_graph(
+    document_id: str,
+    pg: Annotated[AsyncConnectionPool, Depends(get_pg)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+) -> GraphRetryResponse:
+    return await service.retry_graph(pg, arq_pool, document_id)

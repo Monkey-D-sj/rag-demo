@@ -8,6 +8,8 @@ export interface DocumentItem {
   status: DocumentStatus;
   chunk_count: number | null;
   error: string | null;
+  graph_status?: string | null;
+  graph_error?: string | null;
   // 以下字段仅列表接口 GET /documents/ 返回;详情/上传接口不含,故可选
   knowledge_base_id?: string;
   content_type?: string;
@@ -28,6 +30,12 @@ export interface RetryResult {
   status: string;
   message: string;
   retry_count: number | null;
+}
+
+export interface GraphRetryResult {
+  document_id: string;
+  graph_status: string;
+  message: string;
 }
 
 // ── SSE 事件类型 ──────────────────────────────────────

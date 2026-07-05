@@ -46,6 +46,7 @@ class _FakeStructured:
 
     async def ainvoke(self, messages):
         self.calls += 1
+        self.last_messages = messages
         item = self._results.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -57,7 +58,7 @@ class _FakeChatModel:
         self._structured = structured
 
     def with_structured_output(self, schema, method):
-        assert method == "function_calling"
+        assert method == "json_mode"
         return self._structured
 
 
@@ -96,3 +97,18 @@ async def test_non_retryable_llm_error_propagates_immediately():
     with pytest.raises(LLMAuthenticationError):
         await m.ainvoke_structured(["hi"], _Out)
     assert fake.calls == 1
+
+
+async def test_schema_instruction_injected_after_leading_system_messages():
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    m, fake = _model_with([_Out(x=1)])
+    await m.ainvoke_structured(
+        [SystemMessage(content="sys"), HumanMessage(content="hi")], _Out
+    )
+    msgs = fake.last_messages
+    assert isinstance(msgs[1], SystemMessage)
+    assert "JSON Schema" in msgs[1].content
+    assert '"x"' in msgs[1].content  # schema 字段名确实传给了模型
+    assert msgs[0].content == "sys"
+    assert msgs[2].content == "hi"

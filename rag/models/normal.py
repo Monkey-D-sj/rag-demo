@@ -1,9 +1,10 @@
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Callable
 
 from langchain_core.exceptions import OutputParserException
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ValidationError
@@ -31,6 +32,17 @@ def _is_retryable_structured(exc: BaseException) -> bool:
     if isinstance(exc, (OutputParserException, ValidationError)):
         return True
     return is_retryable(exc)
+
+
+def _schema_instruction(schema: type[BaseModel]) -> SystemMessage:
+    """json_mode 不会把 schema 传给模型,须在消息中显式给出输出结构。"""
+    schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+    return SystemMessage(
+        content=(
+            "仅输出一个 JSON 对象,不要包含任何其他文字,也不要用代码块包裹。"
+            f"输出必须符合以下 JSON Schema:\n{schema_json}"
+        )
+    )
 
 
 def dispatch_error(exc: LLMException, handlers: ErrorHandlers | None) -> None:
@@ -97,10 +109,19 @@ class NormalModel(ChatModel):
     async def ainvoke_structured(
         self, messages: list[BaseMessage | str], schema: type[BaseModel]
     ) -> BaseModel:
-        """带重试的结构化输出调用:function_calling 方式强制模型按 schema 返回。"""
-        structured = self._model.with_structured_output(
-            schema, method="function_calling"
-        )
+        """带重试的结构化输出调用:json_mode + schema 注入。
+
+        DeepSeek thinking 模式不支持强制 tool_choice(function_calling 400),
+        json_schema 未开放(400);故改用 json_mode,并在消息中显式注入 JSON Schema,
+        否则模型不知道字段名会自行发挥,导致 Pydantic 校验失败。
+        """
+        structured = self._model.with_structured_output(schema, method="json_mode")
+        # schema 说明插在开头的 system 消息之后:部分 OpenAI 兼容端点要求 system 在前。
+        msgs = list(messages)
+        i = 0
+        while i < len(msgs) and isinstance(msgs[i], SystemMessage):
+            i += 1
+        msgs.insert(i, _schema_instruction(schema))
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(3),
             wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
@@ -110,7 +131,7 @@ class NormalModel(ChatModel):
         ):
             with attempt:
                 async with self._translate():
-                    result = await structured.ainvoke(messages)
+                    result = await structured.ainvoke(msgs)
                     if result is None:
                         raise OutputParserException("模型未返回结构化输出(未调用工具)")
                     return result

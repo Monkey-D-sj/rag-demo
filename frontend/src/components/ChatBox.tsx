@@ -1,6 +1,21 @@
 import { Component, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
 import { createChatStream } from "@/api/stream";
+
+// 将文本中 [n] 引用标记拆分为 React 节点（用于纯文本渲染）
+function renderContent(text: string): React.ReactNode[] {
+  const parts = text.split(/(\[\d+\])/);
+  return parts.map((part, i) => {
+    const m = part.match(/^\[(\d+)\]$/);
+    return m ? <sup key={i}>[{m[1]}]</sup> : part;
+  });
+}
+
+// 将 [1] [2] 等引用标记转为 <sup> HTML（用于 rehype-raw 渲染）
+function toSupHtml(text: string): string {
+  return text.replace(/\[(\d+)\]/g, "<sup>[$1]</sup>");
+}
 
 // ReactMarkdown 解析失败时降级为纯文本
 class MarkdownSafe extends Component<{ content: string }> {
@@ -14,7 +29,8 @@ class MarkdownSafe extends Component<{ content: string }> {
     if (this.state.error) {
       return <span className="whitespace-pre-wrap">{this.props.content}</span>;
     }
-    return <ReactMarkdown>{this.props.content}</ReactMarkdown>;
+    const html = toSupHtml(this.props.content);
+    return <ReactMarkdown rehypePlugins={[rehypeRaw]}>{html}</ReactMarkdown>;
   }
 }
 
@@ -138,7 +154,7 @@ export default function ChatBox({
                     <p className="text-xs text-gray-500 mb-1">{m.status}</p>
                   )}
                   {m.isStreaming ? (
-                    <span className="whitespace-pre-wrap">{m.content}</span>
+                    <span className="whitespace-pre-wrap">{renderContent(m.content)}</span>
                   ) : (
                     <MarkdownSafe content={m.content} />
                   )}

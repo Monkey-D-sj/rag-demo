@@ -47,9 +47,97 @@ services:
       - neo4j_data:/data
     restart: unless-stopped
 
+  langfuse-postgres:
+    image: postgres:16-alpine
+    container_name: rag-langfuse-postgres
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse123
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12-alpine
+    container_name: rag-clickhouse
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse123
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    restart: unless-stopped
+
+  minio-init-langfuse:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "mc alias set local http://minio:9000 minioadmin minioadmin
+      && mc mb --ignore-existing local/langfuse"
+    restart: "no"
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: rag-langfuse-worker
+    depends_on:
+      - langfuse-postgres
+      - clickhouse
+      - redis
+      - minio
+    environment: &langfuse_env
+      DATABASE_URL: postgresql://langfuse:langfuse123@langfuse-postgres:5432/langfuse
+      SALT: rag-demo-salt-not-for-prod
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse123
+      # 单节点 clickhouse,无 zookeeper,禁用集群模式(否则 ReplicatedMergeTree ON CLUSTER 迁移失败)
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      # 用 db 2,避免与应用自身 arq 队列(db 1)共享同一逻辑 db
+      REDIS_CONNECTION_STRING: redis://redis:6379/2
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minioadmin
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: minioadmin
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+    restart: unless-stopped
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: rag-langfuse-web
+    depends_on:
+      - langfuse-postgres
+      - clickhouse
+      - redis
+      - minio
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse_env
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: rag-demo-nextauth-secret
+      # headless init:预置组织/项目/key,全程无需人工点 UI
+      LANGFUSE_INIT_ORG_ID: rag-demo
+      LANGFUSE_INIT_ORG_NAME: RAG Demo
+      LANGFUSE_INIT_PROJECT_ID: rag-demo-project
+      LANGFUSE_INIT_PROJECT_NAME: rag-demo
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-rag-demo-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-rag-demo-local
+      LANGFUSE_INIT_USER_EMAIL: admin@example.com
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: admin12345
+    restart: unless-stopped
+
 volumes:
   redis_data:
   pg_data:
   minio_data:
   neo4j_data:
+  langfuse_pg_data:
+  clickhouse_data:
   # pg_data mounts to /var/lib/postgresql (not /data) for paradedb/postgres 18+ compatibility

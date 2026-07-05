@@ -5,7 +5,7 @@ import time
 from rag.common.logging import get_logger
 from rag.document import store
 from rag.models.embedding import EmbeddingModel
-from rag.observability.langfuse import observe_if_enabled
+from rag.observability.langfuse import observe_if_enabled, span_scope
 
 logger = get_logger()
 
@@ -76,31 +76,40 @@ class KnowledgeRetriever:
         timings: dict[str, float] = {}
         lexical_query = _lexical_query(query)
 
+        span_input = {"query": query[:200], "kb_id": knowledge_base_id, "candidates": candidates}
+
         async def _vec_leg() -> list[dict]:
-            t0 = time.perf_counter()
-            emb = (await self._embedding.embed([query]))[0]
-            timings["embed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-            t1 = time.perf_counter()
-            rows = await store.search_chunks(
-                self._pool, emb, knowledge_base_id, candidates
-            )
-            timings["search_ms"] = round((time.perf_counter() - t1) * 1000, 1)
-            return rows
+            # 子 span 让两路在 trace 里各自可见,而不是只有融合后的黑盒输出
+            with span_scope("vector_recall", input=span_input) as span:
+                t0 = time.perf_counter()
+                emb = (await self._embedding.embed([query]))[0]
+                timings["embed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+                t1 = time.perf_counter()
+                rows = await store.search_chunks(
+                    self._pool, emb, knowledge_base_id, candidates
+                )
+                timings["search_ms"] = round((time.perf_counter() - t1) * 1000, 1)
+                if span is not None:
+                    span.update(output=_rank_summary(rows, "similarity"))
+                return rows
 
         async def _bm25_leg() -> list[dict]:
-            t0 = time.perf_counter()
-            if not lexical_query:
-                rows: list[dict] = []
-            else:
-                try:
-                    rows = await store.search_chunks_bm25(
-                        self._pool, lexical_query, knowledge_base_id, candidates
-                    )
-                except Exception:  # noqa: BLE001 - 词法路失败降级,不拖垮检索
-                    logger.warning("BM25 召回失败,降级纯向量", exc_info=True)
-                    rows = []
-            timings["bm25_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-            return rows
+            with span_scope("bm25_recall", input=span_input) as span:
+                t0 = time.perf_counter()
+                if not lexical_query:
+                    rows: list[dict] = []
+                else:
+                    try:
+                        rows = await store.search_chunks_bm25(
+                            self._pool, lexical_query, knowledge_base_id, candidates
+                        )
+                    except Exception:  # noqa: BLE001 - 词法路失败降级,不拖垮检索
+                        logger.warning("BM25 召回失败,降级纯向量", exc_info=True)
+                        rows = []
+                timings["bm25_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+                if span is not None:
+                    span.update(output=_rank_summary(rows, "score"))
+                return rows
 
         # 向量路异常照常传播(主路径语义不变);BM25 路已在内部兜底
         vec_rows, bm25_rows = await asyncio.gather(_vec_leg(), _bm25_leg())

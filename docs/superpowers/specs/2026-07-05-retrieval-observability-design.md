@@ -102,6 +102,17 @@ top-k）目前零日志：查询内容、召回结果、分数、耗时全部不
 - 真实验证（无法离线验证的点）：compose 启动 langfuse → 一次真实 chat →
   Langfuse UI 中可见含 recall span 与 LLM 调用的完整 trace。
 
+## 实施修订（2026-07-05 深夜，混合检索接入后追加）
+
+`knowledge_retrieve` 原本只呈现融合后输出，两路召回在 trace 里不可见。新增
+`span_scope(name, input)` 上下文管理器：关闭/缺 key/**SDK 调用失败**均退化为
+nullcontext——SDK 失败必须降级，v3 API 名 `start_as_current_span` 在 4.13.0 已
+不存在，首版实现曾因此把整个检索请求打死（可观测性失败绝不能打断业务）；v4 正确
+入口是 `start_as_current_observation(as_type="span")`。检索两腿各包
+`vector_recall` / `bm25_recall` 子 span，output 为各路排名摘要，已真实验证嵌套于
+`knowledge_retrieve` 之下。state 字段 `recall_vec_results` 现装融合结果、名称有
+误导，改名待 generate.py 稳定后处理（follow-up）。
+
 ## 非目标
 
 - 黄金集构建、RAGAS 离线评测、LLM-as-judge——单独立项。

@@ -48,6 +48,42 @@ def test_observe_passthrough_when_enabled_without_keys(monkeypatch):
     assert ob.observe_if_enabled("t")(fn) is fn
 
 
+def test_span_scope_yields_none_when_disabled(monkeypatch):
+    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    with ob.span_scope("vector_recall", input={"q": "x"}) as span:
+        assert span is None
+
+
+def test_span_scope_yields_none_when_enabled_without_keys(monkeypatch):
+    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+    with ob.span_scope("bm25_recall") as span:
+        assert span is None
+
+
+def test_span_scope_degrades_to_nullcontext_on_sdk_failure(monkeypatch):
+    """可观测性失败只能丢 span,不能抛给业务调用方(曾致整个检索请求 500)。"""
+    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+
+    class _FakeLangfuse:
+        def __init__(self, **kwargs):
+            pass
+
+    def _boom_get_client():
+        raise AttributeError("no such api")
+
+    fake_module = types.ModuleType("langfuse")
+    fake_module.Langfuse = _FakeLangfuse
+    fake_module.get_client = _boom_get_client
+    monkeypatch.setitem(sys.modules, "langfuse", fake_module)
+
+    with ob.span_scope("vector_recall") as span:
+        assert span is None
+
+
 def test_get_callback_handler_inits_client_once(monkeypatch):
     """连续两次 get_callback_handler() 应只构造一次全局 Langfuse 客户端,
     CallbackHandler 则每次都新建(不是同一个对象)。"""

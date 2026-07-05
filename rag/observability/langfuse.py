@@ -32,7 +32,7 @@ def get_langfuse_settings() -> LangfuseSettings:
 
 
 def _tracing_active(settings: LangfuseSettings) -> bool:
-    """开关与凭据齐备才算追踪激活：装饰器与 handler 必须同一判据，避免半激活状态。"""
+    """开关与凭据齐备才算追踪激活:装饰器与 handler 必须同一判据,避免半激活状态。"""
     return bool(
         settings.LANGFUSE_ENABLED
         and settings.LANGFUSE_PUBLIC_KEY
@@ -102,6 +102,32 @@ def observe_root(name: str) -> Callable:
     langfuse,统一经由本模块延迟导入。
     """
     return observe_if_enabled(name)
+
+
+def span_scope(name: str, input: Any = None) -> contextlib.AbstractContextManager:
+    """在当前 trace 下开一个子 span,关闭时退化为 nullcontext(零开销)。
+
+    用于给非 LangChain 管辖的内部阶段(如检索的向量/BM25 两路)在 trace 里
+    留下独立节点。开启时 yield 的 span 对象支持 ``update(output=...)``;
+    关闭时 yield None,调用方须做 None 防御。
+
+    SDK 调用整体兜底:可观测性失败只能丢 span,绝不能打断业务请求
+    (曾因 v3 API 名残留导致整个检索请求 500,见 spec 修订记录)。
+    """
+    settings = get_langfuse_settings()
+    if not _tracing_active(settings):
+        return contextlib.nullcontext()
+    try:
+        _init_client()
+        from langfuse import get_client
+
+        # v4 API:start_as_current_span 已并入 start_as_current_observation
+        return get_client().start_as_current_observation(
+            as_type="span", name=name, input=input
+        )
+    except Exception:  # noqa: BLE001 - 追踪失败降级,不拖垮调用方
+        logger.warning("span_scope 创建失败,本次不记录 span: %s", name, exc_info=True)
+        return contextlib.nullcontext()
 
 
 def session_scope(session_id: str) -> contextlib.AbstractContextManager:

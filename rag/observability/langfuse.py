@@ -30,6 +30,26 @@ def get_langfuse_settings() -> LangfuseSettings:
     return LangfuseSettings()
 
 
+@lru_cache
+def _init_client() -> None:
+    """进程内只初始化一次全局 Langfuse 客户端。
+
+    Langfuse() 构造会建立底层 HTTP client/后台线程等昂贵资源,
+    每次请求都重建没有必要;用 lru_cache 让其在进程生命周期内只跑一次,
+    后续调用直接命中缓存(无参数,缓存 key 恒定)。CallbackHandler 仍需
+    每次请求新建一个(它不是线程安全的单例,需绑定当次调用)。
+    """
+    settings = get_langfuse_settings()
+    # 延迟导入,关闭时不加载 SDK
+    from langfuse import Langfuse
+
+    Langfuse(
+        public_key=settings.LANGFUSE_PUBLIC_KEY,
+        secret_key=settings.LANGFUSE_SECRET_KEY,
+        host=settings.LANGFUSE_HOST,
+    )
+
+
 def get_callback_handler() -> Any | None:
     """开启时返回 LangChain CallbackHandler,关闭时返回 None(零开销)。
 
@@ -42,15 +62,10 @@ def get_callback_handler() -> Any | None:
     if not (settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY):
         logger.warning("LANGFUSE_ENABLED=true 但缺少 key,追踪已跳过")
         return None
+    _init_client()
     # 延迟导入,关闭时不加载 SDK
-    from langfuse import Langfuse
     from langfuse.langchain import CallbackHandler
 
-    Langfuse(
-        public_key=settings.LANGFUSE_PUBLIC_KEY,
-        secret_key=settings.LANGFUSE_SECRET_KEY,
-        host=settings.LANGFUSE_HOST,
-    )
     return CallbackHandler()
 
 

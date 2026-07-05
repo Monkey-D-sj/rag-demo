@@ -16,36 +16,37 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel
+
+from rag.agent.type import StreamEventType
 
 
 # ── 事件模型 ────────────────────────────────────────────
 
 
 class ChatStatus(BaseModel):
-    type: Literal["status"] = "status"
+    type: StreamEventType = StreamEventType.STATUS
     data: str
 
 
 class ChatMessage(BaseModel):
-    type: Literal["message"] = "message"
+    type: StreamEventType = StreamEventType.MESSAGE
     data: str
 
 
 class ChatError(BaseModel):
-    type: Literal["error"] = "error"
+    type: StreamEventType = StreamEventType.ERROR
     data: str
 
 
 ChatEvent = ChatStatus | ChatMessage | ChatError
 
 # 事件类型 → Pydantic 模型映射
-_EVENT_MODELS: dict[str, type[BaseModel]] = {
-    "status": ChatStatus,
-    "message": ChatMessage,
-    "error": ChatError,
+_EVENT_MODELS: dict[StreamEventType, type[BaseModel]] = {
+    StreamEventType.STATUS: ChatStatus,
+    StreamEventType.MESSAGE: ChatMessage,
+    StreamEventType.ERROR: ChatError,
 }
 
 
@@ -119,7 +120,11 @@ class ChatStream:
         已知类型（status / message / error）通过 Pydantic 校验后序列化；
         未知类型静默跳过。
         """
-        event_type = raw.get("type", "")
+        raw_type = raw.get("type", "")
+        try:
+            event_type = StreamEventType(raw_type)
+        except ValueError:
+            return
         model_cls = _EVENT_MODELS.get(event_type)
         if model_cls is None:
             return

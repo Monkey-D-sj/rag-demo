@@ -1,9 +1,20 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import TypedDict
 
 from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.models.base import ChatModel
+
+
+class StreamEventType(str, Enum):
+    STATUS = "status"
+    MESSAGE = "message"
+    ERROR = "error"
+
+
+def stream_event(type: StreamEventType, data: str) -> dict:
+    return {"type": type.value, "data": data}
 
 
 class MyState(TypedDict):

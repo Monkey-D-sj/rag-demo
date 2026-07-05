@@ -3,7 +3,7 @@ from langgraph.runtime import Runtime
 
 from rag.common.logging import get_logger
 from rag.document import DEFAULT_KB_ID
-from rag.agent.type import ContextSchema, MyState
+from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
 
 logger = get_logger()
 
@@ -11,7 +11,7 @@ logger = get_logger()
 async def recall(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
     """从知识库召回相关 chunk(向量检索),写入 recall_vec_results。"""
     writer = get_stream_writer()
-    writer({"type": "status", "data": "检索知识库中..."})
+    writer(stream_event(StreamEventType.STATUS, "检索知识库中..."))
 
     retriever = runtime.context.retriever
     if retriever is None:

@@ -5,20 +5,21 @@ from fastapi.testclient import TestClient
 
 import rag.api.modules.chat.controller as controller_mod
 import rag.api.modules.chat.service as service_mod
+from rag.agent.type import StreamEventType, stream_event
 from rag.api.dependencies.agent import get_llm, get_memory_manager, get_retriever
 
 
 async def _fake_invoke(session_id, query, context, config=None):
-    yield {"type": "status", "data": "检索记忆中..."}
-    yield {"type": "status", "data": "深度思考中"}
-    yield {"type": "status", "data": "检索知识库中..."}
-    yield {"type": "status", "data": "生成回答中"}
-    yield {"type": "message", "data": "关务"}
-    yield {"type": "message", "data": "信息"}
+    yield stream_event(StreamEventType.STATUS, "检索记忆中...")
+    yield stream_event(StreamEventType.STATUS, "深度思考中")
+    yield stream_event(StreamEventType.STATUS, "检索知识库中...")
+    yield stream_event(StreamEventType.STATUS, "生成回答中")
+    yield stream_event(StreamEventType.MESSAGE, "关务")
+    yield stream_event(StreamEventType.MESSAGE, "信息")
 
 
 async def _boom_invoke(session_id, query, context, config=None):
-    yield {"type": "status", "data": "检索记忆中..."}
+    yield stream_event(StreamEventType.STATUS, "检索记忆中...")
     raise RuntimeError("llm down")
 
 
@@ -52,14 +53,14 @@ def test_chat_controller_streams_chain(monkeypatch):
     events = [json.loads(p) for p in payloads if p != "[DONE]"]
 
     # 不应包含 update 事件
-    assert all(e["type"] in ("status", "message", "error") for e in events)
+    assert all(e["type"] in (StreamEventType.STATUS, StreamEventType.MESSAGE, StreamEventType.ERROR) for e in events)
 
     # 验证事件顺序
     types = [e["type"] for e in events]
-    assert types == ["status", "status", "status", "status", "message", "message"]
+    assert types == [StreamEventType.STATUS, StreamEventType.STATUS, StreamEventType.STATUS, StreamEventType.STATUS, StreamEventType.MESSAGE, StreamEventType.MESSAGE]
 
-    assert events[4] == {"type": "message", "data": "关务"}
-    assert events[5] == {"type": "message", "data": "信息"}
+    assert events[4] == stream_event(StreamEventType.MESSAGE, "关务")
+    assert events[5] == stream_event(StreamEventType.MESSAGE, "信息")
 
 
 def test_chat_controller_emits_error_frame(monkeypatch):
@@ -70,4 +71,4 @@ def test_chat_controller_emits_error_frame(monkeypatch):
     payloads = _parse_sse(resp.text)
     assert payloads[-1] == "[DONE]"
     events = [json.loads(p) for p in payloads if p != "[DONE]"]
-    assert events[-1] == {"type": "error", "data": "llm down"}
+    assert events[-1] == stream_event(StreamEventType.ERROR, "llm down")

@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from rag.agent.type import StreamEventType, stream_event
 from rag.api.common.stream import ChatStream, ChatStatus, ChatMessage, ChatError
 
 
@@ -28,19 +29,19 @@ def _parse_sse(text: str) -> list[dict | str]:
 def test_chat_status_model():
     event = ChatStatus(data="检索记忆中...")
     d = event.model_dump()
-    assert d == {"type": "status", "data": "检索记忆中..."}
+    assert d == stream_event(StreamEventType.STATUS, "检索记忆中...")
 
 
 def test_chat_message_model():
     event = ChatMessage(data="关务")
     d = event.model_dump()
-    assert d == {"type": "message", "data": "关务"}
+    assert d == stream_event(StreamEventType.MESSAGE, "关务")
 
 
 def test_chat_error_model():
     event = ChatError(data="超时")
     d = event.model_dump()
-    assert d == {"type": "error", "data": "超时"}
+    assert d == stream_event(StreamEventType.ERROR, "超时")
 
 
 # ── ChatStream 正常流程 ─────────────────────────────────
@@ -55,8 +56,8 @@ async def test_stream_status_and_message():
     output = "".join([chunk async for chunk in stream])
     events = _parse_sse(output)
 
-    assert events[0] == {"type": "status", "data": "检索中..."}
-    assert events[1] == {"type": "message", "data": "你好"}
+    assert events[0] == stream_event(StreamEventType.STATUS, "检索中...")
+    assert events[1] == stream_event(StreamEventType.MESSAGE, "你好")
     assert events[2] == "[DONE]"
 
 
@@ -68,7 +69,7 @@ async def test_stream_error_then_done():
     output = "".join([chunk async for chunk in stream])
     events = _parse_sse(output)
 
-    assert events[0] == {"type": "error", "data": "出错了"}
+    assert events[0] == stream_event(StreamEventType.ERROR, "出错了")
     assert events[1] == "[DONE]"
 
 
@@ -85,7 +86,7 @@ async def test_stream_auto_error_on_exception():
     output = "".join([chunk async for chunk in stream])
     events = _parse_sse(output)
 
-    assert events[0] == {"type": "error", "data": "llm down"}
+    assert events[0] == stream_event(StreamEventType.ERROR, "llm down")
     assert events[-1] == "[DONE]"
 
 
@@ -106,16 +107,16 @@ async def test_stream_empty():
 @pytest.mark.asyncio
 async def test_send_event_known_types():
     async with ChatStream() as stream:
-        await stream.send_event({"type": "status", "data": "s1"})
-        await stream.send_event({"type": "message", "data": "m1"})
-        await stream.send_event({"type": "error", "data": "e1"})
+        await stream.send_event(stream_event(StreamEventType.STATUS, "s1"))
+        await stream.send_event(stream_event(StreamEventType.MESSAGE, "m1"))
+        await stream.send_event(stream_event(StreamEventType.ERROR, "e1"))
 
     output = "".join([chunk async for chunk in stream])
     events = _parse_sse(output)
 
-    assert events[0] == {"type": "status", "data": "s1"}
-    assert events[1] == {"type": "message", "data": "m1"}
-    assert events[2] == {"type": "error", "data": "e1"}
+    assert events[0] == stream_event(StreamEventType.STATUS, "s1")
+    assert events[1] == stream_event(StreamEventType.MESSAGE, "m1")
+    assert events[2] == stream_event(StreamEventType.ERROR, "e1")
     assert events[3] == "[DONE]"
 
 
@@ -124,13 +125,13 @@ async def test_send_event_skips_unknown():
     """未知事件类型（如旧的 'update'）被静默跳过。"""
     async with ChatStream() as stream:
         await stream.send_event({"type": "update", "node": "x", "data": {}})
-        await stream.send_event({"type": "status", "data": "ok"})
+        await stream.send_event(stream_event(StreamEventType.STATUS, "ok"))
 
     output = "".join([chunk async for chunk in stream])
     events = _parse_sse(output)
 
     assert len(events) == 2
-    assert events[0] == {"type": "status", "data": "ok"}
+    assert events[0] == stream_event(StreamEventType.STATUS, "ok")
     assert events[1] == "[DONE]"
 
 
@@ -139,12 +140,12 @@ async def test_send_event_missing_type():
     """无 type 字段的事件被跳过。"""
     async with ChatStream() as stream:
         await stream.send_event({"data": "no type"})
-        await stream.send_event({"type": "status", "data": "ok"})
+        await stream.send_event(stream_event(StreamEventType.STATUS, "ok"))
 
     output = "".join([chunk async for chunk in stream])
     events = _parse_sse(output)
 
-    assert events == [{"type": "status", "data": "ok"}, "[DONE]"]
+    assert events == [stream_event(StreamEventType.STATUS, "ok"), "[DONE]"]
 
 
 # ── done 不重复 ────────────────────────────────────────────

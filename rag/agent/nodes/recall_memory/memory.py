@@ -1,14 +1,14 @@
 from langgraph.runtime import Runtime
 from langgraph.config import get_stream_writer
 
-from rag.agent.type import MyState, ContextSchema
+from rag.agent.type import MyState, ContextSchema, StreamEventType, stream_event
 
 
 async def recall_memory(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
     """从长期和短期记忆中召回相关内容"""
 
     writer = get_stream_writer()
-    writer({"type": "status", "data": "检索记忆中..."})
+    writer(stream_event(StreamEventType.STATUS, "检索记忆中..."))
 
     try:
         memory_manager = runtime.context.memory_manager
@@ -31,5 +31,5 @@ async def recall_memory(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
         state["context"] = "\n".join(parts)
         return state
     except Exception as e:
-        writer({"type": "status", "data": f"记忆检索失败: {e}"})
+        writer(stream_event(StreamEventType.STATUS, f"记忆检索失败: {e}"))
         raise

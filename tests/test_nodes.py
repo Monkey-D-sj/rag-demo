@@ -4,7 +4,7 @@ import rag.agent.nodes.generate.generate as generate_mod
 import rag.agent.nodes.query.query as query_mod
 import rag.agent.nodes.recall.recall as kb_recall_mod
 import rag.agent.nodes.recall_memory.memory as recall_mod
-from rag.agent.type import ContextSchema
+from rag.agent.type import ContextSchema, StreamEventType, stream_event
 
 
 class _FakeLLM:
@@ -113,5 +113,5 @@ async def test_generate_streams_tokens_and_accumulates(monkeypatch):
     out = await generate_mod.generate(state, runtime)
 
     assert out["generated"] == "答案"
-    assert {"type": "message", "data": "答"} in emitted
-    assert {"type": "message", "data": "案"} in emitted
+    assert stream_event(StreamEventType.MESSAGE, "答") in emitted
+    assert stream_event(StreamEventType.MESSAGE, "案") in emitted

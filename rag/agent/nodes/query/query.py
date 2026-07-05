@@ -2,7 +2,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from rag.agent.type import MyState, ContextSchema
+from rag.agent.type import MyState, ContextSchema, StreamEventType, stream_event
 
 system_prompt = """
 你是一个专业的关务助手, 你的任务是根据用户的查询, 提供专业的关务信息.
@@ -15,7 +15,7 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
 	"""处理查询:改写为中间步骤,整体 ainvoke(不逐 token 流式)"""
 	# ----------- 输出 -----------
 	writer = get_stream_writer()
-	writer({"type": "status", "data": "深度思考中"})
+	writer(stream_event(StreamEventType.STATUS, "深度思考中"))
 
 	llm = runtime.context.llm
 

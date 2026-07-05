@@ -110,3 +110,62 @@ async def test_search_truncates_long_query_in_log(monkeypatch, caplog):
         await r.search("长" * 300, "kb-1")
     rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert len(rec.query) == 200
+
+
+async def test_search_vector_failure_propagates(monkeypatch):
+    import pytest
+
+    import rag.document.retriever as mod
+
+    async def boom_vec(pool, embedding, kb_id, top_k):
+        raise RuntimeError("vector down")
+
+    async def fake_bm25(pool, query_text, kb_id, top_k):
+        return []
+
+    monkeypatch.setattr(mod.store, "search_chunks", boom_vec)
+    monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
+    r = KnowledgeRetriever(None, _FakeEmbedding())
+    with pytest.raises(RuntimeError, match="vector down"):
+        await r.search("q", "kb-1")
+
+
+async def test_search_punctuation_only_query_skips_bm25_leg(monkeypatch, caplog):
+    import rag.document.retriever as mod
+
+    calls = {"bm25": 0}
+
+    async def fake_vec(pool, embedding, kb_id, top_k):
+        return [_row("a", similarity=0.9)]
+
+    async def fake_bm25(pool, query_text, kb_id, top_k):
+        calls["bm25"] += 1
+        return []
+
+    monkeypatch.setattr(mod.store, "search_chunks", fake_vec)
+    monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
+    r = KnowledgeRetriever(None, _FakeEmbedding())
+    with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
+        result = await r.search("？！。……", "kb-1")
+    assert calls["bm25"] == 0
+    assert [x["id"] for x in result] == ["a"]
+
+
+async def test_fused_rows_carry_both_score_keys(monkeypatch):
+    vec = [_row("a", similarity=0.9)]
+    bm25 = [_row("b", score=4.2)]
+    r = _retriever(monkeypatch, vec, bm25)
+    result = await r.search("孙悟空", "kb-1")
+    by_id = {x["id"]: x for x in result}
+    assert by_id["a"]["score"] is None and by_id["a"]["similarity"] == 0.9
+    assert by_id["b"]["similarity"] is None and by_id["b"]["score"] == 4.2
+
+
+async def test_rank_summary_preview_truncated_to_80(monkeypatch, caplog):
+    vec = [_row("a", text="山" * 300, similarity=0.9)]
+    r = _retriever(monkeypatch, vec, [])
+    with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
+        await r.search("q", "kb-1")
+    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
+    assert len(rec.vec_hits[0]["text_preview"]) == 80
+    assert len(rec.hits[0]["text_preview"]) == 80

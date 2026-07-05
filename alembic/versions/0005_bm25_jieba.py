@@ -16,6 +16,7 @@ def upgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_dchunks_bm25")
     # 默认分词器对中文切不出词,BM25 统计无意义;jieba 词典分词已在
     # pg_search 0.24.1 容器内实测.knowledge_base_id 进索引供查询按库过滤.
+    # 非并发重建:重建期间写入阻塞且 BM25 召回降级;语料到百万级需改维护窗口策略。
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_dchunks_bm25

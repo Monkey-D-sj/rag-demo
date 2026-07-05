@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 
 from rag.common.logging import get_logger
@@ -13,12 +14,18 @@ RRF_K = 60
 CANDIDATE_MULTIPLIER = 2
 
 
+def _lexical_query(query: str) -> str:
+    """BM25 路输入卫生:剥掉标点符号。纯符号查询在索引里能匹配数千个近零分
+    chunk,而 RRF 只看排名不看分数,会让噪音与向量命中 1:1 交错挤进 top_k。"""
+    return re.sub(r"[\W_]+", " ", query).strip()
+
+
 def _rrf_fuse(
     vec_rows: list[dict], bm25_rows: list[dict], top_k: int
 ) -> list[dict]:
     """RRF 融合:score = Σ 1/(RRF_K + rank),按 id 去重,行数据取先见者。"""
     fused: dict[str, dict] = {}
-    for source, rows in (("vec", vec_rows), ("bm25", bm25_rows)):
+    for source, rows in (("vec", vec_rows), ("bm25", bm25_rows)):  # 并列分时 vec 路先见者优先:依赖 dict 插序与 sorted 稳定性,勿调换元组顺序
         for rank, row in enumerate(rows):
             entry = fused.setdefault(
                 str(row["id"]), {"row": row, "rrf_score": 0.0, "sources": []}
@@ -33,6 +40,10 @@ def _rrf_fuse(
         row = dict(entry["row"])
         row["rrf_score"] = round(entry["rrf_score"], 6)
         row["sources"] = entry["sources"]
+        # 两路分数键异构(similarity/score),补齐缺失键防下游按键取值时
+        # 只在 bm25-only 行上 KeyError 的数据依赖型崩溃
+        row.setdefault("similarity", None)
+        row.setdefault("score", None)
         results.append(row)
     return results
 
@@ -63,6 +74,7 @@ class KnowledgeRetriever:
     ) -> list[dict]:
         candidates = top_k * CANDIDATE_MULTIPLIER
         timings: dict[str, float] = {}
+        lexical_query = _lexical_query(query)
 
         async def _vec_leg() -> list[dict]:
             t0 = time.perf_counter()
@@ -77,13 +89,16 @@ class KnowledgeRetriever:
 
         async def _bm25_leg() -> list[dict]:
             t0 = time.perf_counter()
-            try:
-                rows = await store.search_chunks_bm25(
-                    self._pool, query, knowledge_base_id, candidates
-                )
-            except Exception:  # noqa: BLE001 - 词法路失败降级,不拖垮检索
-                logger.warning("BM25 召回失败,降级纯向量", exc_info=True)
-                rows = []
+            if not lexical_query:
+                rows: list[dict] = []
+            else:
+                try:
+                    rows = await store.search_chunks_bm25(
+                        self._pool, lexical_query, knowledge_base_id, candidates
+                    )
+                except Exception:  # noqa: BLE001 - 词法路失败降级,不拖垮检索
+                    logger.warning("BM25 召回失败,降级纯向量", exc_info=True)
+                    rows = []
             timings["bm25_ms"] = round((time.perf_counter() - t0) * 1000, 1)
             return rows
 

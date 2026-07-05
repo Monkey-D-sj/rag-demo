@@ -1,24 +1,34 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TypedDict
+
+from neo4j import AsyncDriver
+from psycopg_pool import AsyncConnectionPool
 
 from rag.common.logging import get_logger
+from rag.config import Settings
 from rag.document import store
 from rag.document.entity_extraction import ExtractionResult, extract_entities
 from rag.graph.aggregate import aggregate
 from rag.graph.store import purge_document, write_graph
-
-if TYPE_CHECKING:
-    from rag.worker.main import WorkerCtx
+from rag.models.base import ChatModel
 
 logger = get_logger()
+
+
+class _ExtractDeps(TypedDict):
+    """`extract_document_entities` 所需依赖,由 arq worker ctx 注入。"""
+    pg: AsyncConnectionPool
+    neo4j: AsyncDriver
+    llm: ChatModel
+    settings: Settings
 
 # demo 为中文语料(如西游记);显式指定中文输出,避免抽取默认语言。
 _LANGUAGE = "中文"
 
 
-async def extract_document_entities(ctx: WorkerCtx, document_id: str) -> None:
+async def extract_document_entities(ctx: _ExtractDeps, document_id: str) -> None:
     """独立 arq 任务:抽取整篇文档实体/关系并写入 Neo4j。
 
     best-effort(阶段一):失败置 graph_status=failed 记日志,不 re-raise、不重试。

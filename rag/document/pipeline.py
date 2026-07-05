@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TypedDict
+
+from minio import Minio
+from psycopg_pool import AsyncConnectionPool
 
 from rag.common.logging import get_logger
 from rag.common.minio_client import get_object
-from rag.config import SplitStrategy
+from rag.config import Settings, SplitStrategy
 from rag.document import store
 from rag.document.chunker import chunk
 from rag.document.parser import parse
-
-if TYPE_CHECKING:
-    # 仅类型注解需要;运行期不导入,避免 pipeline ↔ worker 循环导入
-    from rag.worker import WorkerCtx
+from rag.models.embedding import EmbeddingModel
 
 logger = get_logger()
+
+
+class _IngestDeps(TypedDict):
+    """`ingest_document` 所需依赖,由 arq worker ctx 注入。"""
+    pg: AsyncConnectionPool
+    minio: Minio
+    bucket: str
+    embedding: EmbeddingModel
+    settings: Settings
+    redis: object  # arq 框架自动注入 ArqRedis,仅用于 enqueue_job
 
 
 def _parse_and_chunk(
@@ -41,7 +51,7 @@ def _parse_and_chunk(
     return normalized
 
 
-async def ingest_document(ctx: WorkerCtx, document_id: str) -> None:
+async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
     """web 投递、worker 执行的入库编排。失败置 failed 并 re-raise 供重试。"""
     pool = ctx["pg"]
     minio = ctx["minio"]

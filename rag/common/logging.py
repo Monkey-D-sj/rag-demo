@@ -119,6 +119,20 @@ _BANNER = """\x1b[1;36m
 """
 
 _TEXT_FMT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+# 文本模式下 extra 值最大字符数,超长截断(避免 vec_hits 等列表炸终端)
+_MAX_EXTRA_LEN = 120
+
+
+def _fmt_extra(value: object) -> str:
+    """text 模式格式化 extra 值:列表/字典显示摘要,标量原样,超长截断。"""
+    if isinstance(value, list):
+        return f"[{len(value)}条]"
+    if isinstance(value, dict):
+        return f"{{{len(value)}键}}"
+    raw = str(value)
+    if len(raw) > _MAX_EXTRA_LEN:
+        raw = raw[:_MAX_EXTRA_LEN] + "…"
+    return raw
 _DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -150,8 +164,7 @@ class ColorTextFormatter(logging.Formatter):
         for key in sorted(record.__dict__):
             if key in _STD_RECORD_KEYS or key.startswith("_"):
                 continue
-            value = getattr(record, key, None)
-            extras.append(f"{key}={value}")
+            extras.append(f"{key}={_fmt_extra(getattr(record, key, None))}")
         if extras:
             line = f"{line} | {' '.join(extras)}"
         return line

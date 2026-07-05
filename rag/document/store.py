@@ -65,6 +65,29 @@ async def search_chunks(
         return await cur.fetchall()
 
 
+async def search_chunks_bm25(
+    pool: AsyncConnectionPool,
+    query_text: str,
+    knowledge_base_id: str,
+    top_k: int = 5,
+) -> list[dict]:
+    """BM25 词法召回:jieba 分词索引,paradedb.match 安全构造(特殊字符不炸解析器)。"""
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT id, document_id, chunk_index, text,
+                   paradedb.score(id) AS score
+            FROM document_chunks
+            WHERE text @@@ paradedb.match('text', %(q)s)
+              AND knowledge_base_id = %(kb)s
+            ORDER BY score DESC
+            LIMIT %(k)s
+            """,
+            {"q": query_text, "kb": knowledge_base_id, "k": top_k},
+        )
+        return await cur.fetchall()
+
+
 async def get_document(pool: AsyncConnectionPool, document_id: str) -> dict | None:
     async with get_cursor(pool) as cur:
         await cur.execute(

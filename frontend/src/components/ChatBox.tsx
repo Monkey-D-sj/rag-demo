@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { streamChat } from "@/api/client";
+import { createChatStream } from "@/api/stream";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  status?: string;  // 当前阶段提示
 }
 
 export default function ChatBox({
@@ -41,15 +42,21 @@ export default function ChatBox({
     ]);
 
     try {
-      for await (const ev of streamChat(sessionId, q)) {
+      for await (const ev of createChatStream(sessionId, q)) {
         setMessages((prev) => {
           const next = [...prev];
           const msg = next[assistantIdx];
           if (!msg) return prev;
 
           switch (ev.type) {
-            case "generate":
-              next[assistantIdx] = { ...msg, content: msg.content + ev.data };
+            case "status":
+              next[assistantIdx] = { ...msg, status: ev.data };
+              break;
+            case "message":
+              next[assistantIdx] = {
+                ...msg,
+                content: msg.content + ev.data,
+              };
               break;
             case "error":
               next[assistantIdx] = {
@@ -107,6 +114,9 @@ export default function ChatBox({
             >
               {m.role === "assistant" ? (
                 <>
+                  {m.status && (
+                    <p className="text-xs text-gray-500 mb-1">{m.status}</p>
+                  )}
                   <ReactMarkdown>{m.content}</ReactMarkdown>
                   {m.isStreaming && (
                     <span className="inline-block w-2 h-4 bg-emerald-400 ml-0.5 animate-pulse align-text-bottom" />

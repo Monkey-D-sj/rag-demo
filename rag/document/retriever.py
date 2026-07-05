@@ -3,6 +3,7 @@ import time
 from rag.common.logging import get_logger
 from rag.document import store
 from rag.models.embedding import EmbeddingModel
+from rag.observability.langfuse import observe_if_enabled
 
 logger = get_logger()
 
@@ -14,6 +15,7 @@ class KnowledgeRetriever:
         self._pool = pool
         self._embedding = embedding
 
+    @observe_if_enabled(name="knowledge_retrieve")
     async def search(
         self, query: str, knowledge_base_id: str, top_k: int = 5
     ) -> list[dict]:
@@ -36,6 +38,8 @@ class KnowledgeRetriever:
                     "chunk_id": str(r["id"]),
                     "chunk_index": r["chunk_index"],
                     "similarity": round(r["similarity"], 4),
+                    # 预览便于排查召回质量;全文在 Langfuse trace 里,日志不放全文
+                    "text_preview": r["text"][:80],
                 }
                 for r in rows
             ],

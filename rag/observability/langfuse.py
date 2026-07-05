@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from functools import lru_cache
 from typing import Any, Callable
 
@@ -30,6 +31,15 @@ def get_langfuse_settings() -> LangfuseSettings:
     return LangfuseSettings()
 
 
+def _tracing_active(settings: LangfuseSettings) -> bool:
+    """开关与凭据齐备才算追踪激活：装饰器与 handler 必须同一判据，避免半激活状态。"""
+    return bool(
+        settings.LANGFUSE_ENABLED
+        and settings.LANGFUSE_PUBLIC_KEY
+        and settings.LANGFUSE_SECRET_KEY
+    )
+
+
 @lru_cache
 def _init_client() -> None:
     """进程内只初始化一次全局 Langfuse 客户端。
@@ -57,10 +67,9 @@ def get_callback_handler() -> Any | None:
     所以这里显式初始化全局客户端而不是依赖 SDK 自读环境。
     """
     settings = get_langfuse_settings()
-    if not settings.LANGFUSE_ENABLED:
-        return None
-    if not (settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY):
-        logger.warning("LANGFUSE_ENABLED=true 但缺少 key,追踪已跳过")
+    if not _tracing_active(settings):
+        if settings.LANGFUSE_ENABLED:
+            logger.warning("LANGFUSE_ENABLED=true 但缺少 key,追踪已跳过")
         return None
     _init_client()
     # 延迟导入,关闭时不加载 SDK
@@ -75,8 +84,38 @@ def observe_if_enabled(name: str) -> Callable:
     装饰器在 import 时求值,LANGFUSE_ENABLED 需在进程启动前设定。
     """
     settings = get_langfuse_settings()
-    if not settings.LANGFUSE_ENABLED:
+    if not _tracing_active(settings):
         return lambda fn: fn
     from langfuse import observe
 
     return observe(name=name)
+
+
+def observe_root(name: str) -> Callable:
+    """把被装饰的函数变成 trace 根 span,关闭时原样返回(零包装开销)。
+
+    与 ``observe_if_enabled`` 逻辑等价(都是"开启时 observe(name=...),关闭时
+    直通"),但语义上专用于*持有 trace 根 span*的调用点——被装饰函数体内经由
+    环境 OTel 上下文创建的其它 span(LangChain CallbackHandler 的回调链、
+    ``observe_if_enabled`` 装饰的检索器方法)均会嵌套进同一条 trace,而不是
+    各自另起一条独立顶层 trace。调用方(如 chat service)不应直接 import
+    langfuse,统一经由本模块延迟导入。
+    """
+    return observe_if_enabled(name)
+
+
+def session_scope(session_id: str) -> contextlib.AbstractContextManager:
+    """把 session_id 传播给当前 trace 及其内创建的所有 span。
+
+    关闭时返回空操作的上下文管理器(零开销);开启时返回
+    ``langfuse.propagate_attributes(session_id=...)`` —— 这是 SDK 4.x 文档化的
+    "trace 级属性传播"机制,基于 OTel 上下文,而非依赖 LangChain 回调元数据。
+    该上下文管理器只做同步的 contextvar 读写,用普通 ``with``(不是
+    ``async with``)包住 async 代码块即可,不会阻塞事件循环。
+    """
+    settings = get_langfuse_settings()
+    if not _tracing_active(settings):
+        return contextlib.nullcontext()
+    from langfuse import propagate_attributes
+
+    return propagate_attributes(session_id=session_id)

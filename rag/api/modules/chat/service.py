@@ -10,6 +10,7 @@ from rag.common.logging import bind_session, get_logger, reset_session
 from rag.document.retriever import KnowledgeRetriever
 from rag.memory import MemoryManager
 from rag.models.base import ChatModel
+from rag.observability.langfuse import get_callback_handler, observe_root, session_scope
 
 logger = get_logger()
 
@@ -34,10 +35,31 @@ async def stream_chat(
         )
         stream = ChatStream()
 
+        handler = get_callback_handler()
+        # metadata 里的 langfuse_session_id 仍保留:LangChain 回调链根节点
+        # 自己也会解析这个 key 并做一次 session 传播,双重设置对同一条 trace
+        # 无副作用,属于防御性冗余(即便 session_scope 的传播机制变化也不丢失)
+        config = (
+            {"callbacks": [handler], "metadata": {"langfuse_session_id": session_id}}
+            if handler
+            else None
+        )
+
+        async def _run_traced() -> None:
+            # with(非 async with)包住:session_scope 只做同步 contextvar 读写,
+            # 不阻塞事件循环。本函数若被 observe_root 包装,则持有 trace 根 span,
+            # CallbackHandler 与 retriever 的 @observe span 均继承环境 OTel 上下文,
+            # 嵌套进同一条 trace,而不是各自另起一条独立顶层 trace
+            with session_scope(session_id):
+                async for event in invoke(session_id, query, context, config=config):
+                    await stream.send_event(event)
+
+        if handler is not None:
+            _run_traced = observe_root(name="chat")(_run_traced)
+
         async def _produce() -> None:
             try:
-                async for event in invoke(session_id, query, context):
-                    await stream.send_event(event)
+                await _run_traced()
             except Exception as e:  # noqa: BLE001
                 logger.exception("chat stream failed")
                 await stream.error(str(e))
@@ -51,4 +73,8 @@ async def stream_chat(
 
         await task  # 确保生产者异常不被静默吞掉
     finally:
-        reset_session(token)
+        try:
+            reset_session(token)
+        except ValueError:
+            # 生成器被弃置时可能在异 Context 中终结,reset 失败仅影响该条日志,忽略
+            logger.debug("reset_session 跳过: 生成器在异 Context 中终结")

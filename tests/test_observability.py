@@ -36,6 +36,18 @@ def test_observe_passthrough_when_disabled(monkeypatch):
     assert ob.observe_if_enabled("t")(fn) is fn
 
 
+def test_observe_passthrough_when_enabled_without_keys(monkeypatch):
+    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+    ob.get_langfuse_settings.cache_clear()
+
+    async def fn(x):
+        return x
+
+    assert ob.observe_if_enabled("t")(fn) is fn
+
+
 def test_get_callback_handler_inits_client_once(monkeypatch):
     """连续两次 get_callback_handler() 应只构造一次全局 Langfuse 客户端,
     CallbackHandler 则每次都新建(不是同一个对象)。"""

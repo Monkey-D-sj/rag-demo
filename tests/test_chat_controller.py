@@ -8,7 +8,7 @@ import rag.api.modules.chat.service as service_mod
 from rag.api.dependencies.agent import get_llm, get_memory_manager, get_retriever
 
 
-async def _fake_invoke(session_id, query, context):
+async def _fake_invoke(session_id, query, context, config=None):
     yield {"type": "status", "data": "检索记忆中..."}
     yield {"type": "status", "data": "深度思考中"}
     yield {"type": "status", "data": "检索知识库中..."}
@@ -17,7 +17,7 @@ async def _fake_invoke(session_id, query, context):
     yield {"type": "message", "data": "信息"}
 
 
-async def _boom_invoke(session_id, query, context):
+async def _boom_invoke(session_id, query, context, config=None):
     yield {"type": "status", "data": "检索记忆中..."}
     raise RuntimeError("llm down")
 

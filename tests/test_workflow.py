@@ -52,3 +52,35 @@ async def test_invoke_runs_full_graph_with_context():
 
     # 最终生成逐 token 流式
     assert messages == ["你好", "世界"]
+
+
+async def test_invoke_passes_config_to_astream(monkeypatch):
+    import rag.agent.workflow as wf
+
+    captured = {}
+
+    async def fake_astream(input, *, context, stream_mode, config=None):
+        captured["config"] = config
+        if False:  # pragma: no cover - 使函数成为异步生成器
+            yield
+
+    monkeypatch.setattr(wf.graph, "astream", fake_astream)
+    async for _ in wf.invoke("s-1", "q", context=None, config={"callbacks": []}):
+        pass
+    assert captured["config"] == {"callbacks": []}
+
+
+async def test_invoke_config_defaults_none(monkeypatch):
+    import rag.agent.workflow as wf
+
+    captured = {}
+
+    async def fake_astream(input, *, context, stream_mode, config=None):
+        captured["config"] = config
+        if False:  # pragma: no cover
+            yield
+
+    monkeypatch.setattr(wf.graph, "astream", fake_astream)
+    async for _ in wf.invoke("s-1", "q", context=None):
+        pass
+    assert captured["config"] is None

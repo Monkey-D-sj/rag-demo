@@ -23,13 +23,19 @@ builder.add_edge("generate", END)
 graph = builder.compile()
 
 
-async def invoke(session_id: str, query: str, context: ContextSchema):
+async def invoke(
+    session_id: str,
+    query: str,
+    context: ContextSchema,
+    config: dict | None = None,
+):
     """归一化事件流:仅保留 custom 通道事件(status/message/error),
-    updates 通道(state 增量)不再下发。
+    updates 通道(state 增量)不再下发。config 用于透传 LangChain 回调(如 Langfuse)。
     """
     async for mode, chunk in graph.astream(
         {"session_id": session_id, "raw_query": query},
         context=context,
         stream_mode=["custom"],
+        config=config,
     ):
         yield chunk

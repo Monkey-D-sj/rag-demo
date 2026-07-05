@@ -10,8 +10,11 @@ from rag.api.dependencies.agent import get_llm, get_memory_manager, get_retrieve
 
 async def _fake_invoke(session_id, query, context):
     yield {"type": "status", "data": "检索记忆中..."}
-    yield {"type": "update", "node": "recall_memory", "data": {"context": "c"}}
-    yield {"type": "update", "node": "handle_query", "data": {"rewrite_query": "rw"}}
+    yield {"type": "status", "data": "深度思考中"}
+    yield {"type": "status", "data": "检索知识库中..."}
+    yield {"type": "status", "data": "生成回答中"}
+    yield {"type": "message", "data": "关务"}
+    yield {"type": "message", "data": "信息"}
 
 
 async def _boom_invoke(session_id, query, context):
@@ -47,15 +50,23 @@ def test_chat_controller_streams_chain(monkeypatch):
     payloads = _parse_sse(resp.text)
     assert payloads[-1] == "[DONE]"
     events = [json.loads(p) for p in payloads if p != "[DONE]"]
-    assert events[0] == {"type": "status", "data": "检索记忆中..."}
-    assert events[-1] == {"type": "update", "node": "handle_query", "data": {"rewrite_query": "rw"}}
+
+    # 不应包含 update 事件
+    assert all(e["type"] in ("status", "message", "error") for e in events)
+
+    # 验证事件顺序
+    types = [e["type"] for e in events]
+    assert types == ["status", "status", "status", "status", "message", "message"]
+
+    assert events[4] == {"type": "message", "data": "关务"}
+    assert events[5] == {"type": "message", "data": "信息"}
 
 
 def test_chat_controller_emits_error_frame(monkeypatch):
     client = _client(monkeypatch, _boom_invoke)
     resp = client.post("/chat/", json={"session_id": "s1", "query": "q1"})
 
-    assert resp.status_code == 200  # 流已开始,状态码改不了
+    assert resp.status_code == 200
     payloads = _parse_sse(resp.text)
     assert payloads[-1] == "[DONE]"
     events = [json.loads(p) for p in payloads if p != "[DONE]"]

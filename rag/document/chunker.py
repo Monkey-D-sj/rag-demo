@@ -82,7 +82,11 @@ def chunk_by_paragraph_semantic(
     matches = list(_CHAPTER_HEADING_RE.finditer(text))
 
     if not matches:
-        return [{"title": "", "content": text.strip()}]
+        # 无章节标题(普通 txt/md/无章回 PDF):回退到尺寸切分,
+        # 否则整篇作为单个巨型 chunk 会超 embedding token 上限且检索粒度失效。
+        stripped = text.strip()
+        sub_chunks = chunk_by_recursive_character(stripped, max_chunk_size, chunk_overlap)
+        return [{"title": "", "content": sub} for sub in sub_chunks]
 
     results: list[dict[str, str]] = []
     for i, m in enumerate(matches):

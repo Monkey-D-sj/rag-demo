@@ -34,3 +34,12 @@ def test_paragraph_semantic_splits_by_chapter():
 def test_paragraph_semantic_no_heading_returns_whole_text():
     out = chunk(SplitStrategy.paragraph_semantic, "没有章节标题的正文。", 800, 100)
     assert out == [{"title": "", "content": "没有章节标题的正文。"}]
+
+
+def test_paragraph_semantic_no_heading_long_text_respects_max_size():
+    """无章节标题的长文本必须回退到尺寸切分,不能整篇返回单个巨型 chunk。"""
+    text = "这是一段没有任何章节标题的普通正文，用来验证回退切分。" * 200
+    out = chunk(SplitStrategy.paragraph_semantic, text, 800, 100)
+    assert len(out) > 1
+    assert all(len(c["content"]) <= 800 for c in out)
+    assert all(c["title"] == "" for c in out)

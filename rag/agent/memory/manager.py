@@ -109,35 +109,3 @@ class MemoryManager:
             await cur.execute(sql, params)
             return await cur.fetchall()
 
-    async def update(
-        self, memory_id: str, text: str, metadata: dict | None = None
-    ) -> None:
-        embedding = (await self._embedding.embed([text]))[0]
-        payload = Json(metadata) if metadata is not None else None
-        async with get_cursor(self._pool) as cur:
-            await cur.execute(
-                """
-                UPDATE long_term_memories
-                SET text = %(text)s,
-                    embedding = %(embedding)s,
-                    metadata = CASE
-                        WHEN %(metadata)s IS NULL THEN long_term_memories.metadata
-                        ELSE COALESCE(long_term_memories.metadata, '{}'::jsonb) || %(metadata)s::jsonb
-                    END,
-                    updated_at = now()
-                WHERE id = %(id)s
-                """,
-                {
-                    "id": memory_id,
-                    "text": text,
-                    "embedding": Vector(embedding),
-                    "metadata": payload,
-                },
-            )
-
-    async def delete(self, memory_id: str) -> None:
-        async with get_cursor(self._pool) as cur:
-            await cur.execute(
-                "DELETE FROM long_term_memories WHERE id = %(id)s",
-                {"id": memory_id},
-            )

@@ -14,10 +14,9 @@ builder.add_node("handle_query", handle_query)
 builder.add_node("recall", recall)
 builder.add_node("generate", generate)
 
-# builder.add_edge(START, "recall_memory")
-# builder.add_edge("recall_memory", "handle_query")
-# builder.add_edge("handle_query", "recall")
-builder.add_edge(START, "recall")
+builder.add_edge(START, "recall_memory")
+builder.add_edge("recall_memory", "handle_query")
+builder.add_edge("handle_query", "recall")
 builder.add_edge("recall", "generate")
 builder.add_edge("generate", END)
 

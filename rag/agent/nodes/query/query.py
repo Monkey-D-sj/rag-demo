@@ -5,7 +5,7 @@ from langgraph.runtime import Runtime
 from rag.agent.type import MyState, ContextSchema, StreamEventType, stream_event
 
 system_prompt = """
-你是一个专业的关务助手, 你的任务是根据用户的查询, 提供专业的关务信息.
+你是一个专业的问答助手, 你的任务是根据用户的查询,
 有不确定的地方，例如：他/那么。
 从上下文获取信息，改写消息返回
 """

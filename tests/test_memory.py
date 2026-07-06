@@ -16,7 +16,7 @@ from rag.models.embedding import EmbeddingModel
 async def get_cursor_cleanup(pool, session_id):
     async with get_cursor(pool) as cur:
         await cur.execute(
-            "DELETE FROM long_term_memories WHERE metadata->>'session_id' = %(sid)s",
+            "DELETE FROM long_term_memories WHERE session_id = %(sid)s",
             {"sid": session_id},
         )
     yield

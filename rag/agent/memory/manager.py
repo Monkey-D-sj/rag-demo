@@ -17,7 +17,7 @@ class MemoryManager:
         embedding: EmbeddingModel,
         redis=None,
         *,
-        short_max_messages: int = 50,
+        short_max_messages: int = 10,
         short_ttl_seconds: int = 24 * 60 * 60,
     ):
         self._pool = pool
@@ -64,18 +64,18 @@ class MemoryManager:
     ) -> str:
         memory_id = str(uuid.uuid4())
         embedding = (await self._embedding.embed([text]))[0]
-        merged = {"session_id": session_id, **(metadata or {})}
         async with get_cursor(self._pool) as cur:
             await cur.execute(
                 """
-                INSERT INTO long_term_memories (id, text, embedding, metadata)
-                VALUES (%(id)s, %(text)s, %(embedding)s, %(metadata)s)
+                INSERT INTO long_term_memories (id, session_id, text, embedding, metadata)
+                VALUES (%(id)s, %(session_id)s, %(text)s, %(embedding)s, %(metadata)s)
                 """,
                 {
                     "id": memory_id,
+                    "session_id": session_id,
                     "text": text,
                     "embedding": Vector(embedding),
-                    "metadata": Json(merged),
+                    "metadata": Json(metadata or {}),
                 },
             )
         return memory_id
@@ -92,7 +92,7 @@ class MemoryManager:
             SELECT id, text, metadata, created_at,
                    1 - (embedding <=> %(embedding)s) AS similarity
             FROM long_term_memories
-            WHERE metadata->>'session_id' = %(session_id)s
+            WHERE session_id = %(session_id)s
         """
         params: dict = {
             "embedding": Vector(query_embedding),

@@ -67,7 +67,7 @@ async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
 
     state["generated"] = "".join(parts)
 
-    # 写回本轮问答:下一轮 recall_memory + handle_query 据此做多轮指代消解。
+    # 写回本轮问答：短期记忆供多轮指代消解，长期记忆供后续检索召回。
     # 记忆写入失败(Redis/PG 抖动)不应中断本次回答,仅记日志降级。
     await _persist_turn(
         runtime.context.memory_manager,
@@ -86,5 +86,7 @@ async def _persist_turn(
     try:
         await memory_manager.add_message(session_id, query, {"role": "user"})
         await memory_manager.add_message(session_id, answer, {"role": "assistant"})
+        await memory_manager.add(session_id, query, {"role": "user"})
+        await memory_manager.add(session_id, answer, {"role": "assistant"})
     except Exception:  # noqa: BLE001 - 记忆写入失败不拖垮回答
         logger.exception("写回会话记忆失败: session=%s", session_id)

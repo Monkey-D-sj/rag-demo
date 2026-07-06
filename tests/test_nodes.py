@@ -95,7 +95,7 @@ async def test_recall_no_retriever_yields_empty(monkeypatch):
 
 
 async def test_generate_writes_back_memory(monkeypatch):
-    """生成结束后本轮问答必须写回短期记忆,否则记忆系统只读不写、永远为空。"""
+    """生成结束后本轮问答须写回短期+长期记忆。"""
     monkeypatch.setattr(
         generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
     )
@@ -105,6 +105,9 @@ async def test_generate_writes_back_memory(monkeypatch):
             self.added = []
 
         async def add_message(self, session_id, text, metadata=None):
+            self.added.append((session_id, text, metadata))
+
+        async def add(self, session_id, text, metadata=None):
             self.added.append((session_id, text, metadata))
 
     class _StreamLLM:
@@ -120,7 +123,7 @@ async def test_generate_writes_back_memory(monkeypatch):
 
     await generate_mod.generate(state, runtime)
 
-    assert len(mm.added) == 2
+    assert len(mm.added) == 4  # 2 短期 + 2 长期
     sid, user_text, user_meta = mm.added[0]
     assert sid == "s1" and "问题" in user_text and user_meta == {"role": "user"}
     sid, asst_text, asst_meta = mm.added[1]
@@ -135,6 +138,9 @@ async def test_generate_memory_write_failure_does_not_fail_request(monkeypatch):
     class _BrokenMM:
         async def add_message(self, session_id, text, metadata=None):
             raise RuntimeError("redis down")
+
+        async def add(self, session_id, text, metadata=None):
+            raise RuntimeError("pg down")
 
     class _StreamLLM:
         async def astream(self, messages):

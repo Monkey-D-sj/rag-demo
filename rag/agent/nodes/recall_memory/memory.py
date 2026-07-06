@@ -21,12 +21,19 @@ async def recall_memory(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
         # 短期记忆:最近会话消息
         short_results = await memory_manager.get_recent_messages(state["session_id"])
 
-        # 合并为上下文文本
+        # 合并为上下文文本，短片优先，去重
+        seen: set[str] = set()
         parts: list[str] = []
         for r in short_results:
-            parts.append(r.get("text", ""))
+            text = r.get("text", "")
+            if text and text not in seen:
+                seen.add(text)
+                parts.append(text)
         for r in long_results:
-            parts.append(r.get("text", ""))
+            text = r.get("text", "")
+            if text and text not in seen:
+                seen.add(text)
+                parts.append(text)
 
         state["context"] = "\n".join(parts)
         return state

@@ -43,6 +43,28 @@ async def test_recall_memory_awaits_and_composes_context(monkeypatch):
     assert out["context"] == "S1\nL1"
 
 
+async def test_recall_memory_dedup_short_priority(monkeypatch):
+    """短片优先，长片中与短片重复的内容应被去重。"""
+    monkeypatch.setattr(recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _DupMM:
+        async def search(self, session_id, query, top_k=5, filters=None):
+            return [{"text": "dup"}, {"text": "L1"}]
+
+        async def get_recent_messages(self, session_id, n=10):
+            return [{"text": "dup"}, {"text": "S1"}]
+
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=None, memory_manager=_DupMM())
+    )
+    out = await recall_mod.recall_memory(
+        {"session_id": "s1", "raw_query": "q1"}, runtime
+    )
+
+    # dup 只出现一次（短片中的），L1 保留
+    assert out["context"] == "dup\nS1\nL1"
+
+
 async def test_handle_query_awaits_ainvoke(monkeypatch):
     monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
     llm = _FakeLLM()

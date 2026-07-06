@@ -52,3 +52,37 @@ def evaluate_query(
         result[f"ndcg@{k}"] = dcg / idcg if idcg else 0.0
 
     return result
+
+
+def aggregate(per_query: list[dict[str, float]]) -> dict[str, float]:
+    """对多条 query 的同名指标取算术平均。空输入返回 {}。"""
+    if not per_query:
+        return {}
+    keys = per_query[0].keys()
+    n = len(per_query)
+    return {k: sum(q[k] for q in per_query) / n for k in keys}
+
+
+def gate(
+    current: dict[str, float],
+    baseline: dict[str, float],
+    keys: tuple[str, ...] = ("recall@5", "mrr"),
+    rel_tolerance: float = 0.03,
+) -> tuple[bool, dict[str, dict[str, float]]]:
+    """门禁：对每个核心指标，相对基线下降超过 rel_tolerance 判 fail。
+
+    返回 (passed, deltas)，deltas[key] = {"baseline", "current", "rel_drop"}。
+    baseline 缺该 key 时跳过（无基线不阻断）。
+    """
+    passed = True
+    deltas: dict[str, dict[str, float]] = {}
+    for key in keys:
+        if key not in baseline or key not in current:
+            continue
+        base = baseline[key]
+        cur = current[key]
+        rel_drop = (base - cur) / base if base > 0 else 0.0
+        deltas[key] = {"baseline": base, "current": cur, "rel_drop": rel_drop}
+        if rel_drop > rel_tolerance:
+            passed = False
+    return passed, deltas

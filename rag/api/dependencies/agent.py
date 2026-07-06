@@ -1,7 +1,7 @@
 from fastapi import Request
 
 from rag.document.retriever import KnowledgeRetriever
-from rag.memory import MemoryManager
+from rag.agent.memory import MemoryManager
 from rag.models.base import ChatModel
 
 

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from rag.api.dependencies.agent import get_llm, get_memory_manager, get_retriever
 from rag.api.modules.chat import service
 from rag.document.retriever import KnowledgeRetriever
-from rag.memory import MemoryManager
+from rag.agent.memory import MemoryManager
 from rag.models.base import ChatModel
 
 chat_router = APIRouter(prefix="/chat")

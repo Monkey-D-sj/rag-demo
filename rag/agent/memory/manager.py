@@ -1,21 +1,67 @@
+import json
 import uuid
 
 from pgvector import Vector
 from psycopg.types.json import Json
 
 from rag.db.postgres import get_cursor
-from rag.memory.adapters.base import LongTermMemoryAdapter
 from rag.models.embedding import EmbeddingModel
 
 
-class PgVectorLongTermMemory(LongTermMemoryAdapter):
-    """基于 PostgreSQL + pgvector 的长期记忆（建表/索引由 alembic 负责）。"""
+class MemoryManager:
+    """统一管理短期/长期记忆，直接操作 Redis + PostgreSQL(pgvector)。"""
 
-    def __init__(self, pool, embedding: EmbeddingModel) -> None:
+    def __init__(
+        self,
+        pool,
+        embedding: EmbeddingModel,
+        redis=None,
+        *,
+        short_max_messages: int = 50,
+        short_ttl_seconds: int = 24 * 60 * 60,
+    ):
         self._pool = pool
         self._embedding = embedding
+        self._redis = redis
+        self._short_max_messages = short_max_messages
+        self._short_ttl_seconds = short_ttl_seconds
 
-    async def add(self, session_id: str, text: str, metadata: dict | None = None) -> str:
+    # ── 短期记忆 (Redis) ──
+
+    @staticmethod
+    def _short_key(session_id: str) -> str:
+        return f"session:{session_id}:messages"
+
+    async def add_message(
+        self, session_id: str, text: str, metadata: dict | None = None
+    ) -> None:
+        if self._redis is None:
+            return
+        key = self._short_key(session_id)
+        payload = json.dumps(
+            {"text": text, "metadata": metadata or {}}, ensure_ascii=False
+        )
+        pipe = self._redis.pipeline()
+        pipe.rpush(key, payload)
+        pipe.ltrim(key, -self._short_max_messages, -1)
+        pipe.expire(key, self._short_ttl_seconds)
+        await pipe.execute()
+
+    async def get_recent_messages(self, session_id: str, n: int = 10) -> list[dict]:
+        if self._redis is None or n <= 0:
+            return []
+        raw = await self._redis.lrange(self._short_key(session_id), -n, -1)
+        return [json.loads(item) for item in raw]
+
+    async def clear_session(self, session_id: str) -> None:
+        if self._redis is not None:
+            await self._redis.delete(self._short_key(session_id))
+
+    # ── 长期记忆 (PostgreSQL + pgvector) ──
+
+    async def add(
+        self, session_id: str, text: str, metadata: dict | None = None
+    ) -> str:
         memory_id = str(uuid.uuid4())
         embedding = (await self._embedding.embed([text]))[0]
         merged = {"session_id": session_id, **(metadata or {})}
@@ -25,12 +71,21 @@ class PgVectorLongTermMemory(LongTermMemoryAdapter):
                 INSERT INTO long_term_memories (id, text, embedding, metadata)
                 VALUES (%(id)s, %(text)s, %(embedding)s, %(metadata)s)
                 """,
-                {"id": memory_id, "text": text, "embedding": Vector(embedding), "metadata": Json(merged)},
+                {
+                    "id": memory_id,
+                    "text": text,
+                    "embedding": Vector(embedding),
+                    "metadata": Json(merged),
+                },
             )
         return memory_id
 
     async def search(
-        self, session_id: str, query: str, top_k: int = 5, filters: dict | None = None
+        self,
+        session_id: str,
+        query: str,
+        top_k: int = 5,
+        filters: dict | None = None,
     ) -> list[dict]:
         query_embedding = (await self._embedding.embed([query]))[0]
         sql = """
@@ -54,7 +109,9 @@ class PgVectorLongTermMemory(LongTermMemoryAdapter):
             await cur.execute(sql, params)
             return await cur.fetchall()
 
-    async def update(self, memory_id: str, text: str, metadata: dict | None = None) -> None:
+    async def update(
+        self, memory_id: str, text: str, metadata: dict | None = None
+    ) -> None:
         embedding = (await self._embedding.embed([text]))[0]
         payload = Json(metadata) if metadata is not None else None
         async with get_cursor(self._pool) as cur:
@@ -70,11 +127,17 @@ class PgVectorLongTermMemory(LongTermMemoryAdapter):
                     updated_at = now()
                 WHERE id = %(id)s
                 """,
-                {"id": memory_id, "text": text, "embedding": Vector(embedding), "metadata": payload},
+                {
+                    "id": memory_id,
+                    "text": text,
+                    "embedding": Vector(embedding),
+                    "metadata": payload,
+                },
             )
 
     async def delete(self, memory_id: str) -> None:
         async with get_cursor(self._pool) as cur:
             await cur.execute(
-                "DELETE FROM long_term_memories WHERE id = %(id)s", {"id": memory_id}
+                "DELETE FROM long_term_memories WHERE id = %(id)s",
+                {"id": memory_id},
             )

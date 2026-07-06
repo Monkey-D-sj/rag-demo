@@ -9,12 +9,10 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from contextlib import AsyncExitStack, asynccontextmanager
-from pathlib import Path
 
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from rag.api.common.error_handlers import register_error_handlers
 from rag.api.modules import register_modules
@@ -24,9 +22,7 @@ from rag.config import get_settings
 from rag.db import create_pg_pool, create_redis_client
 from rag.db.neo4j import create_neo4j_driver
 from rag.document.retriever import KnowledgeRetriever
-from rag.memory import MemoryManager
-from rag.memory.adapters.long_term_pgsql import PgVectorLongTermMemory
-from rag.memory.adapters.short_term_redis import RedisShortTermMemory
+from rag.agent.memory import MemoryManager
 from rag.models.embedding import EmbeddingModel
 from rag.models.normal import NormalModel
 
@@ -75,12 +71,9 @@ async def lifespan(app: FastAPI):
         logger.info("初始化嵌入模型")
         embedding = EmbeddingModel(settings)
         logger.info("嵌入模型初始化完成")
-        logger.info("初始化内存管理器")
-        app.state.memory_manager = MemoryManager(
-            long_term=PgVectorLongTermMemory(pool, embedding),
-            short_term=RedisShortTermMemory(app.state.redis),
-        )
-        logger.info("内存管理器初始化完成")
+        logger.info("初始化记忆管理器")
+        app.state.memory_manager = MemoryManager(pool, embedding, app.state.redis)
+        logger.info("记忆管理器初始化完成")
         logger.info("初始化 LLM 模型")
         app.state.llm = NormalModel(settings)
         logger.info("LLM 模型初始化完成")

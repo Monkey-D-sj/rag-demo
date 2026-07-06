@@ -1,10 +1,15 @@
+import json
+from unittest.mock import AsyncMock, MagicMock
+
+import numpy as np
 import pytest
 from contextlib import asynccontextmanager
 
 from rag.config import get_settings
 from rag.db.redis import create_redis_client
-from rag.db.postgres import get_cursor
-from rag.memory.adapters.short_term_redis import RedisShortTermMemory
+from rag.db.postgres import create_pg_pool, get_cursor
+from rag.agent.memory import MemoryManager
+from rag.models.embedding import EmbeddingModel
 
 
 @asynccontextmanager
@@ -17,84 +22,146 @@ async def get_cursor_cleanup(pool, session_id):
     yield
 
 
-@pytest.mark.integration
-async def test_short_term_roundtrip():
-    client = create_redis_client(get_settings())
-    adapter = RedisShortTermMemory(client)
-    sid = "test-session-stm"
-    try:
-        await adapter.clear(sid)
-        await adapter.add(sid, "hello")
-        await adapter.add(sid, "world")
-        recent = await adapter.get_recent(sid, n=10)
-        assert [r["text"] for r in recent] == ["hello", "world"]
-    finally:
-        await adapter.clear(sid)
-        await client.aclose()
+# ── 短期记忆单元测试 ──
+
+async def test_add_message_pushes_to_redis():
+    redis = MagicMock()
+    pipe = MagicMock()
+    pipe.execute = AsyncMock()
+    redis.pipeline.return_value = pipe
+    mgr = MemoryManager(pool=None, embedding=None, redis=redis)
+
+    await mgr.add_message("sid1", "hello", {"role": "user"})
+
+    # 验证 redis pipeline 调用
+    key = "session:sid1:messages"
+    pipe.rpush.assert_called_once()
+    assert pipe.rpush.call_args[0][0] == key
+    payload = json.loads(pipe.rpush.call_args[0][1])
+    assert payload["text"] == "hello"
+    assert payload["metadata"] == {"role": "user"}
+    pipe.execute.assert_awaited_once()
 
 
-from rag.memory.manager import MemoryManager
+async def test_get_recent_messages_reads_redis():
+    redis = MagicMock()
+    redis.lrange = AsyncMock(return_value=[
+        json.dumps({"text": "a"}),
+        json.dumps({"text": "b"}),
+    ])
+    mgr = MemoryManager(pool=None, embedding=None, redis=redis)
+
+    result = await mgr.get_recent_messages("sid1", n=2)
+
+    redis.lrange.assert_awaited_once_with("session:sid1:messages", -2, -1)
+    assert [r["text"] for r in result] == ["a", "b"]
 
 
-class _FakeLong:
-    def __init__(self):
-        self.calls = []
-
-    async def search(self, session_id, query, top_k=5, filters=None):
-        self.calls.append((session_id, query, top_k, filters))
-        return [{"text": "L"}]
+async def test_get_recent_messages_returns_empty_when_n_zero():
+    redis = MagicMock()
+    mgr = MemoryManager(pool=None, embedding=None, redis=redis)
+    assert await mgr.get_recent_messages("sid1", n=0) == []
 
 
-class _FakeShort:
-    def __init__(self):
-        self.added = []
-
-    async def add(self, session_id, text, metadata=None):
-        self.added.append((session_id, text))
-
-    async def get_recent(self, session_id, n=10):
-        return [{"text": "S"}]
-
-
-async def test_manager_search_passes_args_in_order():
-    long = _FakeLong()
-    mgr = MemoryManager(long_term=long, short_term=_FakeShort())
-    out = await mgr.search("sid1", "q1")
-    assert out == [{"text": "L"}]
-    assert long.calls == [("sid1", "q1", 5, None)]
-
-
-async def test_manager_add_message_writes_short_term():
-    short = _FakeShort()
-    mgr = MemoryManager(long_term=_FakeLong(), short_term=short)
+async def test_short_term_noop_when_redis_is_none():
+    mgr = MemoryManager(pool=None, embedding=None, redis=None)
+    # 不应抛异常
     await mgr.add_message("sid1", "hi")
-    assert short.added == [("sid1", "hi")]
+    assert await mgr.get_recent_messages("sid1") == []
+    await mgr.clear_session("sid1")
 
 
-import numpy as np
-
-from rag.db.postgres import create_pg_pool
-from rag.models.embedding import EmbeddingModel
-from rag.memory.adapters.long_term_pgsql import PgVectorLongTermMemory
+# ── 长期记忆单元测试 ──
 
 
-class _StubEmbedding(EmbeddingModel):
+class _FakeEmbedding(EmbeddingModel):
     def __init__(self):
-        pass  # 跳过真实 client
+        pass
 
     async def embed(self, texts):
         return [np.array([0.01] * 1024, dtype=np.float32) for _ in texts]
 
 
+class _FakeCursor:
+    """模拟 psycopg cursor，记录最后一次 execute 调用。"""
+    def __init__(self):
+        self.last_sql = ""
+        self.last_params = {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def execute(self, sql, params=None):
+        self.last_sql = sql
+        self.last_params = params or {}
+
+    async def fetchall(self):
+        return [{"text": "mock_result", "similarity": 0.95}]
+
+
+async def test_search_builds_correct_query(monkeypatch):
+    pool = MagicMock()
+    mgr = MemoryManager(pool=pool, embedding=_FakeEmbedding())
+
+    fake_cur = _FakeCursor()
+    monkeypatch.setattr(
+        "rag.agent.memory.manager.get_cursor",
+        lambda p: fake_cur,
+    )
+
+    await mgr.search("sid1", "关税", top_k=3, filters={"type": "doc"})
+
+    assert "top_k" in fake_cur.last_params
+    assert fake_cur.last_params["top_k"] == 3
+    assert "filter_0" in fake_cur.last_params
+    assert fake_cur.last_params["filter_0"] == "doc"
+
+
+async def test_add_returns_memory_id(monkeypatch):
+    pool = MagicMock()
+    mgr = MemoryManager(pool=pool, embedding=_FakeEmbedding())
+
+    fake_cur = _FakeCursor()
+    monkeypatch.setattr(
+        "rag.agent.memory.manager.get_cursor",
+        lambda p: fake_cur,
+    )
+
+    mid = await mgr.add("sid1", "测试文本")
+    assert mid  # UUID 字符串
+    assert len(mid) == 36
+
+
+# ── 集成测试 ──
+
+@pytest.mark.integration
+async def test_short_term_roundtrip():
+    client = create_redis_client(get_settings())
+    mgr = MemoryManager(pool=None, embedding=None, redis=client)
+    sid = "test-session-stm"
+    try:
+        await mgr.clear_session(sid)
+        await mgr.add_message(sid, "hello")
+        await mgr.add_message(sid, "world")
+        recent = await mgr.get_recent_messages(sid, n=10)
+        assert [r["text"] for r in recent] == ["hello", "world"]
+    finally:
+        await mgr.clear_session(sid)
+        await client.aclose()
+
+
 @pytest.mark.integration
 async def test_long_term_add_then_search():
     pool = await create_pg_pool(get_settings())
-    adapter = PgVectorLongTermMemory(pool, _StubEmbedding())
+    mgr = MemoryManager(pool=pool, embedding=_FakeEmbedding())
     sid = "test-session-ltm"
     try:
-        mid = await adapter.add(sid, "关税申报流程")
+        mid = await mgr.add(sid, "关税申报流程")
         assert mid
-        results = await adapter.search(sid, "关税")
+        results = await mgr.search(sid, "关税")
         assert any(r["text"] == "关税申报流程" for r in results)
     finally:
         async with get_cursor_cleanup(pool, sid):

@@ -8,7 +8,7 @@ from rag.agent.type import ContextSchema
 from rag.agent.workflow import invoke
 from rag.common.logging import bind_session, get_logger, reset_session
 from rag.document.retriever import KnowledgeRetriever
-from rag.memory import MemoryManager
+from rag.agent.memory import MemoryManager
 from rag.models.base import ChatModel
 from rag.observability.langfuse import get_callback_handler, observe_root, session_scope
 

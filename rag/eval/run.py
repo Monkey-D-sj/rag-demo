@@ -4,8 +4,9 @@ import json
 
 from rag.config import get_settings
 from rag.eval import DATASETS_DIR, EVAL_DIR
-from rag.eval.harness import build_retriever, load_golden, run_eval
+from rag.eval.harness import build_retriever, load_golden, run_breakdown, run_eval
 from rag.eval.metrics import gate
+from rag.models.embedding import EmbeddingModel
 
 GOLDEN_PATH = DATASETS_DIR / "retrieval_golden.jsonl"
 BASELINE_PATH = EVAL_DIR / "baseline.json"
@@ -43,6 +44,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="检索层评测")
     parser.add_argument("--update-baseline", action="store_true", help="用本次结果刷新 baseline")
+    parser.add_argument("--breakdown", action="store_true", help="分路诊断：fused / vec-only / bm25-only")
     args = parser.parse_args()
 
     result = asyncio.run(_run())
@@ -51,6 +53,27 @@ def main() -> None:
     print("== 检索评测聚合指标 ==")
     for key in sorted(agg):
         print(f"  {key:10s} {agg[key]:.4f}")
+
+    if args.breakdown:
+
+        async def _run_bd() -> dict:
+            settings = get_settings()
+            items = load_golden(GOLDEN_PATH)
+            pool, _retriever = await build_retriever(settings)
+            try:
+                embedding = EmbeddingModel(settings)
+                return await run_breakdown(items, pool, embedding, ks=KS, top_k=max(KS))
+            finally:
+                await pool.close()
+
+        bd = asyncio.run(_run_bd())
+        print("== vec_only ==")
+        for key in sorted(bd["vec_only"]):
+            print(f"  {key:10s} {bd['vec_only'][key]:.4f}")
+        print("== bm25_only ==")
+        for key in sorted(bd["bm25_only"]):
+            print(f"  {key:10s} {bd['bm25_only'][key]:.4f}")
+        return
 
     if args.update_baseline:
         with open(BASELINE_PATH, "w", encoding="utf-8") as f:

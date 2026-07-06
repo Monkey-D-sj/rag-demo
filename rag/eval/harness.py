@@ -6,7 +6,8 @@ from psycopg_pool import AsyncConnectionPool
 
 from rag.config import Settings
 from rag.db.postgres import create_pg_pool
-from rag.document.retriever import KnowledgeRetriever
+from rag.document import store
+from rag.document.retriever import KnowledgeRetriever, _lexical_query
 from rag.eval import EVAL_KB_ID
 from rag.eval.metrics import aggregate, evaluate_query
 from rag.models.embedding import EmbeddingModel
@@ -64,3 +65,23 @@ async def run_eval(
     metric_keys = [k for k in per_query[0] if k not in ("id", "query")] if per_query else []
     agg = aggregate([{k: q[k] for k in metric_keys} for q in per_query])
     return {"aggregate": agg, "per_query": per_query}
+
+
+async def run_breakdown(
+    items,
+    pool,
+    embedding,
+    ks=(1, 3, 5),
+    top_k=5,
+) -> dict:
+    """分别评测 vec-only 与 bm25-only 单路召回，用于回归归因。"""
+    vec_pq, bm25_pq = [], []
+    for item in items:
+        emb = (await embedding.embed([item.query]))[0]
+        vec_rows = await store.search_chunks(pool, emb, EVAL_KB_ID, top_k)
+        vec_pq.append(evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks))
+
+        lex = _lexical_query(item.query)
+        bm25_rows = await store.search_chunks_bm25(pool, lex, EVAL_KB_ID, top_k) if lex else []
+        bm25_pq.append(evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks))
+    return {"vec_only": aggregate(vec_pq), "bm25_only": aggregate(bm25_pq)}

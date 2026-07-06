@@ -10,6 +10,9 @@ from rag.models.embedding import EmbeddingModel
 
 GOLDEN_PATH = DATASETS_DIR / "retrieval_golden.jsonl"
 BASELINE_PATH = EVAL_DIR / "baseline.json"
+# Top-K 评估粒度：对每条 query 分别计算 hit@k / recall@k / ndcg@k。
+# 只影响报告输出，不影响门禁——门禁固定用 recall@5 和 mrr（见 gate() 默认 keys）。
+# 如需看更细粒度如 Top-10，改为 (1, 3, 5, 10) 并将 run_eval(top_k=max(KS)) 调大。
 KS = (1, 3, 5)
 
 

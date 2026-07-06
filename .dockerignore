@@ -1,0 +1,29 @@
+# 版本控制 / IDE
+.git
+.gitignore
+.idea
+.vscode
+
+# Python 运行/构建产物
+.venv
+**/__pycache__
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache
+.traces
+
+# 前端(后端镜像不需要;SPA 独立部署)
+frontend
+
+# 测试与文档(不入生产镜像)
+tests
+docs
+
+# 本地环境与密钥(改由 compose env_file / 运行时注入)
+.env
+
+# 语料样例
+rag/document/*.txt

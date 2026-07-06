@@ -1,3 +1,25 @@
+# 应用(api/worker/migrate)共用的环境覆盖:把 .env 里的 localhost 改成 compose 服务名。
+# 顺序:environment 覆盖 env_file(.env),故 .env 只提供 MODEL_KEY/EMBEDDING_KEY 等密钥。
+x-app-env: &app_env
+  PG_HOST: postgres
+  PG_PORT: 5432
+  PG_DATABASE: rag_memory
+  PG_USER: rag
+  PG_PASSWORD: rag123
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_DB: 0
+  ARQ_REDIS_DB: 1
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
+  MINIO_SECURE: "false"
+  NEO4J_URI: bolt://neo4j:7687
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: neo4j_pass
+  NEO4J_DATABASE: neo4j
+  LANGFUSE_HOST: http://langfuse-web:3000
+
 services:
   redis:
     image: redis:7-alpine
@@ -6,6 +28,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   postgres:
@@ -19,6 +46,11 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag_memory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   minio:
@@ -45,6 +77,70 @@ services:
       - "7687:7687"
     volumes:
       - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p neo4j_pass 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  # ── 应用:迁移 → API → Worker(共用 rag-demo 镜像)──
+  migrate:
+    build: .
+    image: rag-demo:latest
+    container_name: rag-migrate
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment:
+      <<: *app_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    image: rag-demo:latest
+    container_name: rag-api
+    command: ["rag-api"]
+    env_file: .env
+    environment:
+      <<: *app_env
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      neo4j:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: rag-demo:latest
+    container_name: rag-worker
+    command: ["rag-worker"]
+    env_file: .env
+    environment:
+      <<: *app_env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      # worker 启动即建图约束(ensure_graph_constraints),需 neo4j 就绪
+      neo4j:
+        condition: service_healthy
     restart: unless-stopped
 
   langfuse-postgres:

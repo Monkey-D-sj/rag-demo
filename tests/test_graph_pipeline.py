@@ -1,7 +1,38 @@
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 import rag.graph.pipeline as gp
 from rag.document.entity_extraction import Entity, ExtractionResult, Relationship
+
+
+async def test_cancellation_marks_graph_failed_and_reraises(monkeypatch):
+    """arq 超时取消(CancelledError)必须置 graph_status=failed 后 re-raise,
+    否则卡在 processing 且 retry 白名单救不回。"""
+    statuses = []
+
+    async def fake_claim(pool, doc_id):
+        return True
+
+    async def fake_chunks(pool, doc_id):
+        return [{"chunk_index": 0, "text": "文本", "title": None}]
+
+    async def fake_extract(llm, text, *, chapter_context=None, **kw):
+        raise asyncio.CancelledError
+
+    async def fake_status(pool, doc_id, status, error=None):
+        statuses.append((status, error))
+
+    monkeypatch.setattr(gp.store, "claim_graph_processing", fake_claim)
+    monkeypatch.setattr(gp.store, "get_chunks_for_graph", fake_chunks)
+    monkeypatch.setattr(gp.store, "set_graph_status", fake_status)
+    monkeypatch.setattr(gp, "extract_entities", fake_extract)
+
+    with pytest.raises(asyncio.CancelledError):
+        await gp.extract_document_entities(_ctx(), "d1")
+    assert len(statuses) == 1
+    assert statuses[0][0] == "failed"
 
 
 def _ctx():

@@ -100,6 +100,13 @@ async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
             await ctx["redis"].enqueue_job("extract_document_entities", document_id)
         else:
             await store.set_graph_status(pool, document_id, "skipped")
+    except asyncio.CancelledError:
+        # arq job_timeout 通过 cancel 中断(CancelledError 属 BaseException,
+        # 不被下方 except Exception 捕获)。必须置 failed 后 re-raise,否则文档
+        # 永久卡在 processing:cron 退避重试只扫 failed,claim 的 stale 回收也无人触发。
+        logger.warning("文档入库被取消(疑似超时): %s", document_id)
+        await store.set_status(pool, document_id, "failed", error="cancelled/timeout")
+        raise
     except Exception as e:
         logger.exception("文档入库失败: %s", document_id)
         await store.set_status(pool, document_id, "failed", error=str(e)[:500])

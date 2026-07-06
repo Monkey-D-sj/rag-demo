@@ -50,16 +50,24 @@ async def on_shutdown(ctx: dict) -> None:
 
 
 async def retry_failed_documents(ctx: dict) -> None:
-    """自愈 cron:每 5 min 扫描 failed 文档,按指数退避重新入库。
+    """自愈 cron:每 5 min 扫描并重投两类文档。
 
-    退避公式: backoff_base * 2^retry_count 秒
-    retry_count 达 max_retry_rounds 后放弃(真·死信),需人工通过 API retry 介入。
+    1. failed: 按指数退避(backoff_base * 2^retry_count 秒)重投,
+       retry_count 达 max_retry_rounds 后放弃(真·死信),需人工 API retry 介入。
+    2. stalled: 卡死的 pending(enqueue 丢失)/processing(超时被取消未置 failed),
+       超过 STALE_DOC_SECONDS 即找回重投,补上状态机盲区。
+
+    重投统一走 ingest_document → claim_for_processing 原子领取,并发/重复安全。
     """
     settings: Settings = ctx["settings"]
-    ids = await store.claim_failed_for_retry(
+    failed_ids = await store.claim_failed_for_retry(
         ctx["pg"], settings.MAX_RETRY_ROUNDS, settings.RETRY_BACKOFF_BASE
     )
-    for doc_id in ids:
+    stalled_ids = await store.find_stalled_documents(
+        ctx["pg"], settings.STALE_DOC_SECONDS
+    )
+    # dict.fromkeys 去重并保序:failed 与 stalled 理论上不重叠(防御性去重)
+    for doc_id in dict.fromkeys([*failed_ids, *stalled_ids]):
         try:
             await ingest_document(ctx, doc_id)
         except Exception:

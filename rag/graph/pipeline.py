@@ -92,6 +92,15 @@ async def extract_document_entities(ctx: _ExtractDeps, document_id: str) -> None
             "图抽取完成: %s 实体 %d 关系 %d",
             document_id, len(entities), len(relations),
         )
+    except asyncio.CancelledError:
+        # arq job_timeout 通过 cancel 中断(BaseException,不被下方 except 捕获)。
+        # 置 graph_status=failed 后 re-raise:否则卡在 processing,claim_graph_processing
+        # 只领取 pending/failed,API retry_graph 也救不回。failed 可由 cron 找回重试。
+        logger.warning("图抽取被取消(疑似超时): %s", document_id)
+        await store.set_graph_status(
+            pool, document_id, "failed", error="cancelled/timeout"
+        )
+        raise
     except Exception as e:  # noqa: BLE001 - best-effort,阶段一不 re-raise
         logger.exception("图抽取失败: %s", document_id)
         await store.set_graph_status(pool, document_id, "failed", error=str(e)[:500])

@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # retry_count 达上限后放弃（真·死信），需人工介入。
     MAX_RETRY_ROUNDS: int = 10
     RETRY_BACKOFF_BASE: int = 60  # 秒；第 n 轮退避 = base * 2^n
+    # 卡死回收阈值：pending(enqueue 丢失)或 processing(worker 超时被取消未置 failed)
+    # 超过此秒数即视为卡死，由 cron 找回重投。必须 > job_timeout(300)，否则误回收运行中任务。
+    STALE_DOC_SECONDS: int = 900
 
     # ── Logging ──
     LOG_LEVEL: str = "INFO"                        # DEBUG / INFO / WARNING / ERROR

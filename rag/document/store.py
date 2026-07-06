@@ -175,6 +175,31 @@ async def claim_for_processing(
         return await cur.fetchone() is not None
 
 
+async def find_stalled_documents(
+    pool: AsyncConnectionPool, stale_after_seconds: int
+) -> list[str]:
+    """找出卡死的文档:status 为 pending 或 processing 且 updated_at 已超阈值。
+
+    覆盖状态机盲区(既不是 failed,cron 退避重试扫不到;又不会自行恢复):
+    - pending 卡死: create_document 成功后 enqueue_job 失败/丢失,无人投递。
+    - processing 卡死: worker 超时被取消或进程硬崩,未走 failed 分支。
+
+    仅返回 id,交由调用方 ingest_document → claim_for_processing 原子领取重跑。
+    """
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT id
+            FROM documents
+            WHERE status IN ('pending', 'processing')
+              AND updated_at < now() - make_interval(secs => %(stale)s)
+            """,
+            {"stale": stale_after_seconds},
+        )
+        rows = await cur.fetchall()
+    return [str(row["id"]) for row in rows]
+
+
 async def claim_failed_for_retry(
     pool: AsyncConnectionPool, max_retry_rounds: int, backoff_base: int
 ) -> list[str]:

@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -15,7 +16,10 @@ class _FakeEmbedding:
 
 
 def _settings(batch=2):
-    return SimpleNamespace(chunk_size=800, chunk_overlap=100, embedding_batch_size=batch)
+    return SimpleNamespace(
+        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        EMBEDDING_BATCH_SIZE=batch, ENABLE_ENTITY_EXTRACTION=False,
+    )
 
 
 async def test_ingest_happy_path_batches_and_completes(monkeypatch):
@@ -37,6 +41,9 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
         completed["embedded"] = embedded
         completed["kb"] = kb
 
+    async def fake_set_graph_status(pool, doc_id, status, error=None):
+        pass
+
     async def fake_get_object(client, bucket, key):
         return b"ignored-by-fake-parse"
 
@@ -44,14 +51,15 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
     monkeypatch.setattr(pipe.store, "set_status", fake_set_status)
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
     monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
+    monkeypatch.setattr(pipe.store, "set_graph_status", fake_set_graph_status)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "full text")
-    monkeypatch.setattr(pipe, "chunk", lambda text, size, overlap: ["a", "b", "c"])
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a", "b", "c"])
 
     emb = _FakeEmbedding()
     ctx = {
         "pg": None, "minio": None, "bucket": "b",
-        "embedding": emb, "settings": _settings(batch=2),
+        "embedding": emb, "settings": _settings(batch=2), "redis": None,
     }
 
     await pipe.ingest_document(ctx, "d1")
@@ -60,10 +68,11 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
     assert statuses == []  # happy path 不写 set_status(只在失败时写)
     assert emb.batches == [["a", "b"], ["c"]]
     assert completed["kb"] == "kb1"
+    # embedded 归一化为 (index, text, vector, metadata);list[str] 策略 metadata 为空 {}
     assert completed["embedded"] == [
-        (0, "a", [0.0, 0.0, 0.0, 0.0]),
-        (1, "b", [0.0, 0.0, 0.0, 0.0]),
-        (2, "c", [0.0, 0.0, 0.0, 0.0]),
+        (0, "a", [0.0, 0.0, 0.0, 0.0], {}),
+        (1, "b", [0.0, 0.0, 0.0, 0.0], {}),
+        (2, "c", [0.0, 0.0, 0.0, 0.0], {}),
     ]
 
 
@@ -108,15 +117,56 @@ async def test_ingest_empty_chunks_marks_failed(monkeypatch):
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "")
-    monkeypatch.setattr(pipe, "chunk", lambda text, size, overlap: [])
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: [])
 
     ctx = {"pg": None, "minio": None, "bucket": "b",
-           "embedding": _FakeEmbedding(), "settings": _settings()}
+           "embedding": _FakeEmbedding(), "settings": _settings(), "redis": None}
 
     with pytest.raises(ValueError):
         await pipe.ingest_document(ctx, "d1")
     assert len(statuses) == 1
     assert statuses[0][0] == "failed" and statuses[0][1] is not None
+
+
+async def test_ingest_cancellation_marks_failed_and_reraises(monkeypatch):
+    """arq job_timeout 通过 CancelledError 中断任务:必须置 failed 后 re-raise,
+    否则文档永久卡在 processing(cron 只扫 failed)。"""
+    statuses = []
+
+    async def fake_claim(pool, doc_id):
+        return True
+
+    async def fake_set_status(pool, doc_id, status, error=None):
+        statuses.append((status, error))
+
+    async def fake_get_document(pool, doc_id):
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
+
+    async def fake_get_object(*a, **k):
+        return b"data"
+
+    class _CancelledEmbedding:
+        async def embed(self, texts):
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
+    monkeypatch.setattr(pipe.store, "set_status", fake_set_status)
+    monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
+    monkeypatch.setattr(pipe, "get_object", fake_get_object)
+    monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
+
+    settings = SimpleNamespace(
+        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=False,
+    )
+    ctx = {"pg": None, "minio": None, "bucket": "b",
+           "embedding": _CancelledEmbedding(), "settings": settings, "redis": None}
+
+    with pytest.raises(asyncio.CancelledError):
+        await pipe.ingest_document(ctx, "d1")
+    assert len(statuses) == 1
+    assert statuses[0][0] == "failed"
 
 
 async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):

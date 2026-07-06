@@ -1,4 +1,36 @@
+from types import SimpleNamespace
+
+import rag.worker.main as wm
 from rag.worker.main import WorkerSettings, retry_failed_documents
+
+
+async def test_retry_cron_rescues_stalled_documents(monkeypatch):
+    """自愈 cron 除 failed 外,还必须回收卡死的 pending/processing 文档
+    (enqueue 丢失、worker 超时被取消未置 failed 等状态机盲区)。"""
+    ingested = []
+
+    async def fake_claim_failed(pool, max_rounds, backoff):
+        return ["f1"]
+
+    async def fake_find_stalled(pool, stale_after_seconds):
+        return ["s1"]
+
+    async def fake_ingest(ctx, doc_id):
+        ingested.append(doc_id)
+
+    monkeypatch.setattr(wm.store, "claim_failed_for_retry", fake_claim_failed)
+    monkeypatch.setattr(wm.store, "find_stalled_documents", fake_find_stalled, raising=False)
+    monkeypatch.setattr(wm, "ingest_document", fake_ingest)
+
+    ctx = {
+        "pg": None,
+        "settings": SimpleNamespace(
+            MAX_RETRY_ROUNDS=10, RETRY_BACKOFF_BASE=60, STALE_DOC_SECONDS=900
+        ),
+    }
+    await retry_failed_documents(ctx)
+
+    assert set(ingested) == {"f1", "s1"}
 
 
 def test_worker_registers_ingest_function():

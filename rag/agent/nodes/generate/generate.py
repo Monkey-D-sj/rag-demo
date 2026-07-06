@@ -3,6 +3,9 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
+from rag.common.logging import get_logger
+
+logger = get_logger()
 
 system_prompt = """
 你是一个专业的问答助手。你的任务是：基于提供的上下文信息和知识库内容，准确、简洁地回答用户的问题。
@@ -44,13 +47,11 @@ async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
     llm = runtime.context.llm
     chunks = state.get("recall_vec_results") or []
     knowledge = "\n".join(c.get("text", "") for c in chunks)
-    state["context"] = ""
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(
             content=f"""
 查询: {state["raw_query"]}
-记忆上下文: {state["context"]}
 知识库内容: {knowledge}
 """
         ),
@@ -65,4 +66,25 @@ async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
         writer(stream_event(StreamEventType.MESSAGE, token))
 
     state["generated"] = "".join(parts)
+
+    # 写回本轮问答:下一轮 recall_memory + handle_query 据此做多轮指代消解。
+    # 记忆写入失败(Redis/PG 抖动)不应中断本次回答,仅记日志降级。
+    await _persist_turn(
+        runtime.context.memory_manager,
+        state["session_id"],
+        state["raw_query"],
+        state["generated"],
+    )
     return state
+
+
+async def _persist_turn(
+    memory_manager, session_id: str, query: str, answer: str
+) -> None:
+    if memory_manager is None:
+        return
+    try:
+        await memory_manager.add_message(session_id, query, {"role": "user"})
+        await memory_manager.add_message(session_id, answer, {"role": "assistant"})
+    except Exception:  # noqa: BLE001 - 记忆写入失败不拖垮回答
+        logger.exception("写回会话记忆失败: session=%s", session_id)

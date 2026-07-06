@@ -24,6 +24,10 @@ class MemoryManagerProtocol(Protocol):
 
 	async def get_recent_messages(self, session_id: str, n: int = 10) -> list[dict]: ...
 
+	async def add_message(
+		self, session_id: str, text: str, metadata: dict | None = None
+	) -> None: ...
+
 
 class StreamEventType(str, Enum):
 	STATUS = "status"

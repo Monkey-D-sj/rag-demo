@@ -94,6 +94,62 @@ async def test_recall_no_retriever_yields_empty(monkeypatch):
     assert out["recall_vec_results"] == []
 
 
+async def test_generate_writes_back_memory(monkeypatch):
+    """生成结束后本轮问答必须写回短期记忆,否则记忆系统只读不写、永远为空。"""
+    monkeypatch.setattr(
+        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+    )
+
+    class _WritableMM:
+        def __init__(self):
+            self.added = []
+
+        async def add_message(self, session_id, text, metadata=None):
+            self.added.append((session_id, text, metadata))
+
+    class _StreamLLM:
+        async def astream(self, messages):
+            for tok in ("答", "案"):
+                yield tok
+
+    mm = _WritableMM()
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=_StreamLLM(), memory_manager=mm)
+    )
+    state = {"session_id": "s1", "raw_query": "问题", "rewrite_query": "q", "context": ""}
+
+    await generate_mod.generate(state, runtime)
+
+    assert len(mm.added) == 2
+    sid, user_text, user_meta = mm.added[0]
+    assert sid == "s1" and "问题" in user_text and user_meta == {"role": "user"}
+    sid, asst_text, asst_meta = mm.added[1]
+    assert sid == "s1" and "答案" in asst_text and asst_meta == {"role": "assistant"}
+
+
+async def test_generate_memory_write_failure_does_not_fail_request(monkeypatch):
+    monkeypatch.setattr(
+        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+    )
+
+    class _BrokenMM:
+        async def add_message(self, session_id, text, metadata=None):
+            raise RuntimeError("redis down")
+
+    class _StreamLLM:
+        async def astream(self, messages):
+            yield "答案"
+
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=_StreamLLM(), memory_manager=_BrokenMM())
+    )
+    state = {"session_id": "s1", "raw_query": "问题", "rewrite_query": "q", "context": ""}
+
+    out = await generate_mod.generate(state, runtime)
+
+    assert out["generated"] == "答案"
+
+
 async def test_generate_streams_tokens_and_accumulates(monkeypatch):
     emitted = []
     monkeypatch.setattr(
@@ -108,7 +164,7 @@ async def test_generate_streams_tokens_and_accumulates(monkeypatch):
     runtime = SimpleNamespace(
         context=ContextSchema(llm=_StreamLLM(), memory_manager=None)
     )
-    state = {"session_id": "s1", "rewrite_query": "q", "context": "ctx"}
+    state = {"session_id": "s1", "raw_query": "问题", "rewrite_query": "q", "context": "ctx"}
 
     out = await generate_mod.generate(state, runtime)
 

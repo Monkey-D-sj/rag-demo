@@ -42,7 +42,7 @@ def test_settings_has_document_ingestion_defaults():
     assert s.arq_redis_db == 1
     assert s.chunk_size == 800
     assert s.chunk_overlap == 100
-    assert s.embedding_batch_size == 16
+    assert s.embedding_batch_size == 10
     assert s.max_upload_mb == 20
 
 

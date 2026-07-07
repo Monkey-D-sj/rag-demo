@@ -20,6 +20,7 @@ RAG_RELOAD=1 uv run rag-api
 uv run rag-worker
 
 # Run tests (unit only, no external services)
+# pytest addopts in pyproject.toml already skips integration+eval markers by default
 uv run pytest tests/ -v --ignore=tests/test_db.py --ignore=tests/test_db_neo4j.py
 
 # Run a single test file/function
@@ -28,6 +29,9 @@ uv run pytest tests/test_memory.py::test_recall_memory_dedup -v
 
 # Run integration tests (requires docker compose infrastructure)
 uv run pytest tests/ -v -m integration
+
+# Run retrieval eval (requires pg + embedding + seeded eval KB)
+uv run pytest tests/ -v -m eval
 
 # Start infrastructure only
 docker compose up -d postgres redis minio neo4j
@@ -39,7 +43,10 @@ docker compose up -d --build
 cd frontend && pnpm install && pnpm dev
 ```
 
-`pyproject.toml` defines two console scripts: `rag-api` (→ `rag.__main__:main`) and `rag-worker` (→ `rag.worker.main:run`).
+`pyproject.toml` defines three console scripts:
+- `rag-api` (→ `rag.__main__:main`)
+- `rag-worker` (→ `rag.worker.main:run`)
+- `rag-eval` (→ `rag.eval.run:main`) — retrieval eval CLI with `--update-baseline` / `--breakdown` flags
 
 ## Architecture
 
@@ -71,6 +78,10 @@ Streaming (`astream`) does NOT retry — retry semantics for mid-stream failures
 
 `KnowledgeRetriever.search()` fires vector recall (pgvector cosine distance) and BM25 recall (ParadeDB `pg_search` with jieba tokenizer) concurrently via `asyncio.gather`. BM25 failures are caught and degraded to empty results — vector is the critical path. Both legs fetch `top_k * 2` candidates, then RRF (Reciprocal Rank Fusion, k=60) merges and re-ranks to final `top_k`. Lexical queries are sanitized (punctuation stripped) before BM25 to avoid noise.
 
+### Embedding: batch size limit
+
+The embedding API (DashScope/Alibaba compatible mode) enforces a **maximum of 10 texts per batch** (`InternalError.Algo.InvalidParameter` if exceeded). The default `EMBEDDING_BATCH_SIZE` is 10 — do not raise it without verifying the target API's limit. The embedding model is `text-embedding-v4` with 1024 dimensions.
+
 ### Logging: custom get_logger + contextvars for session propagation
 
 Always use `from rag.common.logging import get_logger` instead of `logging.getLogger(__name__)` — it uses stack inspection to derive the caller's module name, so copy-pasting the one-liner works correctly. Session ID propagation uses `contextvars` (`_session_id_var`): `bind_session(session_id)` sets it for the request's async context, `_SessionContextFilter` attaches it to every log record. `setup_logging()` is idempotent and takes over uvicorn/uvicorn.access/uvicorn.error/watchfiles loggers (clears their handlers, sets `propagate=True`). Log format is controlled by `LOG_FORMAT` (`text` with optional color, or `json`). Loki push runs on a background daemon thread with batching.
@@ -78,6 +89,8 @@ Always use `from rag.common.logging import get_logger` instead of `logging.getLo
 ### Observability: null-object pattern for zero overhead when disabled
 
 All Langfuse integration in `rag/observability/langfuse.py` follows the same pattern: when `LANGFUSE_ENABLED=false` or keys are missing, functions return passthrough/noop versions. `observe_if_enabled`/`observe_root` return the original function unchanged; `get_callback_handler` returns `None`; `span_scope`/`session_scope` return `contextlib.nullcontext()`. Lazy imports (`from langfuse import ...`) ensure the SDK is never loaded when disabled. The `@lru_cache` on `_init_client()` ensures the global Langfuse client is created at most once per process.
+
+The same `*_ENABLED` toggle pattern applies to **Loki** (`LOKI_ENABLED`), **Neo4j** (`NEO4J_ENABLED`), and **entity extraction** (`ENABLE_ENTITY_EXTRACTION`) — all default to `false` and require explicit opt-in.
 
 ### Document pipeline: state machine + self-healing
 
@@ -91,10 +104,27 @@ Entity extraction (graph pipeline) is a separate ARQ task (`extract_document_ent
 
 All DB access goes through `get_cursor(pool)` — an async context manager yielding dict-row cursors. Each connection auto-registers pgvector via `_configure`. Transactions auto-commit on clean exit and rollback on exception. There is no ORM; all queries are raw SQL. Alembic migrations live in `alembic/versions/` and use the sync `PG_SYNC_URL` (note: migrations use `psycopg` sync driver, not the async pool).
 
+### Retrieval eval system
+
+`rag/eval/` provides a retrieval quality regression suite:
+- **Golden dataset**: `rag/eval/datasets/retrieval_golden.jsonl` — hand-curated query → relevant doc_ids pairs (西游记 themed)
+- **Metrics**: hit@k, recall@k, ndcg@k, mrr — computed in `rag/eval/metrics.py`
+- **Gate**: `gate()` compares aggregate metrics against `rag/eval/baseline.json` thresholds; fails hard on regression
+- **Seed corpus**: `rag/eval/seed_corpus.py` populates an isolated eval KB (`EVAL_KB_ID = ...0ee`) from source documents
+- **Breakdown**: `--breakdown` runs vec-only and bm25-only alongside fused to diagnose which leg regressed
+- **Golden generation**: `rag/eval/generate_golden.py` uses LLM structured output to produce candidate query-document pairs for manual curation
+- **CLI**: `uv run rag-eval [--update-baseline] [--breakdown]` or `uv run pytest tests/ -v -m eval`
+
+The eval KB is deliberately isolated from production (`EVAL_KB_ID` ≠ default KB).
+
 ### Exception handling in API
 
 Service layer only raises `AppError` subclasses (from `rag/common/exception.py`). The `register_error_handlers` function in `rag/api/common/error_handlers.py` maps `AppError.status_code` → HTTP response. LLM exceptions (`LLMException` hierarchy) are separate and handled at the model layer with retry logic.
 
+### Frontend: React 18 + Vite + TailwindCSS
+
+`frontend/` is a single-page app with three pages (`ChatPage`, `DocumentsPage`, `HealthPage`). SSE streaming consumption lives in `frontend/src/api/stream.ts` — it reads the same custom events emitted by the LangGraph workflow. API calls go through `frontend/src/api/client.ts` (thin wrapper around `fetch`). Components are plain React — no state management library beyond React hooks.
+
 ### Windows compatibility
 
-Three places set `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())`: `rag/__main__.py` (API entry), `rag/api/main.py` (ASGI import-time for reload workers), `rag/worker/main.py` (worker entry), and `tests/conftest.py`. This is needed because psycopg3 async requires `SelectorEventLoop`, but Windows defaults to `ProactorEventLoop`. Uvicorn is started with `loop="none"` to prevent it from overriding the policy.
+Three places set `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())`: `rag/__main__.py` (API entry), `rag/api/main.py` (ASGI import-time for reload workers), `rag/worker/main.py` (worker entry), `rag/eval/run.py` (eval CLI), and `tests/conftest.py`. This is needed because psycopg3 async requires `SelectorEventLoop`, but Windows defaults to `ProactorEventLoop`. Uvicorn is started with `loop="none"` to prevent it from overriding the policy.

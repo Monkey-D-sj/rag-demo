@@ -20,7 +20,7 @@ class LangfuseSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_ENABLED: bool = True
     LANGFUSE_HOST: str = "http://localhost:3000"
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""

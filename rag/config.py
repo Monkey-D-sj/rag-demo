@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 100
     SPLIT_STRATEGY: SplitStrategy = SplitStrategy.paragraph_semantic
-    EMBEDDING_BATCH_SIZE: int = 16
+    EMBEDDING_BATCH_SIZE: int = 10
     MAX_UPLOAD_MB: int = 20
     # 死信自愈：arq 单轮重试用尽后，cron 每 5 min 扫描 failed 文档按指数退避重试，
     # retry_count 达上限后放弃（真·死信），需人工介入。

@@ -87,10 +87,14 @@ async def lifespan(app: FastAPI):
         # minio 为同步 SDK,内部 urllib3 连接池随对象回收,无需显式关闭
         app.state.minio = create_minio_client(settings)
         logger.info("minio 客户端初始化完成")
-        logger.info("初始化 neo4j 图数据库")
-        app.state.neo4j = create_neo4j_driver(settings)
-        stack.push_async_callback(_close("neo4j 图数据库", app.state.neo4j.close))
-        logger.info("neo4j 图数据库初始化完成")
+        if settings.NEO4J_ENABLED:
+            logger.info("初始化 neo4j 图数据库")
+            app.state.neo4j = create_neo4j_driver(settings)
+            stack.push_async_callback(_close("neo4j 图数据库", app.state.neo4j.close))
+            logger.info("neo4j 图数据库初始化完成")
+        else:
+            logger.info("neo4j 未启用，跳过")
+            app.state.neo4j = None
         logger.info("初始化 arq 任务队列")
         app.state.arq_pool = await create_pool(
             RedisSettings(

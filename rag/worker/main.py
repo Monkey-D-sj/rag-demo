@@ -27,7 +27,7 @@ class WorkerCtx(TypedDict):
     minio: Minio
     bucket: str
     embedding: EmbeddingModel
-    neo4j: AsyncDriver
+    neo4j: AsyncDriver | None
     llm: ChatModel
 
 async def on_startup(ctx: dict) -> None:
@@ -39,14 +39,18 @@ async def on_startup(ctx: dict) -> None:
     ctx["minio"] = create_minio_client(settings)
     ctx["bucket"] = settings.MINIO_BUCKET
     ctx["embedding"] = EmbeddingModel(settings)
-    ctx["neo4j"] = create_neo4j_driver(settings)
+    if settings.NEO4J_ENABLED:
+        ctx["neo4j"] = create_neo4j_driver(settings)
+        await ensure_graph_constraints(ctx["neo4j"], settings.NEO4J_DATABASE)
+    else:
+        ctx["neo4j"] = None
     ctx["llm"] = NormalModel(settings)
-    await ensure_graph_constraints(ctx["neo4j"], settings.NEO4J_DATABASE)
 
 
 async def on_shutdown(ctx: dict) -> None:
     await ctx["pg"].close()
-    await ctx["neo4j"].close()
+    if ctx.get("neo4j"):
+        await ctx["neo4j"].close()
 
 
 async def retry_failed_documents(ctx: dict) -> None:
@@ -74,8 +78,16 @@ async def retry_failed_documents(ctx: dict) -> None:
             logger.exception("自愈重试失败: %s", doc_id)
 
 
+async def _extract_wrapper(ctx: dict, document_id: str) -> None:
+    """neo4j 未启用时跳过实体抽取，避免运行时连接错误。"""
+    if ctx.get("neo4j") is None:
+        logger.info("neo4j 未启用，跳过实体抽取: %s", document_id)
+        return
+    await extract_document_entities(ctx, document_id)
+
+
 class WorkerSettings:
-    functions = [func(ingest_document), func(extract_document_entities, timeout=900)]
+    functions = [func(ingest_document), func(_extract_wrapper, timeout=900)]
     on_startup = on_startup
     on_shutdown = on_shutdown
     cron_jobs = [

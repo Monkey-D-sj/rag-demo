@@ -9,11 +9,16 @@ from rag.agent.type import MyState, ContextSchema
 # 构建状态图
 builder = StateGraph(MyState, context_schema=ContextSchema)
 
+# 召回记忆
 builder.add_node("recall_memory", recall_memory)
+# 查询改写
 builder.add_node("handle_query", handle_query)
+# 召回
 builder.add_node("recall", recall)
+# 生成
 builder.add_node("generate", generate)
 
+# recall_memory -> handle_query -> recall -> generate
 builder.add_edge(START, "recall_memory")
 builder.add_edge("recall_memory", "handle_query")
 builder.add_edge("handle_query", "recall")

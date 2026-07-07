@@ -2,7 +2,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
+from rag.agent.type import ContextSchema, MessageRole, MyState, StreamEventType, stream_event
 from rag.common.logging import get_logger
 
 logger = get_logger()
@@ -121,9 +121,9 @@ async def _persist_turn(
     if memory_manager is None:
         return
     try:
-        await memory_manager.add_message(session_id, query, {"role": "user"})
-        await memory_manager.add_message(session_id, answer, {"role": "assistant"})
-        await memory_manager.add(session_id, query, {"role": "user"})
-        await memory_manager.add(session_id, answer, {"role": "assistant"})
+        await memory_manager.add_message(session_id, query, {"role": MessageRole.USER})
+        await memory_manager.add_message(session_id, answer, {"role": MessageRole.ASSISTANT})
+        await memory_manager.add(session_id, query, {"role": MessageRole.USER})
+        await memory_manager.add(session_id, answer, {"role": MessageRole.ASSISTANT})
     except Exception:  # noqa: BLE001 - 记忆写入失败不拖垮回答
         logger.exception("写回会话记忆失败: session=%s", session_id)

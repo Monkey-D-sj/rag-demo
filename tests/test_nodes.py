@@ -25,11 +25,11 @@ class _FakeMM:
 
     async def search(self, session_id, query, top_k=5, filters=None):
         self.search_calls.append((session_id, query))
-        return [{"text": "L1"}]
+        return [{"text": "L1", "metadata": {"role": "user"}}]
 
     async def get_recent_messages(self, session_id, n=10):
         self.recent_calls.append(session_id)
-        return [{"text": "S1"}]
+        return [{"text": "S1", "metadata": {"role": "assistant"}}]
 
 
 async def test_recall_memory_awaits_and_composes_context(monkeypatch):
@@ -42,7 +42,7 @@ async def test_recall_memory_awaits_and_composes_context(monkeypatch):
 
     assert mm.search_calls == [("s1", "q1")]
     assert mm.recent_calls == ["s1"]
-    assert out["context"] == "S1\nL1"
+    assert out["context"] == "AI：S1\n用户：L1"
 
 
 async def test_recall_memory_dedup_short_priority(monkeypatch):

@@ -29,6 +29,34 @@ class MemoryManagerProtocol(Protocol):
 	) -> None: ...
 
 
+class MessageRole(str, Enum):
+	"""消息角色：每个成员自带中文标签，display 为 property。"""
+
+	USER = ("user", "用户")
+	ASSISTANT = ("assistant", "AI")
+
+	def __new__(cls, value: str, label: str):
+		obj = str.__new__(cls, value)
+		obj._value_ = value
+		obj._label_ = label
+		return obj
+
+	@property
+	def display(self) -> str:
+		"""角色的中文显示标签。"""
+		return self._label_
+
+	@classmethod
+	def display_of(cls, value: str | None) -> str | None:
+		"""从存储值（如 "user"）反查中文标签；未知值返回 None。"""
+		if value is None:
+			return None
+		try:
+			return cls(value).display
+		except ValueError:
+			return None
+
+
 class StreamEventType(str, Enum):
 	STATUS = "status"
 	MESSAGE = "message"

@@ -38,9 +38,22 @@ system_prompt = """
 现在，请根据以上规则，基于提供的上下文回答用户的问题。
 """
 
+direct_system_prompt = """
+你是一个智能问答助手。用户的问题与知识库内容无关，请直接基于你的知识回答。
+
+## 回答规则
+
+1. **友好自然**：如果是闲聊，友好、自然地回复。
+2. **专业准确**：如果是技术或知识类问题，给出专业、准确的回答。
+3. **诚实透明**：如果不确定或超出知识范围，诚实告知。
+4. **简洁明了**：开门见山，不要绕弯子。
+
+现在，请直接回答用户的问题。
+"""
+
 
 async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
-    """最终生成:逐 token 流式输出,同时累积为完整 generated。"""
+    """基于知识库检索结果生成回答：逐 token 流式输出。"""
     writer = get_stream_writer()
     writer(stream_event(StreamEventType.STATUS, "生成回答中"))
 
@@ -67,14 +80,38 @@ async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
 
     state["generated"] = "".join(parts)
 
-    # 写回本轮问答：短期记忆供多轮指代消解，长期记忆供后续检索召回。
-    # 记忆写入失败(Redis/PG 抖动)不应中断本次回答,仅记日志降级。
     await _persist_turn(
         runtime.context.memory_manager,
         state["session_id"],
         state["raw_query"],
         state["generated"],
     )
+    return state
+
+
+async def direct_answer(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
+    """知识库范围外直接回答：不依赖检索结果，大模型自身知识兜底。
+
+    范围外问答不写回记忆——闲聊/无关问题对多轮对话没有上下文价值。
+    """
+    writer = get_stream_writer()
+    writer(stream_event(StreamEventType.STATUS, "生成回答中"))
+
+    llm = runtime.context.llm
+    messages = [
+        SystemMessage(content=direct_system_prompt),
+        HumanMessage(content=state["raw_query"]),
+    ]
+
+    parts: list[str] = []
+    async for chunk in llm.astream(messages):
+        token = getattr(chunk, "content", chunk)
+        if not token:
+            continue
+        parts.append(token)
+        writer(stream_event(StreamEventType.MESSAGE, token))
+
+    state["generated"] = "".join(parts)
     return state
 
 

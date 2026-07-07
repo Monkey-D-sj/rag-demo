@@ -11,9 +11,11 @@ class _FakeLLM:
     def __init__(self):
         self.calls = []
 
-    async def ainvoke(self, messages):
+    async def ainvoke_structured(self, messages, schema):
+        from rag.agent.nodes.query.query import QueryRewriteOutput
+
         self.calls.append(messages)
-        return "rewritten"
+        return QueryRewriteOutput(rewrite_query="rewritten", is_out_of_scope=False)
 
 
 class _FakeMM:
@@ -65,7 +67,8 @@ async def test_recall_memory_dedup_short_priority(monkeypatch):
     assert out["context"] == "dup\nS1\nL1"
 
 
-async def test_handle_query_awaits_ainvoke(monkeypatch):
+async def test_handle_query_structured_output_in_scope(monkeypatch):
+    """查询在知识库范围内时，应返回改写后的查询且 is_out_of_scope=False。"""
     monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
     llm = _FakeLLM()
     runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
@@ -74,7 +77,111 @@ async def test_handle_query_awaits_ainvoke(monkeypatch):
     out = await query_mod.handle_query(state, runtime)
 
     assert out["rewrite_query"] == "rewritten"
+    assert out["is_out_of_scope"] is False
     assert len(llm.calls) == 1
+
+
+async def test_handle_query_detects_out_of_scope(monkeypatch):
+    """闲聊/无关查询应标记 is_out_of_scope=True。"""
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    class _OutOfScopeLLM:
+        def __init__(self):
+            self.calls = []
+
+        async def ainvoke_structured(self, messages, schema):
+            self.calls.append(messages)
+            return QueryRewriteOutput(rewrite_query="你好啊", is_out_of_scope=True)
+
+    llm = _OutOfScopeLLM()
+    runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
+    state = {"session_id": "s1", "raw_query": "你好啊", "context": ""}
+
+    out = await query_mod.handle_query(state, runtime)
+
+    assert out["rewrite_query"] == "你好啊"
+    assert out["is_out_of_scope"] is True
+    assert len(llm.calls) == 1
+
+
+async def test_direct_answer_uses_direct_prompt(monkeypatch):
+    """direct_answer 节点应使用直接回答 prompt，不依赖知识库内容。"""
+    captured_messages = []
+    monkeypatch.setattr(
+        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+    )
+
+    class _CaptureLLM:
+        async def astream(self, messages):
+            captured_messages.extend(messages)
+            yield "直接回答"
+
+    llm = _CaptureLLM()
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=llm, memory_manager=None)
+    )
+    state = {
+        "session_id": "s1",
+        "raw_query": "你好啊",
+    }
+
+    out = await generate_mod.direct_answer(state, runtime)
+
+    assert out["generated"] == "直接回答"
+    # 确认使用了 direct_system_prompt 而非 kb_system_prompt
+    system_msg = captured_messages[0]
+    system_content = (
+        system_msg.content if hasattr(system_msg, "content") else str(system_msg)
+    )
+    assert "知识库内容无关" in system_content or "直接基于你的知识" in system_content
+
+
+async def test_direct_answer_does_not_persist(monkeypatch):
+    """direct_answer 不写回记忆（闲聊/无关问题无上下文价值）。"""
+    monkeypatch.setattr(
+        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+    )
+
+    class _SpyMM:
+        def __init__(self):
+            self.added = []
+
+        async def add_message(self, session_id, text, metadata=None):
+            self.added.append(("add_message", session_id, text, metadata))
+
+        async def add(self, session_id, text, metadata=None):
+            self.added.append(("add", session_id, text, metadata))
+
+    class _StreamLLM:
+        async def astream(self, messages):
+            yield "兜底回答"
+
+    mm = _SpyMM()
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=_StreamLLM(), memory_manager=mm)
+    )
+    state = {"session_id": "s1", "raw_query": "你好"}
+
+    await generate_mod.direct_answer(state, runtime)
+
+    assert mm.added == []  # 不写记忆
+
+
+async def test_route_after_query_in_scope():
+    """知识库范围内查询路由到 recall。"""
+    import rag.agent.workflow as wf
+
+    assert wf._route_after_query({"is_out_of_scope": False}) == "recall"
+    assert wf._route_after_query({}) == "recall"  # 缺失时默认走检索
+
+
+async def test_route_after_query_out_of_scope():
+    """知识库范围外查询路由到 direct_answer。"""
+    import rag.agent.workflow as wf
+
+    assert wf._route_after_query({"is_out_of_scope": True}) == "direct_answer"
 
 
 async def test_recall_searches_kb_with_rewrite_query(monkeypatch):

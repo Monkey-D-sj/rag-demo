@@ -28,6 +28,10 @@ class MemoryManagerProtocol(Protocol):
 		self, session_id: str, text: str, metadata: dict | None = None
 	) -> None: ...
 
+	async def persist_turn(
+		self, session_id: str, query: str, answer: str
+	) -> None: ...
+
 
 class MessageRole(str, Enum):
 	"""消息角色：每个成员自带中文标签，display 为 property。"""

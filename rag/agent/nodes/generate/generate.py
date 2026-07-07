@@ -2,10 +2,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from rag.agent.type import ContextSchema, MessageRole, MyState, StreamEventType, stream_event
-from rag.common.logging import get_logger
-
-logger = get_logger()
+from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
 
 system_prompt = """
 你是一个专业的问答助手。你的任务是：基于提供的上下文信息和知识库内容，准确、简洁地回答用户的问题。
@@ -79,13 +76,6 @@ async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
         writer(stream_event(StreamEventType.MESSAGE, token))
 
     state["generated"] = "".join(parts)
-
-    await _persist_turn(
-        runtime.context.memory_manager,
-        state["session_id"],
-        state["raw_query"],
-        state["generated"],
-    )
     return state
 
 
@@ -113,17 +103,3 @@ async def direct_answer(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
 
     state["generated"] = "".join(parts)
     return state
-
-
-async def _persist_turn(
-    memory_manager, session_id: str, query: str, answer: str
-) -> None:
-    if memory_manager is None:
-        return
-    try:
-        await memory_manager.add_message(session_id, query, {"role": MessageRole.USER})
-        await memory_manager.add_message(session_id, answer, {"role": MessageRole.ASSISTANT})
-        await memory_manager.add(session_id, query, {"role": MessageRole.USER})
-        await memory_manager.add(session_id, answer, {"role": MessageRole.ASSISTANT})
-    except Exception:  # noqa: BLE001 - 记忆写入失败不拖垮回答
-        logger.exception("写回会话记忆失败: session=%s", session_id)

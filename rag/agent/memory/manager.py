@@ -4,8 +4,12 @@ import uuid
 from pgvector import Vector
 from psycopg.types.json import Json
 
+from rag.agent.type import MessageRole
+from rag.common.logging import get_logger
 from rag.db.postgres import get_cursor
 from rag.models.embedding import EmbeddingModel
+
+logger = get_logger()
 
 
 class MemoryManager:
@@ -56,6 +60,19 @@ class MemoryManager:
     async def clear_session(self, session_id: str) -> None:
         if self._redis is not None:
             await self._redis.delete(self._short_key(session_id))
+
+    async def persist_turn(self, session_id: str, query: str, answer: str) -> None:
+        """将一轮问答同时写入短期（Redis）和长期（pgvector）记忆。
+
+        失败时仅记日志，不抛出异常——记忆写入不应阻断主流程。
+        """
+        try:
+            await self.add_message(session_id, query, {"role": MessageRole.USER})
+            await self.add_message(session_id, answer, {"role": MessageRole.ASSISTANT})
+            await self.add(session_id, query, {"role": MessageRole.USER})
+            await self.add(session_id, answer, {"role": MessageRole.ASSISTANT})
+        except Exception:  # noqa: BLE001 - 记忆写入失败不拖垮回答
+            logger.exception("写回会话记忆失败: session=%s", session_id)
 
     # ── 长期记忆 (PostgreSQL + pgvector) ──
 

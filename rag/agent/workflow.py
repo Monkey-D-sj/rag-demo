@@ -1,10 +1,11 @@
 from langgraph.graph import END, START, StateGraph
 
+from rag.agent.nodes.add_memory.memory import add_memory
 from rag.agent.nodes.generate.generate import direct_answer, generate
 from rag.agent.nodes.query.query import handle_query
 from rag.agent.nodes.recall.recall import recall
 from rag.agent.nodes.recall_memory.memory import recall_memory
-from rag.agent.type import MyState, ContextSchema
+from rag.agent.type import ContextSchema, MyState
 
 
 def _route_after_query(state: MyState) -> str:
@@ -27,8 +28,12 @@ builder.add_node("recall", recall)
 builder.add_node("generate", generate)
 # 范围外直接大模型回答
 builder.add_node("direct_answer", direct_answer)
+# 记忆持久化（仅 generate 路由到此处，direct_answer 不写记忆）
+builder.add_node("add_memory", add_memory)
 
-# recall_memory → handle_query → {recall → generate | direct_answer} → END
+#                                       ┌─ out-of-scope -> direct_answer ────────────────┐
+# START -> recall_memory -> handle_query ┤                                              END
+#                                       └─ in-scope -> recall -> generate -> add_memory ─┘
 builder.add_edge(START, "recall_memory")
 builder.add_edge("recall_memory", "handle_query")
 builder.add_conditional_edges(
@@ -37,7 +42,8 @@ builder.add_conditional_edges(
     {"recall": "recall", "direct_answer": "direct_answer"},
 )
 builder.add_edge("recall", "generate")
-builder.add_edge("generate", END)
+builder.add_edge("generate", "add_memory")
+builder.add_edge("add_memory", END)
 builder.add_edge("direct_answer", END)
 
 graph = builder.compile()

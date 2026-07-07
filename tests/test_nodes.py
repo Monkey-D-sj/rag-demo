@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import rag.agent.nodes.add_memory.memory as add_memory_mod
 import rag.agent.nodes.generate.generate as generate_mod
 import rag.agent.nodes.query.query as query_mod
 import rag.agent.nodes.recall.recall as kb_recall_mod
@@ -223,66 +224,40 @@ async def test_recall_no_retriever_yields_empty(monkeypatch):
     assert out["recall_vec_results"] == []
 
 
-async def test_generate_writes_back_memory(monkeypatch):
-    """生成结束后本轮问答须写回短期+长期记忆。"""
-    monkeypatch.setattr(
-        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
-    )
+async def test_add_memory_calls_persist_turn():
+    """add_memory 节点应将本轮问答通过 persist_turn 写回记忆。"""
 
-    class _WritableMM:
+    class _SpyMM:
         def __init__(self):
-            self.added = []
+            self.persisted = []
 
-        async def add_message(self, session_id, text, metadata=None):
-            self.added.append((session_id, text, metadata))
+        async def persist_turn(self, session_id, query, answer):
+            self.persisted.append((session_id, query, answer))
 
-        async def add(self, session_id, text, metadata=None):
-            self.added.append((session_id, text, metadata))
-
-    class _StreamLLM:
-        async def astream(self, messages):
-            for tok in ("答", "案"):
-                yield tok
-
-    mm = _WritableMM()
+    mm = _SpyMM()
     runtime = SimpleNamespace(
-        context=ContextSchema(llm=_StreamLLM(), memory_manager=mm)
+        context=ContextSchema(llm=None, memory_manager=mm)
     )
-    state = {"session_id": "s1", "raw_query": "问题", "rewrite_query": "q", "context": ""}
+    state = {
+        "session_id": "s1",
+        "raw_query": "问题",
+        "generated": "答案",
+    }
 
-    await generate_mod.generate(state, runtime)
+    await add_memory_mod.add_memory(state, runtime)
 
-    assert len(mm.added) == 4  # 2 短期 + 2 长期
-    sid, user_text, user_meta = mm.added[0]
-    assert sid == "s1" and "问题" in user_text and user_meta == {"role": "user"}
-    sid, asst_text, asst_meta = mm.added[1]
-    assert sid == "s1" and "答案" in asst_text and asst_meta == {"role": "assistant"}
+    assert mm.persisted == [("s1", "问题", "答案")]
 
 
-async def test_generate_memory_write_failure_does_not_fail_request(monkeypatch):
-    monkeypatch.setattr(
-        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
-    )
-
-    class _BrokenMM:
-        async def add_message(self, session_id, text, metadata=None):
-            raise RuntimeError("redis down")
-
-        async def add(self, session_id, text, metadata=None):
-            raise RuntimeError("pg down")
-
-    class _StreamLLM:
-        async def astream(self, messages):
-            yield "答案"
-
+async def test_add_memory_none_manager_skips():
+    """memory_manager 为 None 时 add_memory 应静默跳过。"""
     runtime = SimpleNamespace(
-        context=ContextSchema(llm=_StreamLLM(), memory_manager=_BrokenMM())
+        context=ContextSchema(llm=None, memory_manager=None)
     )
-    state = {"session_id": "s1", "raw_query": "问题", "rewrite_query": "q", "context": ""}
+    state = {"session_id": "s1", "raw_query": "问题", "generated": "答案"}
 
-    out = await generate_mod.generate(state, runtime)
-
-    assert out["generated"] == "答案"
+    # 不应抛异常
+    await add_memory_mod.add_memory(state, runtime)
 
 
 async def test_generate_streams_tokens_and_accumulates(monkeypatch):

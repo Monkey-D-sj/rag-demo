@@ -9,6 +9,9 @@ class _FakeMM:
     async def get_recent_messages(self, session_id, n=10):
         return [{"text": "S1"}]
 
+    async def persist_turn(self, session_id, query, answer):
+        pass
+
 
 class _FakeLLM:
     async def ainvoke(self, messages):

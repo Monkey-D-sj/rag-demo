@@ -281,3 +281,34 @@ async def test_generate_streams_tokens_and_accumulates(monkeypatch):
     assert out["generated"] == "答案"
     assert stream_event(StreamEventType.MESSAGE, "答") in emitted
     assert stream_event(StreamEventType.MESSAGE, "案") in emitted
+
+
+async def test_no_results_emits_canned_message(monkeypatch):
+    """召回为空时 no_results 节点应发送兜底话术，不调 LLM。"""
+    emitted = []
+    monkeypatch.setattr(
+        generate_mod, "get_stream_writer", lambda: (lambda ev: emitted.append(ev))
+    )
+    state = {"session_id": "s1", "raw_query": "查无此问"}
+
+    out = await generate_mod.no_results(state)
+
+    assert out["generated"] == generate_mod._NO_RESULT_MSG
+    assert "未在当前知识库中找到" in out["generated"]
+    assert stream_event(StreamEventType.STATUS, "未找到相关内容") in emitted
+    assert stream_event(StreamEventType.MESSAGE, generate_mod._NO_RESULT_MSG) in emitted
+
+
+async def test_route_after_recall_empty():
+    """召回为空时路由到 no_results。"""
+    import rag.agent.workflow as wf
+
+    assert wf._route_after_recall({"recall_vec_results": []}) == "no_results"
+    assert wf._route_after_recall({}) == "no_results"
+
+
+async def test_route_after_recall_has_results():
+    """召回有结果时路由到 generate。"""
+    import rag.agent.workflow as wf
+
+    assert wf._route_after_recall({"recall_vec_results": [{"text": "KB1"}]}) == "generate"

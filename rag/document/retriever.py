@@ -20,16 +20,30 @@ def _lexical_query(query: str) -> str:
     return re.sub(r"[\W_]+", " ", query).strip()
 
 
+# vec 路源优先级高于 bm25:同 id chunk 在两路都命中时取 vec 行的字段。
+_VEC_SOURCE_PRIORITY = 0
+_BM25_SOURCE_PRIORITY = 1
+
+
 def _rrf_fuse(
     vec_rows: list[dict], bm25_rows: list[dict], top_k: int
 ) -> list[dict]:
-    """RRF 融合:score = Σ 1/(RRF_K + rank),按 id 去重,行数据取先见者。"""
+    """RRF 融合:score = Σ 1/(RRF_K + rank),按 id 去重,行数据取高优先级路。"""
     fused: dict[str, dict] = {}
-    for source, rows in (("vec", vec_rows), ("bm25", bm25_rows)):  # 并列分时 vec 路先见者优先:依赖 dict 插序与 sorted 稳定性,勿调换元组顺序
+    for source, priority, rows in (
+        ("vec", _VEC_SOURCE_PRIORITY, vec_rows),
+        ("bm25", _BM25_SOURCE_PRIORITY, bm25_rows),
+    ):
         for rank, row in enumerate(rows):
-            entry = fused.setdefault(
-                str(row["id"]), {"row": row, "rrf_score": 0.0, "sources": []}
-            )
+            rid = str(row["id"])
+            entry = fused.get(rid)
+            if entry is None:
+                fused[rid] = {"row": row, "rrf_score": 0.0, "sources": [], "_priority": priority}
+                entry = fused[rid]
+            elif priority < entry["_priority"]:
+                # 更高优先级路的行数据覆盖
+                entry["row"] = row
+                entry["_priority"] = priority
             entry["rrf_score"] += 1.0 / (RRF_K + rank + 1)
             entry["sources"].append(source)
     ranked = sorted(
@@ -82,16 +96,22 @@ class KnowledgeRetriever:
             # 子 span 让两路在 trace 里各自可见,而不是只有融合后的黑盒输出
             with span_scope("vector_recall", input=span_input) as span:
                 t0 = time.perf_counter()
-                emb = (await self._embedding.embed([query]))[0]
-                timings["embed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-                t1 = time.perf_counter()
-                rows = await store.search_chunks(
-                    self._pool, emb, knowledge_base_id, candidates
-                )
-                timings["search_ms"] = round((time.perf_counter() - t1) * 1000, 1)
-                if span is not None:
-                    span.update(output=_rank_summary(rows, "similarity"))
-                return rows
+                try:
+                    emb = (await self._embedding.embed([query]))[0]
+                    timings["embed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+                    t1 = time.perf_counter()
+                    rows = await store.search_chunks(
+                        self._pool, emb, knowledge_base_id, candidates
+                    )
+                    timings["search_ms"] = round((time.perf_counter() - t1) * 1000, 1)
+                    if span is not None:
+                        span.update(output=_rank_summary(rows, "similarity"))
+                    return rows
+                except Exception:  # noqa: BLE001 - 向量路失败降级,与 BM25 路对等容错
+                    logger.warning("向量召回失败,降级纯 BM25", exc_info=True)
+                    timings.setdefault("embed_ms", 0)
+                    timings.setdefault("search_ms", 0)
+                    return []
 
         async def _bm25_leg() -> list[dict]:
             with span_scope("bm25_recall", input=span_input) as span:
@@ -111,7 +131,7 @@ class KnowledgeRetriever:
                     span.update(output=_rank_summary(rows, "score"))
                 return rows
 
-        # 向量路异常照常传播(主路径语义不变);BM25 路已在内部兜底
+        # 两路并发,各自内部兜底;单路失败降级不影响另一路,双路皆败返回空。
         vec_rows, bm25_rows = await asyncio.gather(_vec_leg(), _bm25_leg())
         results = _rrf_fuse(vec_rows, bm25_rows, top_k)
 
@@ -133,10 +153,19 @@ class KnowledgeRetriever:
             ],
             **timings,
         }
+        vec_failed = len(vec_rows) == 0
+        bm25_failed = len(bm25_rows) == 0
+        if vec_failed and bm25_failed:
+            degrade_mode = "双向降级"
+        elif vec_failed or bm25_failed:
+            degrade_mode = "降级召回"
+        else:
+            degrade_mode = "混合召回"
+
         if results:
             logger.info(
-                "混合召回完成: %d 条 (向量 %d + BM25 %d)",
-                len(results), len(vec_rows), len(bm25_rows),
+                "%s完成: %d 条 (向量 %d + BM25 %d)",
+                degrade_mode, len(results), len(vec_rows), len(bm25_rows),
                 extra=fields,
             )
         else:

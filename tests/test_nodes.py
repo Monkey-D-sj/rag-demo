@@ -5,6 +5,7 @@ import rag.agent.nodes.generate.generate as generate_mod
 import rag.agent.nodes.query.query as query_mod
 import rag.agent.nodes.recall.recall as kb_recall_mod
 import rag.agent.nodes.recall_memory.memory as recall_mod
+import rag.agent.nodes.rerank.rerank as rerank_mod
 from rag.agent.type import ContextSchema, StreamEventType, stream_event
 
 
@@ -312,3 +313,58 @@ async def test_route_after_recall_has_results():
     import rag.agent.workflow as wf
 
     assert wf._route_after_recall({"recall_vec_results": [{"text": "KB1"}]}) == "generate"
+
+
+async def test_rerank_passthrough_when_no_reranker(monkeypatch):
+    """未注入 reranker 时节点应透传原始结果。"""
+    monkeypatch.setattr(rerank_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=None, memory_manager=None, reranker=None)
+    )
+    chunks = [{"id": "a", "text": "A"}]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await rerank_mod.rerank(state, runtime)
+
+    assert out["recall_vec_results"] is chunks  # 引用不变，未重排
+
+
+async def test_rerank_reorders_chunks(monkeypatch):
+    """有 reranker 时 chunk 应按 LLM 打分重排。"""
+    monkeypatch.setattr(rerank_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _FakeReranker:
+        async def rerank(self, query, chunks, top_k=None):
+            # 模拟：把 id="b" 的排到最前
+            reordered = sorted(chunks, key=lambda c: c["id"], reverse=True)
+            for c in reordered:
+                c["rerank_score"] = 9.0 if c["id"] == "b" else 1.0
+            return reordered
+
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=None, memory_manager=None, reranker=_FakeReranker())
+    )
+    chunks = [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await rerank_mod.rerank(state, runtime)
+
+    assert out["recall_vec_results"][0]["id"] == "b"
+    assert out["recall_vec_results"][0]["rerank_score"] == 9.0
+
+
+async def test_rerank_empty_chunks_skips(monkeypatch):
+    """空 recall 结果直接跳过，不调 reranker。"""
+    monkeypatch.setattr(rerank_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _NoCallReranker:
+        async def rerank(self, query, chunks, top_k=None):
+            raise RuntimeError("should not be called")
+
+    runtime = SimpleNamespace(
+        context=ContextSchema(llm=None, memory_manager=None, reranker=_NoCallReranker())
+    )
+    state = {"recall_vec_results": [], "raw_query": "q"}
+
+    out = await rerank_mod.rerank(state, runtime)  # 不应抛异常
+    assert out["recall_vec_results"] == []

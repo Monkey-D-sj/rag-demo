@@ -87,10 +87,20 @@ class MyState(TypedDict):
 	# ----------- 生成 -----------
 	generated: str
 
+@runtime_checkable
+class RerankerProtocol(Protocol):
+    """agent 层所需的排序器接口。"""
+
+    async def rerank(
+        self, query: str, chunks: list[dict], top_k: int | None = None
+    ) -> list[dict]: ...
+
+
 @dataclass
 class ContextSchema:
 	llm: ChatModel
 	memory_manager: MemoryManagerProtocol
 	retriever: RetrieverProtocol | None = None
+	reranker: RerankerProtocol | None = None
 
 	

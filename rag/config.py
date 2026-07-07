@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     LOG_FILE_MAX_BYTES: int = 10 * 1024 * 1024     # 单文件 10MB
     LOG_FILE_BACKUP_COUNT: int = 5                 # 轮转保留份数
 
+    # ── Rerank ──
+    RERANK_ENABLED: bool = True
+    RERANK_KEY: str = ""
+    RERANK_BASE_URL: str = ""
+    RERANK_MODEL: str = "qwen3-rerank"
+
     # ── Loki ──
     LOKI_ENABLED: bool = False
     LOKI_URL: str = "http://localhost:3100"

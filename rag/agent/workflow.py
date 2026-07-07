@@ -5,6 +5,7 @@ from rag.agent.nodes.generate.generate import direct_answer, generate, no_result
 from rag.agent.nodes.query.query import handle_query
 from rag.agent.nodes.recall.recall import recall
 from rag.agent.nodes.recall_memory.memory import recall_memory
+from rag.agent.nodes.rerank.rerank import rerank
 from rag.agent.type import ContextSchema, MyState
 
 
@@ -31,6 +32,8 @@ builder.add_node("recall_memory", recall_memory)
 builder.add_node("handle_query", handle_query)
 # 知识库召回
 builder.add_node("recall", recall)
+# 语义重排序
+builder.add_node("rerank", rerank)
 # 基于知识库生成
 builder.add_node("generate", generate)
 # 范围外直接大模型回答
@@ -40,10 +43,10 @@ builder.add_node("add_memory", add_memory)
 # 召回为空时的兜底话术（不调 LLM）
 builder.add_node("no_results", no_results)
 
-#                                       ┌─ out-of-scope -> direct_answer ────────────────────┐
-# START -> recall_memory -> handle_query ┤                                                  END
-#                                       └─ in-scope -> recall ┬─ generate -> add_memory ───┘
-#                                                             └─ no_results ───────────────┘
+#                                       ┌─ out-of-scope -> direct_answer ──────────────────────────┐
+# START -> recall_memory -> handle_query ┤                                                        END
+#                                       └─ in-scope -> recall -> rerank ┬─ generate -> add_memory ─┘
+#                                                                       └─ no_results ─────────────┘
 builder.add_edge(START, "recall_memory")
 builder.add_edge("recall_memory", "handle_query")
 builder.add_conditional_edges(
@@ -51,8 +54,9 @@ builder.add_conditional_edges(
     _route_after_query,
     {"recall": "recall", "direct_answer": "direct_answer"},
 )
+builder.add_edge("recall", "rerank")
 builder.add_conditional_edges(
-    "recall",
+    "rerank",
     _route_after_recall,
     {"generate": "generate", "no_results": "no_results"},
 )

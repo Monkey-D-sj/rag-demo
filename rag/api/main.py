@@ -25,6 +25,7 @@ from rag.document.retriever import KnowledgeRetriever
 from rag.agent.memory import MemoryManager
 from rag.models.embedding import EmbeddingModel
 from rag.models.normal import NormalModel
+from rag.models.rerank import QwenReranker
 
 logger = get_logger()
 
@@ -80,6 +81,13 @@ async def lifespan(app: FastAPI):
         logger.info("初始化知识检索器")
         app.state.retriever = KnowledgeRetriever(pool, embedding)
         logger.info("知识检索器初始化完成")
+        logger.info("初始化重排序器")
+        if settings.RERANK_ENABLED and settings.RERANK_BASE_URL:
+            app.state.reranker = QwenReranker(settings)
+            logger.info("重排序器初始化完成（qwen3-rerank API）")
+        else:
+            app.state.reranker = None
+            logger.info("重排序器未启用，跳过")
 
         # ------ 初始化对象存储与任务队列 -------
         logger.info("初始化对象存储与任务队列")

@@ -12,6 +12,8 @@ logger = get_logger()
 # RRF 常数与每路候选倍数:检索内部细节,有评测数据前不进 Settings。
 RRF_K = 60
 CANDIDATE_MULTIPLIER = 2
+# 向量路相似度阈值:低于此值的 chunk 不进 RRF 融合,避免低分噪音稀释排名。
+VEC_SIMILARITY_THRESHOLD = 0.5
 
 
 def _lexical_query(query: str) -> str:
@@ -28,7 +30,10 @@ _BM25_SOURCE_PRIORITY = 1
 def _rrf_fuse(
     vec_rows: list[dict], bm25_rows: list[dict], top_k: int
 ) -> list[dict]:
-    """RRF 融合:score = Σ 1/(RRF_K + rank),按 id 去重,行数据取高优先级路。"""
+    """RRF 融合:score = Σ 1/(RRF_K + rank),按 id 去重。
+
+    行数据取高优先级路（vec > bm25），但两路各自原始分在两路都命中时均保留。
+    """
     fused: dict[str, dict] = {}
     for source, priority, rows in (
         ("vec", _VEC_SOURCE_PRIORITY, vec_rows),
@@ -38,12 +43,24 @@ def _rrf_fuse(
             rid = str(row["id"])
             entry = fused.get(rid)
             if entry is None:
-                fused[rid] = {"row": row, "rrf_score": 0.0, "sources": [], "_priority": priority}
+                fused[rid] = {
+                    "row": row,
+                    "rrf_score": 0.0,
+                    "sources": [],
+                    "_priority": priority,
+                    # 两路原始分独立保存，避免被高优先级行数据覆盖丢失
+                    "_vec_similarity": None,
+                    "_bm25_score": None,
+                }
                 entry = fused[rid]
             elif priority < entry["_priority"]:
-                # 更高优先级路的行数据覆盖
                 entry["row"] = row
                 entry["_priority"] = priority
+            # 按来源路捕获原始分，无论是否第一次命中
+            if source == "vec" and "similarity" in row:
+                entry["_vec_similarity"] = row["similarity"]
+            elif source == "bm25" and "score" in row:
+                entry["_bm25_score"] = row["score"]
             entry["rrf_score"] += 1.0 / (RRF_K + rank + 1)
             entry["sources"].append(source)
     ranked = sorted(
@@ -54,10 +71,8 @@ def _rrf_fuse(
         row = dict(entry["row"])
         row["rrf_score"] = round(entry["rrf_score"], 6)
         row["sources"] = entry["sources"]
-        # 两路分数键异构(similarity/score),补齐缺失键防下游按键取值时
-        # 只在 bm25-only 行上 KeyError 的数据依赖型崩溃
-        row.setdefault("similarity", None)
-        row.setdefault("score", None)
+        row["similarity"] = entry["_vec_similarity"]
+        row["score"] = entry["_bm25_score"]
         results.append(row)
     return results
 
@@ -104,6 +119,14 @@ class KnowledgeRetriever:
                         self._pool, emb, knowledge_base_id, candidates
                     )
                     timings["search_ms"] = round((time.perf_counter() - t1) * 1000, 1)
+                    # 低相似度截断:低于阈值的 chunk 不进 RRF,减少噪音稀释
+                    before = len(rows)
+                    rows = [r for r in rows if r.get("similarity", 0) >= VEC_SIMILARITY_THRESHOLD]
+                    if before > len(rows):
+                        logger.debug(
+                            "向量路截断 %d/%d 条 (threshold=%.2f)",
+                            before - len(rows), before, VEC_SIMILARITY_THRESHOLD,
+                        )
                     if span is not None:
                         span.update(output=_rank_summary(rows, "similarity"))
                     return rows

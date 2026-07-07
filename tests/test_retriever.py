@@ -161,6 +161,18 @@ async def test_fused_rows_carry_both_score_keys(monkeypatch):
     assert by_id["b"]["similarity"] is None and by_id["b"]["score"] == 4.2
 
 
+async def test_fused_overlap_preserves_both_raw_scores(monkeypatch):
+    """同一 chunk 在两路都命中时，两路原始分均保留不丢失。"""
+    vec = [_row("a", similarity=0.9)]
+    bm25 = [_row("a", score=4.2)]
+    r = _retriever(monkeypatch, vec, bm25)
+    result = await r.search("孙悟空", "kb-1")
+    assert len(result) == 1
+    assert result[0]["similarity"] == 0.9
+    assert result[0]["score"] == 4.2  # 之前会丢失 BM25 分
+    assert result[0]["sources"] == ["vec", "bm25"]
+
+
 async def test_rank_summary_preview_truncated_to_80(monkeypatch, caplog):
     vec = [_row("a", text="山" * 300, similarity=0.9)]
     r = _retriever(monkeypatch, vec, [])

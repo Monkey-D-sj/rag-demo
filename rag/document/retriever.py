@@ -84,7 +84,7 @@ def _rank_summary(rows: list[dict], score_key: str) -> list[dict]:
             "chunk_id": str(r["id"]),
             "chunk_index": r["chunk_index"],
             score_key: round(r[score_key], 4),
-            "text_preview": r["text"][:80],
+            "text": r["text"],
         }
         for r in rows
     ]

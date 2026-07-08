@@ -7,17 +7,9 @@ from rag.config import get_settings
 from rag.db.postgres import create_pg_pool, get_cursor
 from rag.eval import DATASETS_DIR, EVAL_KB_ID
 from rag.models.normal import NormalModel
+from rag.prompts.eval import GOLDEN_GENERATION_PROMPT
 
 CANDIDATES_PATH = DATASETS_DIR / "retrieval_golden.candidates.jsonl"
-
-_PROMPT = """你是检索评测数据的构造助手。下面给你一段原文，请基于它设计 1 个用户可能提出的问题，问题的答案必须能在这段原文中找到。同时抽取答案所依赖的 1~2 个原文短句（原样摘录，不要改写）作为 gold 片段。
-要求：
-- 问题具体、无歧义，不要出现"这段话""本文"等指代词。
-- gold 片段是原文中连续的短句，尽量短且在全书中唯一。
-
-原文：
-{chunk}
-"""
 
 
 class GoldenCandidate(BaseModel):
@@ -49,7 +41,7 @@ async def generate() -> int:
             for i, ch in enumerate(chunks):
                 try:
                     cand = await llm.ainvoke_structured(
-                        [_PROMPT.format(chunk=ch["text"])], GoldenCandidate
+                        [GOLDEN_GENERATION_PROMPT.format(chunk=ch["text"])], GoldenCandidate
                     )
                 except Exception:  # 单条失败跳过，不中断整批
                     continue

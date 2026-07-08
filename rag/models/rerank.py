@@ -18,21 +18,6 @@ class _RerankResult(BaseModel):
     scores: list[_ChunkScore]
 
 
-_RERANK_PROMPT = """
-你是一个文本相关性评分助手。给定一个查询和一组候选文本块，请为每个文本块与查询的相关性打分。
-
-评分标准（0-10）：
-- 10：直接、完整地回答了查询
-- 7-9：高度相关，包含关键信息
-- 4-6：部分相关，涉及查询主题
-- 1-3：勉强相关，只有个别词匹配
-- 0：完全无关
-
-仅输出一个 JSON 对象，包含 scores 数组，每个元素包含 chunk_id 和 score。
-不要输出其他文字。
-"""
-
-
 # ── DashScope Qwen3 Reranker ──
 
 

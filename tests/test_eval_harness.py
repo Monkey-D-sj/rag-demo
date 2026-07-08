@@ -63,7 +63,7 @@ class _FakePool:
     pass
 
 
-async def test_run_eval_returns_four_legs_with_raw(monkeypatch):
+async def test_run_eval_returns_six_legs_with_raw(monkeypatch):
     import rag.eval.harness as mod
 
     embedding = _FakeEmbedding()
@@ -84,9 +84,11 @@ async def test_run_eval_returns_four_legs_with_raw(monkeypatch):
 
     out = await run_eval(items, _FakePool(), embedding, retriever, ks=(1,), top_k=5)
 
-    assert "fused" in out and "raw" in out and "vec_only" in out and "bm25_only" in out
+    assert "fused" in out and "raw" in out
+    assert "vec_only" in out and "raw_vec" in out
+    assert "bm25_only" in out and "raw_bm25" in out
     # q1: raw hit, fused hit → hit@1=1.0 for both
-    # q2: raw miss, fused hit → hit@1=0.5 for raw, 1.0 for fused (改写提升)
+    # q2: raw miss, fused hit → hit@1=0.5 for raw, 1.0 for fused
     assert out["raw"]["aggregate"]["hit@1"] == 0.5
     assert out["fused"]["aggregate"]["hit@1"] == 1.0
     assert len(out["fused"]["per_query"]) == 2

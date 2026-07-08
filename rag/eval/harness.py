@@ -66,44 +66,58 @@ async def run_eval(
     ks: tuple[int, ...] = (1, 3, 5),
     top_k: int = 5,
 ) -> dict:
-    """一次跑通四条检索链路：fused、raw（原始查询）、vec_only、bm25_only。
+    """一次跑通六条检索链路。
 
-    只评测 in-scope 条目（out_of_scope 条目不参与检索评测）。
-    返回 {"fused": {aggregate, per_query}, "raw": {...}, "vec_only": {...}, "bm25_only": {...}}
+    fused / vec_only / bm25_only 使用改写后查询；
+    当 golden 标注了 rewrite_query 时追加 raw / raw_vec / raw_bm25 原始查询对照。
+    返回 {"fused": {aggregate, per_query}, "raw": {...}, "vec_only": {...},
+          "raw_vec": {...}, "bm25_only": {...}, "raw_bm25": {...}}
     """
     fused_pq: list[dict] = []
     raw_pq: list[dict] = []
     vec_pq: list[dict] = []
+    raw_vec_pq: list[dict] = []
     bm25_pq: list[dict] = []
+    raw_bm25_pq: list[dict] = []
 
     in_scope = [it for it in items if not it.out_of_scope]
 
     for item in in_scope:
-        # ── fused：用 rewrite_query（生产路径：查询改写后的检索） ──
-        search_query = item.rewrite_query or item.query
-        rows = await retriever.search(search_query, EVAL_KB_ID, top_k=top_k)
+        rw = item.rewrite_query or item.query
+        has_rewrite = item.rewrite_query is not None
+
+        # ── fused：改写后 query 走完整生产管线 ──
+        rows = await retriever.search(rw, EVAL_KB_ID, top_k=top_k)
         fused_pq.append({
             "id": item.id, "query": item.query,
             **evaluate_query([r["text"] for r in rows], item.gold_snippets, ks),
         })
 
-        # ── raw：用原始 query（跳过查询改写） ──
-        if item.rewrite_query:
+        # ── raw fused：原始 query 走完整管线 ──
+        if has_rewrite:
             raw_rows = await retriever.search(item.query, EVAL_KB_ID, top_k=top_k)
             raw_pq.append({
                 "id": item.id, "query": item.query,
                 **evaluate_query([r["text"] for r in raw_rows], item.gold_snippets, ks),
             })
 
-        # ── vec_only：原始向量召回，共享一次 embedding ──
-        emb = (await embedding.embed([search_query]))[0]
+        # ── vec_only：改写后向量召回 ──
+        emb = (await embedding.embed([rw]))[0]
         vec_rows = await store.search_chunks(pool, emb, EVAL_KB_ID, top_k)
         vec_pq.append(
             evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks)
         )
 
-        # ── bm25_only：原始 BM25 召回 ──
-        lex = _lexical_query(search_query)
+        # ── raw vec：原始 query 向量召回 ──
+        if has_rewrite:
+            raw_emb = (await embedding.embed([item.query]))[0]
+            raw_vec_rows = await store.search_chunks(pool, raw_emb, EVAL_KB_ID, top_k)
+            raw_vec_pq.append(
+                evaluate_query([r["text"] for r in raw_vec_rows], item.gold_snippets, ks)
+            )
+
+        # ── bm25_only：改写后 BM25 ──
+        lex = _lexical_query(rw)
         bm25_rows = (
             await store.search_chunks_bm25(pool, lex, EVAL_KB_ID, top_k)
             if lex else []
@@ -112,6 +126,17 @@ async def run_eval(
             evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks)
         )
 
+        # ── raw bm25：原始 query BM25 ──
+        if has_rewrite:
+            raw_lex = _lexical_query(item.query)
+            raw_bm25_rows = (
+                await store.search_chunks_bm25(pool, raw_lex, EVAL_KB_ID, top_k)
+                if raw_lex else []
+            )
+            raw_bm25_pq.append(
+                evaluate_query([r["text"] for r in raw_bm25_rows], item.gold_snippets, ks)
+            )
+
     result = {
         "fused": {"aggregate": aggregate(fused_pq), "per_query": fused_pq},
         "vec_only": {"aggregate": aggregate(vec_pq)},
@@ -119,6 +144,8 @@ async def run_eval(
     }
     if raw_pq:
         result["raw"] = {"aggregate": aggregate(raw_pq)}
+        result["raw_vec"] = {"aggregate": aggregate(raw_vec_pq)}
+        result["raw_bm25"] = {"aggregate": aggregate(raw_bm25_pq)}
     return result
 
 

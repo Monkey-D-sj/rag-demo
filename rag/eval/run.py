@@ -15,11 +15,36 @@ BASELINE_PATH = EVAL_DIR / "baseline.json"
 KS = (1, 3, 5)
 
 _LEG_LABEL = {
-    "fused": "改写后检索",
-    "raw": "原始查询",
-    "vec_only": "纯向量",
-    "bm25_only": "纯 BM25",
+    "fused": "混合(改)",
+    "raw": "混合(原)",
+    "vec_only": "向量(改)",
+    "raw_vec": "向量(原)",
+    "bm25_only": "BM25(改)",
+    "raw_bm25": "BM25(原)",
 }
+_LEG_ORDER = ("fused", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
+_CJK_RANGES = [
+    (0x1100, 0x115F), (0x2E80, 0xA4CF), (0xA960, 0xA97F),
+    (0xAC00, 0xD7AF), (0xF900, 0xFAFF), (0xFE30, 0xFE4F),
+    (0xFF01, 0xFF60), (0xFFE0, 0xFFE6), (0x1F000, 0x1F9FF),
+]
+
+
+def _disp_width(s: str) -> int:
+    """计算字符串的终端显示宽度（CJK 字符占 2 列）。"""
+    w = 0
+    for ch in s:
+        cp = ord(ch)
+        w += 2 if any(lo <= cp <= hi for lo, hi in _CJK_RANGES) else 1
+    return w
+
+
+def _pad(s: str, width: int, left: bool = True) -> str:
+    """按显示宽度补齐到 width。"""
+    need = width - _disp_width(s)
+    if need <= 0:
+        return s
+    return (" " * need) + s if left else s + (" " * need)
 
 
 def _load_baseline() -> dict:
@@ -31,9 +56,9 @@ def _load_baseline() -> dict:
 
 
 def _print_table(result: dict) -> None:
-    """多路指标合并成一张表格。raw 路只在有 rewrite_query 标注时显示。"""
-    legs = [l for l in ("fused", "raw", "vec_only", "bm25_only") if l in result]
-    col_w = max(12, 50 // len(legs))
+    """多路指标合并成一张表格。"""
+    legs = [l for l in _LEG_ORDER if l in result]
+    col_w = max(10, 60 // len(legs))
 
     all_keys: list[str] = []
     for leg in legs:
@@ -41,31 +66,43 @@ def _print_table(result: dict) -> None:
             if k not in all_keys:
                 all_keys.append(k)
 
-    header = f"{'指标':10s}"
+    # 表头
+    header = _pad("指标", 10, left=False)
     for leg in legs:
-        header += f"{_LEG_LABEL[leg]:>{col_w}s}"
+        header += _pad(_LEG_LABEL[leg], col_w)
     print(header)
-    print("-" * len(header))
+    print("-" * _disp_width(header))
 
+    # 数据行
     for key in sorted(all_keys):
-        row = f"{key:10s}"
+        row = _pad(key, 10, left=False)
         for leg in legs:
             v = result[leg]["aggregate"].get(key)
-            row += f"{v:>{col_w}.4f}" if v is not None else f"{'—':>{col_w}s}"
+            row += _pad(f"{v:.4f}", col_w) if v is not None else _pad("—", col_w)
         print(row)
     print()
 
-    # 改写收益摘要
-    if "raw" in result and "fused" in result:
-        raw_agg = result["raw"]["aggregate"]
-        fused_agg = result["fused"]["aggregate"]
-        gains = []
-        for key in sorted(raw_agg):
-            if key not in fused_agg:
+    # 改写收益摘要（分路展示）
+    if "raw" in result:
+        pairs = [
+            ("混合", "fused", "raw"),
+            ("向量", "vec_only", "raw_vec"),
+            ("BM25", "bm25_only", "raw_bm25"),
+        ]
+        lines = []
+        for label, rw_leg, raw_leg in pairs:
+            if rw_leg not in result or raw_leg not in result:
                 continue
-            delta = fused_agg[key] - raw_agg[key]
-            gains.append(f"{key}: {delta:+.4f}")
-        print(f"  改写收益: {'  '.join(gains)}\n")
+            rw_agg = result[rw_leg]["aggregate"]
+            raw_agg = result[raw_leg]["aggregate"]
+            deltas = []
+            for key in sorted(raw_agg):
+                if key not in rw_agg:
+                    continue
+                d = rw_agg[key] - raw_agg[key]
+                deltas.append(f"{key}: {d:+.4f}")
+            lines.append(f"  {label}: {'  '.join(deltas)}")
+        print("\n".join(lines) + "\n")
 
 
 def _print_gate(result: dict, baseline: dict) -> bool:
@@ -89,18 +126,21 @@ def _print_gate(result: dict, baseline: dict) -> bool:
                 f"{arrow}{abs(d['rel_drop']):.1%} (base={d['baseline']:.4f})",
             ))
 
-    # 改写质量：fused vs raw
-    if "raw" in result and "fused" in result:
-        passed, deltas = rewrite_gate(result["raw"]["aggregate"], result["fused"]["aggregate"])
-        if not passed:
-            all_passed = False
-        for key, d in deltas.items():
-            arrow = "↓" if d["rel_drop"] > 0 else "↑"
-            rows.append((
-                f"改写.{key}",
-                f"{d['rewritten']:.4f}",
-                f"{arrow}{abs(d['rel_drop']):.1%} (raw={d['raw']:.4f})",
-            ))
+    # 改写质量：分路检查改写是否降低检索质量
+    if "raw" in result:
+        for label, rw_leg, raw_leg in [("混合", "fused", "raw"), ("向量", "vec_only", "raw_vec"), ("BM25", "bm25_only", "raw_bm25")]:
+            if rw_leg not in result or raw_leg not in result:
+                continue
+            passed, deltas = rewrite_gate(result[raw_leg]["aggregate"], result[rw_leg]["aggregate"])
+            if not passed:
+                all_passed = False
+            for key, d in deltas.items():
+                arrow = "↓" if d["rel_drop"] > 0 else "↑"
+                rows.append((
+                    f"改写{label}.{key}",
+                    f"{d['rewritten']:.4f}",
+                    f"{arrow}{abs(d['rel_drop']):.1%} (raw={d['raw']:.4f})",
+                ))
 
     if not rows:
         print("无 baseline 数据，跳过门禁（请先 --update-baseline）\n")

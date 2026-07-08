@@ -1,12 +1,9 @@
-import sys
+# psycopg 异步只支持 SelectorEventLoop。本模块是 ASGI 入口,reload 开启时
+# uvicorn 的 worker 子进程也会导入它(而不会执行 rag/__main__.py),在此设定
+# policy 才能同时覆盖 reload 开/关两种进程模型。须在任何事件循环创建前执行。
+from rag.common.platform import setup_windows_loop
 
-if sys.platform == "win32":
-    import asyncio
-
-    # psycopg 异步只支持 SelectorEventLoop。本模块是 ASGI 入口,reload 开启时
-    # uvicorn 的 worker 子进程也会导入它(而不会执行 rag/__main__.py),在此设定
-    # policy 才能同时覆盖 reload 开/关两种进程模型。须在任何事件循环创建前执行。
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+setup_windows_loop()
 
 from contextlib import AsyncExitStack, asynccontextmanager
 
@@ -79,7 +76,7 @@ async def lifespan(app: FastAPI):
         app.state.llm = NormalModel(settings)
         logger.info("LLM 模型初始化完成")
         logger.info("初始化知识检索器")
-        app.state.retriever = KnowledgeRetriever(pool, embedding)
+        app.state.retriever = KnowledgeRetriever(pool, embedding, settings)
         logger.info("知识检索器初始化完成")
         logger.info("初始化重排序器")
         if settings.RERANK_ENABLED and settings.RERANK_BASE_URL:

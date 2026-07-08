@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: str = "neo4j_pass"
     NEO4J_DATABASE: str = "neo4j"
 
+    # ── Retriever ──
+    RETRIEVER_CANDIDATE_MULTIPLIER: int = 2
+    RETRIEVER_VEC_SIMILARITY_THRESHOLD: float = 0.5
+
     # ── Embedding ──
     EMBEDDING_KEY: str = ""
     EMBEDDING_URL: str = ""

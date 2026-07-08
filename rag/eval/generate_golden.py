@@ -61,10 +61,9 @@ async def generate() -> int:
 def main() -> None:
     import sys
 
-    if sys.platform == "win32":
-        import asyncio as _asyncio
+    from rag.common.platform import setup_windows_loop
 
-        _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
+    setup_windows_loop()
 
     n = asyncio.run(generate())
     print(f"生成候选 {n} 条 -> {CANDIDATES_PATH}")

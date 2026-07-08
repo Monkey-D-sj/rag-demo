@@ -45,7 +45,7 @@ async def build_retriever(settings: Settings) -> tuple[AsyncConnectionPool, Know
     """构造 pool + 复用生产 KnowledgeRetriever；调用方负责 pool.close()。"""
     pool = await create_pg_pool(settings)
     embedding = EmbeddingModel(settings)
-    return pool, KnowledgeRetriever(pool, embedding)
+    return pool, KnowledgeRetriever(pool, embedding, settings)
 
 
 async def run_eval(

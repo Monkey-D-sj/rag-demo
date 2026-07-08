@@ -113,10 +113,9 @@ def run() -> None:
     """
     import sys
 
-    if sys.platform == "win32":
-        import asyncio
+    from rag.common.platform import setup_windows_loop
 
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    setup_windows_loop()
 
     from rag.common.logging import setup_logging
 

@@ -1,11 +1,16 @@
 import logging
 
-from rag.document.retriever import KnowledgeRetriever, _rrf_fuse
+from rag.config import Settings
+from rag.document.retriever import KnowledgeRetriever, _merge_dedup
 
 
 class _FakeEmbedding:
     async def embed(self, texts):
         return [[0.1, 0.2]]
+
+
+def _settings(**overrides) -> Settings:
+    return Settings(**overrides)
 
 
 def _row(cid: str, text: str = "正文", **extra) -> dict:
@@ -31,37 +36,40 @@ def _retriever(monkeypatch, vec_rows, bm25_rows=None, bm25_exc=None):
 
     monkeypatch.setattr(mod.store, "search_chunks", fake_vec)
     monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
-    return KnowledgeRetriever(None, _FakeEmbedding())
+    return KnowledgeRetriever(None, _FakeEmbedding(), _settings())
 
 
-# ── _rrf_fuse 纯逻辑 ──
+# ── _merge_dedup 纯逻辑 ──
 
-def test_rrf_overlap_ranks_shared_chunk_first():
+def test_merge_overlap_dedup_with_vec_priority():
     vec = [_row("a", similarity=0.9), _row("b", similarity=0.8)]
     bm25 = [_row("c", score=5.0), _row("a", score=4.0)]
-    fused = _rrf_fuse(vec, bm25, top_k=3)
-    assert [r["id"] for r in fused][0] == "a"  # 双路命中 RRF 最高
+    fused = _merge_dedup(vec, bm25, top_k=3)
+    assert [r["id"] for r in fused] == ["a", "b", "c"]  # vec 优先，a 排第一
     assert fused[0]["sources"] == ["vec", "bm25"]
+    assert fused[0]["similarity"] == 0.9
+    assert fused[0]["score"] == 4.0  # bm25 原始分补充
 
 
-def test_rrf_disjoint_interleaves_by_rank():
+def test_merge_disjoint_concatenates():
     vec = [_row("a", similarity=0.9)]
     bm25 = [_row("b", score=5.0)]
-    fused = _rrf_fuse(vec, bm25, top_k=5)
-    assert {r["id"] for r in fused} == {"a", "b"}
-    assert fused[0]["rrf_score"] == fused[1]["rrf_score"]  # 各自 rank 1,并列
+    fused = _merge_dedup(vec, bm25, top_k=5)
+    assert [r["id"] for r in fused] == ["a", "b"]
+    assert fused[0]["sources"] == ["vec"]
+    assert fused[1]["sources"] == ["bm25"]
 
 
-def test_rrf_single_empty_leg_passthrough_order():
+def test_merge_single_empty_leg_passthrough():
     vec = [_row("a", similarity=0.9), _row("b", similarity=0.8)]
-    fused = _rrf_fuse(vec, [], top_k=5)
+    fused = _merge_dedup(vec, [], top_k=5)
     assert [r["id"] for r in fused] == ["a", "b"]
     assert all(r["sources"] == ["vec"] for r in fused)
 
 
-def test_rrf_truncates_to_top_k():
+def test_merge_truncates_to_top_k():
     vec = [_row(f"v{i}", similarity=1.0 - i * 0.1) for i in range(5)]
-    fused = _rrf_fuse(vec, [], top_k=3)
+    fused = _merge_dedup(vec, [], top_k=3)
     assert len(fused) == 3
 
 
@@ -125,7 +133,7 @@ async def test_search_vector_failure_propagates(monkeypatch):
 
     monkeypatch.setattr(mod.store, "search_chunks", boom_vec)
     monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
-    r = KnowledgeRetriever(None, _FakeEmbedding())
+    r = KnowledgeRetriever(None, _FakeEmbedding(), _settings())
     with pytest.raises(RuntimeError, match="vector down"):
         await r.search("q", "kb-1")
 
@@ -144,7 +152,7 @@ async def test_search_punctuation_only_query_skips_bm25_leg(monkeypatch, caplog)
 
     monkeypatch.setattr(mod.store, "search_chunks", fake_vec)
     monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
-    r = KnowledgeRetriever(None, _FakeEmbedding())
+    r = KnowledgeRetriever(None, _FakeEmbedding(), _settings())
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
         result = await r.search("？！。……", "kb-1")
     assert calls["bm25"] == 0
@@ -169,7 +177,7 @@ async def test_fused_overlap_preserves_both_raw_scores(monkeypatch):
     result = await r.search("孙悟空", "kb-1")
     assert len(result) == 1
     assert result[0]["similarity"] == 0.9
-    assert result[0]["score"] == 4.2  # 之前会丢失 BM25 分
+    assert result[0]["score"] == 4.2
     assert result[0]["sources"] == ["vec", "bm25"]
 
 

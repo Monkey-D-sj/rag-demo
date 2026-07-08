@@ -1,9 +1,9 @@
-import asyncio
-import sys
-
 import pytest
 
+from rag.common.platform import setup_windows_loop
 from rag.config import Settings
+
+setup_windows_loop()
 
 
 @pytest.fixture
@@ -22,9 +22,3 @@ def _langfuse_disabled(monkeypatch):
     yield
     ob.get_langfuse_settings.cache_clear()
     ob._init_client.cache_clear()
-
-
-# psycopg3 (AsyncConnectionPool) 在 Windows 上不兼容默认的 ProactorEventLoop，
-# 需要切换为 SelectorEventLoop。
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

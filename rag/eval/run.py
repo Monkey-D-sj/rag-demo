@@ -40,10 +40,9 @@ def _load_baseline() -> dict:
 def main() -> None:
     import sys
 
-    if sys.platform == "win32":
-        import asyncio as _asyncio
+    from rag.common.platform import setup_windows_loop
 
-        _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
+    setup_windows_loop()
 
     parser = argparse.ArgumentParser(description="检索层评测")
     parser.add_argument("--update-baseline", action="store_true", help="用本次结果刷新 baseline")

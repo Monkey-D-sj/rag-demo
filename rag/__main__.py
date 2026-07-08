@@ -5,15 +5,14 @@ import sys
 
 import uvicorn
 
+from rag.common.platform import setup_windows_loop
+
 
 def _env_flag(name: str) -> bool:
     """读取布尔型环境变量,1/true/yes/on(忽略大小写)视为 True。"""
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
-if sys.platform == "win32":
-    import asyncio
-
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+setup_windows_loop()
 
 from rag.common.logging import _BANNER, get_logger, setup_logging
 from rag.config import get_settings

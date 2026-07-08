@@ -76,10 +76,9 @@ async def seed() -> int:
 def main() -> None:
     import sys
 
-    if sys.platform == "win32":
-        import asyncio as _asyncio
+    from rag.common.platform import setup_windows_loop
 
-        _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
+    setup_windows_loop()
 
     n = asyncio.run(seed())
     print(f"评测语料入库完成：{n} 个 chunk -> KB {EVAL_KB_ID}")

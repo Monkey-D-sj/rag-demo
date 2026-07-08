@@ -140,38 +140,4 @@ class KnowledgeRetriever:
         vec_rows, bm25_rows = await asyncio.gather(_vec_leg(), _bm25_leg())
         results = _merge_dedup(vec_rows, bm25_rows, top_k)
 
-        fields = {
-            "kb_id": knowledge_base_id,
-            "query": query[:200],
-            "top_k": top_k,
-            "vec_hits": _rank_summary(vec_rows, "similarity"),
-            "bm25_hits": _rank_summary(bm25_rows, "score"),
-            "hits": [
-                {
-                    "chunk_id": str(r["id"]),
-                    "chunk_index": r["chunk_index"],
-                    "sources": r["sources"],
-                    "text_preview": r["text"][:80],
-                }
-                for r in results
-            ],
-            **timings,
-        }
-        vec_failed = len(vec_rows) == 0
-        bm25_failed = len(bm25_rows) == 0
-        if vec_failed and bm25_failed:
-            degrade_mode = "双向降级"
-        elif vec_failed or bm25_failed:
-            degrade_mode = "降级召回"
-        else:
-            degrade_mode = "混合召回"
-
-        if results:
-            logger.info(
-                "%s完成: %d 条 (向量 %d + BM25 %d)",
-                degrade_mode, len(results), len(vec_rows), len(bm25_rows),
-                extra=fields,
-            )
-        else:
-            logger.warning("混合召回为空", extra=fields)
         return results

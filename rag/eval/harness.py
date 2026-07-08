@@ -1,6 +1,5 @@
 import json
 from dataclasses import dataclass
-from pathlib import Path
 
 from psycopg_pool import AsyncConnectionPool
 
@@ -50,38 +49,48 @@ async def build_retriever(settings: Settings) -> tuple[AsyncConnectionPool, Know
 
 async def run_eval(
     items: list[GoldenItem],
+    pool: AsyncConnectionPool,
+    embedding: EmbeddingModel,
     retriever: KnowledgeRetriever,
     ks: tuple[int, ...] = (1, 3, 5),
     top_k: int = 5,
 ) -> dict:
-    """对每条 golden 跑检索并算指标，返回 {"aggregate", "per_query"}。"""
-    per_query: list[dict] = []
+    """一次跑通三条检索链路：fused（生产路径）、vec_only、bm25_only。
+
+    每条 query 共享一次 embedding，分别评测三条路的指标。返回：
+    {"fused": {aggregate, per_query}, "vec_only": {aggregate}, "bm25_only": {aggregate}}
+    """
+    fused_pq: list[dict] = []
+    vec_pq: list[dict] = []
+    bm25_pq: list[dict] = []
+
     for item in items:
+        # ── fused：走生产 KnowledgeRetriever（merge + reranker） ──
         rows = await retriever.search(item.query, EVAL_KB_ID, top_k=top_k)
-        texts = [r["text"] for r in rows]
-        metrics = evaluate_query(texts, item.gold_snippets, ks)
-        per_query.append({"id": item.id, "query": item.query, **metrics})
+        fused_pq.append({
+            "id": item.id, "query": item.query,
+            **evaluate_query([r["text"] for r in rows], item.gold_snippets, ks),
+        })
 
-    metric_keys = [k for k in per_query[0] if k not in ("id", "query")] if per_query else []
-    agg = aggregate([{k: q[k] for k in metric_keys} for q in per_query])
-    return {"aggregate": agg, "per_query": per_query}
-
-
-async def run_breakdown(
-    items,
-    pool,
-    embedding,
-    ks=(1, 3, 5),
-    top_k=5,
-) -> dict:
-    """分别评测 vec-only 与 bm25-only 单路召回，用于回归归因。"""
-    vec_pq, bm25_pq = [], []
-    for item in items:
+        # ── vec_only：原始向量召回，共享一次 embedding ──
         emb = (await embedding.embed([item.query]))[0]
         vec_rows = await store.search_chunks(pool, emb, EVAL_KB_ID, top_k)
-        vec_pq.append(evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks))
+        vec_pq.append(
+            evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks)
+        )
 
+        # ── bm25_only：原始 BM25 召回 ──
         lex = _lexical_query(item.query)
-        bm25_rows = await store.search_chunks_bm25(pool, lex, EVAL_KB_ID, top_k) if lex else []
-        bm25_pq.append(evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks))
-    return {"vec_only": aggregate(vec_pq), "bm25_only": aggregate(bm25_pq)}
+        bm25_rows = (
+            await store.search_chunks_bm25(pool, lex, EVAL_KB_ID, top_k)
+            if lex else []
+        )
+        bm25_pq.append(
+            evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks)
+        )
+
+    return {
+        "fused": {"aggregate": aggregate(fused_pq), "per_query": fused_pq},
+        "vec_only": {"aggregate": aggregate(vec_pq)},
+        "bm25_only": {"aggregate": aggregate(bm25_pq)},
+    }

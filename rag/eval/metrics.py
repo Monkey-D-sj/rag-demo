@@ -55,12 +55,15 @@ def evaluate_query(
 
 
 def aggregate(per_query: list[dict[str, float]]) -> dict[str, float]:
-    """对多条 query 的同名指标取算术平均。空输入返回 {}。"""
+    """对多条 query 的同名数值指标取算术平均。空输入返回 {}。
+
+    自动跳过非数值键（如 "id"、"query"），只聚合指标列。
+    """
     if not per_query:
         return {}
-    keys = per_query[0].keys()
+    numeric_keys = [k for k, v in per_query[0].items() if isinstance(v, (int, float))]
     n = len(per_query)
-    return {k: sum(q[k] for q in per_query) / n for k in keys}
+    return {k: sum(q[k] for q in per_query) / n for k in numeric_keys}
 
 
 def gate(

@@ -26,6 +26,11 @@ def test_load_golden_rejects_missing_fields(tmp_path: Path):
         load_golden(p)
 
 
+class _FakeEmbedding:
+    async def embed(self, texts):
+        return [[0.1, 0.2]]
+
+
 class _FakeRetriever:
     def __init__(self, mapping):
         self._mapping = mapping  # query -> list[chunk text]
@@ -35,16 +40,31 @@ class _FakeRetriever:
                 for i, t in enumerate(self._mapping.get(query, [])[:top_k])]
 
 
-async def test_run_eval_aggregates_over_items():
+class _FakePool:
+    pass
+
+
+async def test_run_eval_returns_three_legs(monkeypatch):
+    import rag.eval.harness as mod
+
+    embedding = _FakeEmbedding()
     items = [
         GoldenItem("q1", "金箍棒多重?", ["一万三千五百斤"]),
         GoldenItem("q2", "大师兄是谁?", ["孙悟空"]),
     ]
     retriever = _FakeRetriever({
         "金箍棒多重?": ["重一万三千五百斤", "无关"],
-        "大师兄是谁?": ["无关", "无关"],  # 未命中
+        "大师兄是谁?": ["无关", "无关"],
     })
-    out = await run_eval(items, retriever, ks=(1, 3, 5), top_k=5)
-    assert out["aggregate"]["hit@1"] == 0.5  # q1 命中、q2 未命中
-    assert len(out["per_query"]) == 2
-    assert out["per_query"][0]["id"] == "q1"
+
+    # mock raw store calls to return empty (only testing fused leg structure)
+    async def _empty(*a, **kw): return []
+    monkeypatch.setattr(mod.store, "search_chunks", _empty)
+    monkeypatch.setattr(mod.store, "search_chunks_bm25", _empty)
+
+    out = await run_eval(items, _FakePool(), embedding, retriever, ks=(1,), top_k=5)
+
+    assert "fused" in out and "vec_only" in out and "bm25_only" in out
+    assert out["fused"]["aggregate"]["hit@1"] == 0.5  # q1 hit, q2 miss
+    assert len(out["fused"]["per_query"]) == 2
+    assert out["fused"]["per_query"][0]["id"] == "q1"

@@ -16,13 +16,14 @@ KS = (1, 3, 5)
 
 _LEG_LABEL = {
     "fused": "混合(改)",
+    "fused_reranked": "混合重排",
     "raw": "混合(原)",
     "vec_only": "向量(改)",
     "raw_vec": "向量(原)",
     "bm25_only": "BM25(改)",
     "raw_bm25": "BM25(原)",
 }
-_LEG_ORDER = ("fused", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
+_LEG_ORDER = ("fused", "fused_reranked", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
 _CJK_RANGES = [
     (0x1100, 0x115F), (0x2E80, 0xA4CF), (0xA960, 0xA97F),
     (0xAC00, 0xD7AF), (0xF900, 0xFAFF), (0xFE30, 0xFE4F),
@@ -85,9 +86,9 @@ def _print_table(result: dict) -> None:
     # 改写收益摘要（分路展示）
     if "raw" in result:
         pairs = [
-            ("混合", "fused", "raw"),
-            ("向量", "vec_only", "raw_vec"),
-            ("BM25", "bm25_only", "raw_bm25"),
+            ("改写收益(混合)", "fused", "raw"),
+            ("改写收益(向量)", "vec_only", "raw_vec"),
+            ("改写收益(BM25)", "bm25_only", "raw_bm25"),
         ]
         lines = []
         for label, rw_leg, raw_leg in pairs:
@@ -104,13 +105,25 @@ def _print_table(result: dict) -> None:
             lines.append(f"  {label}: {'  '.join(deltas)}")
         print("\n".join(lines) + "\n")
 
+    # 重排收益
+    if "fused_reranked" in result and "fused" in result:
+        rerank_agg = result["fused_reranked"]["aggregate"]
+        fused_agg = result["fused"]["aggregate"]
+        deltas = []
+        for key in sorted(fused_agg):
+            if key not in rerank_agg:
+                continue
+            d = rerank_agg[key] - fused_agg[key]
+            deltas.append(f"{key}: {d:+.4f}")
+        print(f"  重排收益: {'  '.join(deltas)}\n")
+
 
 def _print_gate(result: dict, baseline: dict) -> bool:
     """多路门禁，含改写质量检查。"""
     all_passed = True
     rows: list[tuple[str, str, str]] = []
 
-    legs = [l for l in ("fused", "vec_only", "bm25_only") if l in result]
+    legs = [l for l in ("fused", "fused_reranked", "vec_only", "bm25_only") if l in result]
     for leg in legs:
         leg_baseline = baseline.get(leg, {})
         cur_agg = result[leg]["aggregate"]
@@ -211,7 +224,11 @@ def main() -> None:
         pool, retriever = await build_retriever(settings)
         try:
             embedding = EmbeddingModel(settings)
-            return await run_eval(items, pool, embedding, retriever, ks=KS, top_k=max(KS))
+            reranker = None
+            if settings.RERANK_ENABLED and settings.RERANK_BASE_URL:
+                from rag.models.rerank import QwenReranker
+                reranker = QwenReranker(settings)
+            return await run_eval(items, pool, embedding, retriever, reranker=reranker, ks=KS, top_k=max(KS))
         finally:
             await pool.close()
 

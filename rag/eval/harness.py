@@ -63,17 +63,18 @@ async def run_eval(
     pool: AsyncConnectionPool,
     embedding: EmbeddingModel,
     retriever: KnowledgeRetriever,
+    reranker=None,
     ks: tuple[int, ...] = (1, 3, 5),
     top_k: int = 5,
 ) -> dict:
-    """一次跑通六条检索链路。
+    """一次跑通检索链路，含可选 reranker 评测。
 
     fused / vec_only / bm25_only 使用改写后查询；
-    当 golden 标注了 rewrite_query 时追加 raw / raw_vec / raw_bm25 原始查询对照。
-    返回 {"fused": {aggregate, per_query}, "raw": {...}, "vec_only": {...},
-          "raw_vec": {...}, "bm25_only": {...}, "raw_bm25": {...}}
+    当 golden 标注了 rewrite_query 时追加 raw / raw_vec / raw_bm25 原始查询对照；
+    当 reranker 注入时追加 fused_reranked 完整链路。
     """
     fused_pq: list[dict] = []
+    fused_rows_store: list[list[dict]] = []  # 保留原始行供 reranker 复用
     raw_pq: list[dict] = []
     vec_pq: list[dict] = []
     raw_vec_pq: list[dict] = []
@@ -86,12 +87,13 @@ async def run_eval(
         rw = item.rewrite_query or item.query
         has_rewrite = item.rewrite_query is not None
 
-        # ── fused：改写后 query 走完整生产管线 ──
+        # ── fused：改写后 query 走检索管线 ──
         rows = await retriever.search(rw, EVAL_KB_ID, top_k=top_k)
         fused_pq.append({
             "id": item.id, "query": item.query,
             **evaluate_query([r["text"] for r in rows], item.gold_snippets, ks),
         })
+        fused_rows_store.append(rows)
 
         # ── raw fused：原始 query 走完整管线 ──
         if has_rewrite:
@@ -146,6 +148,18 @@ async def run_eval(
         result["raw"] = {"aggregate": aggregate(raw_pq)}
         result["raw_vec"] = {"aggregate": aggregate(raw_vec_pq)}
         result["raw_bm25"] = {"aggregate": aggregate(raw_bm25_pq)}
+
+    # ── fused_reranked：fused 结果经过 reranker 重排序 ──
+    if reranker is not None:
+        reranked_pq: list[dict] = []
+        for item, rows in zip(in_scope, fused_rows_store):
+            rw = item.rewrite_query or item.query
+            reranked = await reranker.rerank(rw, rows, top_k=len(rows))
+            reranked_pq.append({
+                "id": item.id, "query": item.query,
+                **evaluate_query([r["text"] for r in reranked], item.gold_snippets, ks),
+            })
+        result["fused_reranked"] = {"aggregate": aggregate(reranked_pq)}
     return result
 
 

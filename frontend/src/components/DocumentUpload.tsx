@@ -4,7 +4,7 @@ import { uploadDocument } from "@/api/client";
 import { formatBytes } from "@/lib/utils";
 
 const MAX_MB = 20;
-const ALLOWED = ["txt", "md", "pdf"];
+const ALLOWED = ["txt", "md", "pdf", "docx"];
 
 interface Props {
   onUploaded: (id: string) => void;
@@ -70,12 +70,12 @@ export default function DocumentUpload({ onUploaded }: Props) {
           拖拽文件到此处或 <span className="text-emerald-400">点击选择</span>
         </p>
         <p className="text-xs text-gray-600 mt-1">
-          支持 txt / md / pdf（最大 {MAX_MB}MB）
+          支持 txt / md / pdf / docx（最大 {MAX_MB}MB）
         </p>
         <input
           ref={inputRef}
           type="file"
-          accept=".txt,.md,.pdf"
+          accept=".txt,.md,.pdf,.docx"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];

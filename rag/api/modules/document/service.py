@@ -16,7 +16,7 @@ from rag.common.minio_client import presigned_get_url, put_object
 from rag.config import get_settings
 from rag.document import store
 
-ALLOWED_TYPES = {"txt", "md", "pdf"}
+ALLOWED_TYPES = {"txt", "md", "pdf", "docx"}
 
 
 def _safe_filename(name: str | None) -> str:

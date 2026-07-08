@@ -68,7 +68,7 @@ class DocumentListItem(BaseModel):
     document_id: str = Field(..., description="文档 UUID")
     knowledge_base_id: str = Field(..., description="所属知识库 UUID")
     filename: str = Field(..., description="原始文件名")
-    content_type: str = Field(..., description="文件类型(txt/md/pdf)")
+    content_type: str = Field(..., description="文件类型(txt/md/pdf/docx)")
     size_bytes: int = Field(..., description="文件大小(字节)")
     status: DocumentStatus = Field(..., description="当前处理状态")
     chunk_count: int = Field(..., description="切块数量")

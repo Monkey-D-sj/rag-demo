@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
 import rag.agent.nodes.add_memory.memory as add_memory_mod
+import rag.agent.nodes.generate.direct_answer as direct_answer_mod
 import rag.agent.nodes.generate.generate as generate_mod
+import rag.agent.nodes.generate.no_results as no_results_mod
 import rag.agent.nodes.query.query as query_mod
 import rag.agent.nodes.recall.recall as kb_recall_mod
 import rag.agent.nodes.recall_memory.memory as recall_mod
@@ -112,7 +114,7 @@ async def test_direct_answer_uses_direct_prompt(monkeypatch):
     """direct_answer 节点应使用直接回答 prompt，不依赖知识库内容。"""
     captured_messages = []
     monkeypatch.setattr(
-        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+        direct_answer_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
     )
 
     class _CaptureLLM:
@@ -129,7 +131,7 @@ async def test_direct_answer_uses_direct_prompt(monkeypatch):
         "raw_query": "你好啊",
     }
 
-    out = await generate_mod.direct_answer(state, runtime)
+    out = await direct_answer_mod.direct_answer(state, runtime)
 
     assert out["generated"] == "直接回答"
     # 确认使用了 direct_system_prompt 而非 kb_system_prompt
@@ -143,7 +145,7 @@ async def test_direct_answer_uses_direct_prompt(monkeypatch):
 async def test_direct_answer_does_not_persist(monkeypatch):
     """direct_answer 不写回记忆（闲聊/无关问题无上下文价值）。"""
     monkeypatch.setattr(
-        generate_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+        direct_answer_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
     )
 
     class _SpyMM:
@@ -166,7 +168,7 @@ async def test_direct_answer_does_not_persist(monkeypatch):
     )
     state = {"session_id": "s1", "raw_query": "你好"}
 
-    await generate_mod.direct_answer(state, runtime)
+    await direct_answer_mod.direct_answer(state, runtime)
 
     assert mm.added == []  # 不写记忆
 
@@ -288,16 +290,16 @@ async def test_no_results_emits_canned_message(monkeypatch):
     """召回为空时 no_results 节点应发送兜底话术，不调 LLM。"""
     emitted = []
     monkeypatch.setattr(
-        generate_mod, "get_stream_writer", lambda: (lambda ev: emitted.append(ev))
+        no_results_mod, "get_stream_writer", lambda: (lambda ev: emitted.append(ev))
     )
     state = {"session_id": "s1", "raw_query": "查无此问"}
 
-    out = await generate_mod.no_results(state)
+    out = await no_results_mod.no_results(state)
 
-    assert out["generated"] == generate_mod._NO_RESULT_MSG
+    assert out["generated"] == no_results_mod._NO_RESULT_MSG
     assert "未在当前知识库中找到" in out["generated"]
     assert stream_event(StreamEventType.STATUS, "未找到相关内容") in emitted
-    assert stream_event(StreamEventType.MESSAGE, generate_mod._NO_RESULT_MSG) in emitted
+    assert stream_event(StreamEventType.MESSAGE, no_results_mod._NO_RESULT_MSG) in emitted
 
 
 async def test_route_after_recall_empty():

@@ -89,3 +89,45 @@ def gate(
         if rel_drop > rel_tolerance:
             passed = False
     return passed, deltas
+
+
+def classify(
+    predicted: list[bool],
+    actual: list[bool],
+) -> dict[str, float]:
+    """二分类指标：precision / recall / F1。
+
+    predicted=True 对应「判定为 out_of_scope」。
+    """
+    tp = sum(1 for p, a in zip(predicted, actual) if p and a)
+    fp = sum(1 for p, a in zip(predicted, actual) if p and not a)
+    fn = sum(1 for p, a in zip(predicted, actual) if not p and a)
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    return {"precision": precision, "recall": recall, "f1": f1, "tp": tp, "fp": fp, "fn": fn}
+
+
+def rewrite_gate(
+    raw_agg: dict[str, float],
+    fused_agg: dict[str, float],
+    keys: tuple[str, ...] = ("recall@5", "mrr"),
+    rel_tolerance: float = 0.03,
+) -> tuple[bool, dict[str, dict[str, float]]]:
+    """改写质量门禁：改写后（fused）不得显著差于原文检索（raw）。
+
+    改写使指标下降超过 rel_tolerance 则判 fail，表示改写方向有误。
+    """
+    passed = True
+    deltas: dict[str, dict[str, float]] = {}
+    for key in keys:
+        if key not in raw_agg or key not in fused_agg:
+            continue
+        raw = raw_agg[key]
+        fused = fused_agg[key]
+        rel_drop = (raw - fused) / raw if raw > 0 else 0.0
+        deltas[key] = {"raw": raw, "rewritten": fused, "rel_drop": rel_drop}
+        if rel_drop > rel_tolerance:
+            passed = False
+    return passed, deltas

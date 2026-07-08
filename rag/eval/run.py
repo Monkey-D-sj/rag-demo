@@ -1,6 +1,8 @@
 import argparse
 import asyncio
 import json
+import subprocess
+from datetime import datetime, timezone
 
 from rag.config import get_settings
 from rag.eval import DATASETS_DIR, EVAL_DIR
@@ -10,6 +12,8 @@ from rag.models.embedding import EmbeddingModel
 
 GOLDEN_PATH = DATASETS_DIR / "retrieval_golden.jsonl"
 BASELINE_PATH = EVAL_DIR / "baseline.json"
+HISTORY_DIR = EVAL_DIR / "history"
+HISTORY_DIR.mkdir(exist_ok=True)
 # Top-K 评估粒度：对每条 query 分别计算 hit@k / recall@k / ndcg@k。
 # 只影响报告输出，不影响门禁——门禁固定用 recall@5 和 mrr（见 gate() 默认 keys）。
 KS = (1, 3, 5)
@@ -204,6 +208,35 @@ async def _run_classify(items, llm) -> dict:
     return metrics
 
 
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def _save_history(result: dict) -> None:
+    """每次评测保存为一个独立文件：history/YYYYMMDD-HHMMSS-{commit}.json。"""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    name = f"{ts}-{_git_sha()}.json"
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "commit": _git_sha(),
+        "legs": {leg: result[leg]["aggregate"] for leg in result},
+        "per_query": {
+            leg: result[leg].get("per_query", [])
+            for leg in result if "per_query" in result[leg]
+        },
+    }
+    filepath = HISTORY_DIR / name
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+    print(f"评测结果已保存 -> {filepath}\n")
+
+
 def main() -> None:
     from rag.common.platform import setup_windows_loop
 
@@ -233,6 +266,9 @@ def main() -> None:
             await pool.close()
 
     result = asyncio.run(_do())
+
+    # ── 持久化历史记录 ──
+    _save_history(result)
 
     # ── 指标表格 ──
     _print_table(result)

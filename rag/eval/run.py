@@ -220,7 +220,7 @@ def _git_sha() -> str:
 
 def _save_history(result: dict) -> None:
     """每次评测保存为一个独立文件：history/YYYYMMDD-HHMMSS-{commit}.json。"""
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     name = f"{ts}-{_git_sha()}.json"
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -2,7 +2,7 @@ import pytest
 
 from rag.config import get_settings
 from rag.db import create_pg_pool
-from rag.document import DEFAULT_KB_ID, store
+from rag.document import NOVEL_KB_ID, store
 
 
 @pytest.mark.integration
@@ -11,7 +11,7 @@ async def test_store_lifecycle_and_idempotent_replace():
     try:
         doc_id = await store.create_document(
             pool,
-            knowledge_base_id=DEFAULT_KB_ID,
+            knowledge_base_id=NOVEL_KB_ID,
             filename="a.txt",
             content_type="txt",
             size_bytes=5,
@@ -27,9 +27,9 @@ async def test_store_lifecycle_and_idempotent_replace():
         doc = await store.get_document(pool, doc_id)
         assert doc["status"] == "processing"
 
-        emb = [0.0] * get_settings().embedding_dim
+        emb = [0.0] * get_settings().EMBEDDING_DIM
         await store.store_chunks_and_complete(
-            pool, doc_id, DEFAULT_KB_ID, [(0, "c0", emb), (1, "c1", emb)]
+            pool, doc_id, NOVEL_KB_ID, [(0, "c0", emb, {}), (1, "c1", emb, {})]
         )
         doc = await store.get_document(pool, doc_id)
         assert doc["status"] == "done"
@@ -37,7 +37,7 @@ async def test_store_lifecycle_and_idempotent_replace():
 
         # 幂等:重放只覆盖,不累加
         await store.store_chunks_and_complete(
-            pool, doc_id, DEFAULT_KB_ID, [(0, "only", emb)]
+            pool, doc_id, NOVEL_KB_ID, [(0, "only", emb, {})]
         )
         doc = await store.get_document(pool, doc_id)
         assert doc["chunk_count"] == 1
@@ -53,7 +53,7 @@ async def test_claim_for_processing_dedup_and_stale_reclaim():
     try:
         doc_id = await store.create_document(
             pool,
-            knowledge_base_id=DEFAULT_KB_ID,
+            knowledge_base_id=NOVEL_KB_ID,
             filename="c.txt",
             content_type="txt",
             size_bytes=1,
@@ -75,8 +75,8 @@ async def test_claim_for_processing_dedup_and_stale_reclaim():
         )
 
         # done → 不可领取
-        emb = [0.0] * get_settings().embedding_dim
-        await store.store_chunks_and_complete(pool, doc_id, DEFAULT_KB_ID, [(0, "x", emb)])
+        emb = [0.0] * get_settings().EMBEDDING_DIM
+        await store.store_chunks_and_complete(pool, doc_id, NOVEL_KB_ID, [(0, "x", emb, {})])
         assert await store.claim_for_processing(pool, doc_id) is False
     finally:
         await pool.close()
@@ -90,7 +90,7 @@ async def test_find_stalled_documents_covers_pending_and_processing():
     try:
         doc_id = await store.create_document(
             pool,
-            knowledge_base_id=DEFAULT_KB_ID,
+            knowledge_base_id=NOVEL_KB_ID,
             filename="stall.txt",
             content_type="txt",
             size_bytes=1,
@@ -112,7 +112,7 @@ async def test_find_stalled_documents_covers_pending_and_processing():
         # done 之后不再出现
         emb = [0.0] * get_settings().EMBEDDING_DIM
         await store.store_chunks_and_complete(
-            pool, doc_id, DEFAULT_KB_ID, [(0, "x", emb, {})]
+            pool, doc_id, NOVEL_KB_ID, [(0, "x", emb, {})]
         )
         assert doc_id not in await store.find_stalled_documents(
             pool, stale_after_seconds=0

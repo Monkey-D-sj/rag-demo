@@ -6,7 +6,7 @@ pytestmark = pytest.mark.integration
 
 from rag.config import get_settings  # noqa: E402
 from rag.db import create_pg_pool  # noqa: E402
-from rag.document import store  # noqa: E402
+from rag.document import NOVEL_KB_ID, store  # noqa: E402
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ async def pool():
 
 async def _mk_doc(pool) -> str:
     return await store.create_document(
-        pool, knowledge_base_id="00000000-0000-0000-0000-000000000001",
+        pool, knowledge_base_id=NOVEL_KB_ID,
         filename="f.txt", content_type="text/plain", size_bytes=1,
         content_hash="h" + uuid.uuid4().hex, object_key="k" + uuid.uuid4().hex,
     )
@@ -42,7 +42,7 @@ async def test_set_graph_status_and_error(pool):
 async def test_get_chunks_for_graph_orders_and_extracts_title(pool):
     doc_id = await _mk_doc(pool)
     await store.store_chunks_and_complete(
-        pool, doc_id, "00000000-0000-0000-0000-000000000001",
+        pool, doc_id, NOVEL_KB_ID,
         [
             (1, "second", [0.0] * 1024, {"title": "第二章"}),
             (0, "first", [0.0] * 1024, {}),

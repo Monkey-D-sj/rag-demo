@@ -26,10 +26,10 @@ def _row(cid: str, text: str = "正文", **extra) -> dict:
 def _retriever(monkeypatch, vec_rows, bm25_rows=None, bm25_exc=None):
     import rag.document.retriever as mod
 
-    async def fake_vec(pool, embedding, kb_id, top_k):
+    async def fake_vec(pool, embedding, knowledge_base_ids, top_k):
         return vec_rows
 
-    async def fake_bm25(pool, query_text, kb_id, top_k):
+    async def fake_bm25(pool, query_text, knowledge_base_ids, top_k):
         if bm25_exc is not None:
             raise bm25_exc
         return bm25_rows or []
@@ -80,7 +80,7 @@ async def test_search_fuses_and_logs_both_legs(monkeypatch, caplog):
     bm25 = [_row("b", text="金箍棒", score=4.2)]
     r = _retriever(monkeypatch, vec, bm25)
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        result = await r.search("孙悟空的兵器", "kb-1")
+        result = await r.search("孙悟空的兵器", ["kb-1"])
     assert {x["id"] for x in result} == {"a", "b"}
     rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert rec.levelno == logging.INFO
@@ -98,7 +98,7 @@ async def test_search_bm25_failure_degrades_to_vector_only(monkeypatch, caplog):
     vec = [_row("a", similarity=0.9)]
     r = _retriever(monkeypatch, vec, bm25_exc=RuntimeError("index missing"))
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        result = await r.search("q", "kb-1")
+        result = await r.search("q", ["kb-1"])
     assert [x["id"] for x in result] == ["a"]
     assert any("BM25 召回失败" in x.getMessage() for x in caplog.records)
 
@@ -106,7 +106,7 @@ async def test_search_bm25_failure_degrades_to_vector_only(monkeypatch, caplog):
 async def test_search_empty_both_legs_logs_warning(monkeypatch, caplog):
     r = _retriever(monkeypatch, [], [])
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        result = await r.search("无关问题", "kb-1")
+        result = await r.search("无关问题", ["kb-1"])
     assert result == []
     rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert rec.levelno == logging.WARNING
@@ -125,17 +125,17 @@ async def test_search_vector_failure_propagates(monkeypatch):
 
     import rag.document.retriever as mod
 
-    async def boom_vec(pool, embedding, kb_id, top_k):
+    async def boom_vec(pool, embedding, knowledge_base_ids, top_k):
         raise RuntimeError("vector down")
 
-    async def fake_bm25(pool, query_text, kb_id, top_k):
+    async def fake_bm25(pool, query_text, knowledge_base_ids, top_k):
         return []
 
     monkeypatch.setattr(mod.store, "search_chunks", boom_vec)
     monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
     r = KnowledgeRetriever(None, _FakeEmbedding(), _settings())
     with pytest.raises(RuntimeError, match="vector down"):
-        await r.search("q", "kb-1")
+        await r.search("q", ["kb-1"])
 
 
 async def test_search_punctuation_only_query_skips_bm25_leg(monkeypatch, caplog):
@@ -143,10 +143,10 @@ async def test_search_punctuation_only_query_skips_bm25_leg(monkeypatch, caplog)
 
     calls = {"bm25": 0}
 
-    async def fake_vec(pool, embedding, kb_id, top_k):
+    async def fake_vec(pool, embedding, knowledge_base_ids, top_k):
         return [_row("a", similarity=0.9)]
 
-    async def fake_bm25(pool, query_text, kb_id, top_k):
+    async def fake_bm25(pool, query_text, knowledge_base_ids, top_k):
         calls["bm25"] += 1
         return []
 
@@ -154,7 +154,7 @@ async def test_search_punctuation_only_query_skips_bm25_leg(monkeypatch, caplog)
     monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
     r = KnowledgeRetriever(None, _FakeEmbedding(), _settings())
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        result = await r.search("？！。……", "kb-1")
+        result = await r.search("？！。……", ["kb-1"])
     assert calls["bm25"] == 0
     assert [x["id"] for x in result] == ["a"]
 
@@ -163,7 +163,7 @@ async def test_fused_rows_carry_both_score_keys(monkeypatch):
     vec = [_row("a", similarity=0.9)]
     bm25 = [_row("b", score=4.2)]
     r = _retriever(monkeypatch, vec, bm25)
-    result = await r.search("孙悟空", "kb-1")
+    result = await r.search("孙悟空", ["kb-1"])
     by_id = {x["id"]: x for x in result}
     assert by_id["a"]["score"] is None and by_id["a"]["similarity"] == 0.9
     assert by_id["b"]["similarity"] is None and by_id["b"]["score"] == 4.2
@@ -174,7 +174,7 @@ async def test_fused_overlap_preserves_both_raw_scores(monkeypatch):
     vec = [_row("a", similarity=0.9)]
     bm25 = [_row("a", score=4.2)]
     r = _retriever(monkeypatch, vec, bm25)
-    result = await r.search("孙悟空", "kb-1")
+    result = await r.search("孙悟空", ["kb-1"])
     assert len(result) == 1
     assert result[0]["similarity"] == 0.9
     assert result[0]["score"] == 4.2
@@ -185,7 +185,7 @@ async def test_rank_summary_preview_truncated_to_80(monkeypatch, caplog):
     vec = [_row("a", text="山" * 300, similarity=0.9)]
     r = _retriever(monkeypatch, vec, [])
     with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        await r.search("q", "kb-1")
+        await r.search("q", ["kb-1"])
     rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert len(rec.vec_hits[0]["text_preview"]) == 80
     assert len(rec.hits[0]["text_preview"]) == 80

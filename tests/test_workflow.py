@@ -31,8 +31,8 @@ class _FakeRetriever:
     def __init__(self):
         self.calls = []
 
-    async def search(self, query, knowledge_base_id, top_k=5):
-        self.calls.append((query, knowledge_base_id))
+    async def search(self, query, knowledge_base_ids=None, top_k=5):
+        self.calls.append((query, knowledge_base_ids))
         return [{"text": "KB1"}]
 
 
@@ -51,7 +51,7 @@ async def test_invoke_runs_full_graph_with_context():
             messages.append(event["data"])
 
     # recall 节点用改写后的查询检索知识库
-    assert retriever.calls == [("rw", "00000000-0000-0000-0000-000000000001")]
+    assert retriever.calls == [("rw", None)]
 
     # 节点经由 custom 通道发出的进度事件
     assert "检索记忆中..." in statuses
@@ -94,7 +94,7 @@ async def test_invoke_out_of_scope_skips_recall(monkeypatch):
         def __init__(self):
             self.calls = []
 
-        async def search(self, query, knowledge_base_id, top_k=5):
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
             self.calls.append(query)
             return [{"text": "SHOULD_NOT_APPEAR"}]
 

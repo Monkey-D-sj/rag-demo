@@ -35,7 +35,8 @@ def test_upload_rejects_unknown_type():
     arq = _FakeArq()
     client = TestClient(_app(arq))
     resp = client.post(
-        "/documents/", files={"file": ("a.exe", b"x", "application/octet-stream")}
+        "/documents/", files={"file": ("a.exe", b"x", "application/octet-stream")},
+        data={"knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
     )
     assert resp.status_code == 400
     assert arq.jobs == []
@@ -58,7 +59,8 @@ def test_upload_happy_path_enqueues(monkeypatch):
     arq = _FakeArq()
     client = TestClient(_app(arq))
     resp = client.post(
-        "/documents/", files={"file": ("note.txt", b"hello", "text/plain")}
+        "/documents/", files={"file": ("note.txt", b"hello", "text/plain")},
+        data={"knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
     )
 
     assert resp.status_code == 202
@@ -94,5 +96,5 @@ def test_get_status_returns_doc(monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == {
         "document_id": "doc-1", "filename": "a.txt", "status": "done",
-        "chunk_count": 3, "error": None,
+        "chunk_count": 3, "error": None, "graph_status": None, "graph_error": None,
     }

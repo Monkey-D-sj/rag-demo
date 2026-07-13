@@ -18,15 +18,13 @@ def test_table_and_extensions_exist():
 
 
 @pytest.mark.integration
-def test_document_tables_exist_with_default_kb():
+def test_document_tables_exist_with_novel_regulation_kbs():
     s = get_settings()
     with psycopg.connect(s.pg_async_dsn) as conn:
         with conn.cursor() as cur:
             for table in ("knowledge_bases", "documents", "document_chunks"):
                 cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                 assert cur.fetchone()[0] == table
-            cur.execute(
-                "SELECT name FROM knowledge_bases "
-                "WHERE id = '00000000-0000-0000-0000-000000000001'"
-            )
-            assert cur.fetchone()[0] == "default"
+            cur.execute("SELECT name FROM knowledge_bases ORDER BY name")
+            rows = cur.fetchall()
+            assert rows == [("法规",), ("小说",)]

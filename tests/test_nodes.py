@@ -197,8 +197,8 @@ async def test_recall_searches_kb_with_rewrite_query(monkeypatch):
         def __init__(self):
             self.calls = []
 
-        async def search(self, query, knowledge_base_id, top_k=5):
-            self.calls.append((query, knowledge_base_id))
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
+            self.calls.append((query, knowledge_base_ids))
             return [{"text": "KB1"}]
 
     retriever = _FakeRetriever()

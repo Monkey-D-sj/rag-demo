@@ -12,7 +12,7 @@ const BASE = "/api";
 
 export async function uploadDocument(
   file: File,
-  knowledgeBaseId: string = "00000000-0000-0000-0000-000000000001",
+  knowledgeBaseId: string,
 ): Promise<{ document_id: string; status: string }> {
   const form = new FormData();
   form.append("file", file);

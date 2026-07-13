@@ -18,8 +18,6 @@ from rag.api.modules.document.schemas import (
     DocumentUploadResponse,
     GraphRetryResponse,
 )
-from rag.document import DEFAULT_KB_ID
-
 document_router = APIRouter(prefix="/documents")
 
 
@@ -34,7 +32,7 @@ document_router = APIRouter(prefix="/documents")
 )
 async def upload_document(
     file: UploadFile = File(...),
-    knowledge_base_id: str = Form(DEFAULT_KB_ID),
+    knowledge_base_id: str = Form(...),
     pg=Depends(get_pg),
     minio=Depends(get_minio),
     arq_pool=Depends(get_arq_pool),

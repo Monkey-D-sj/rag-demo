@@ -6,6 +6,11 @@ import { formatBytes } from "@/lib/utils";
 const MAX_MB = 20;
 const ALLOWED = ["txt", "md", "pdf", "docx"];
 
+const KB_OPTIONS: Record<string, string> = {
+  "小说": "00000000-0000-0000-0000-000000000002",
+  "法规": "00000000-0000-0000-0000-000000000003",
+};
+
 interface Props {
   onUploaded: (id: string) => void;
 }
@@ -14,6 +19,7 @@ export default function DocumentUpload({ onUploaded }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [kbId, setKbId] = useState(Object.values(KB_OPTIONS)[0]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const validate = useCallback((f: File): string | null => {
@@ -44,7 +50,7 @@ export default function DocumentUpload({ onUploaded }: Props) {
     setUploading(true);
     setError("");
     try {
-      const { document_id } = await uploadDocument(file);
+      const { document_id } = await uploadDocument(file, kbId);
       setFile(null);
       onUploaded(document_id);
     } catch (err: unknown) {
@@ -56,6 +62,21 @@ export default function DocumentUpload({ onUploaded }: Props) {
 
   return (
     <div className="space-y-3">
+      {/* KB 选择器 */}
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-gray-400">知识库：</label>
+        <select
+          value={kbId}
+          onChange={(e) => setKbId(e.target.value)}
+          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200
+                     focus:outline-none focus:border-emerald-500/50 transition-colors"
+        >
+          {Object.entries(KB_OPTIONS).map(([name, id]) => (
+            <option key={id} value={id}>{name}</option>
+          ))}
+        </select>
+      </div>
+
       {/* 拖拽区 */}
       <div
         onDrop={handleDrop}

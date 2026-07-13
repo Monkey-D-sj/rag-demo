@@ -9,7 +9,6 @@ from rag.agent.nodes.recall.recall import recall
 from rag.agent.nodes.recall_memory.memory import recall_memory
 from rag.agent.nodes.rerank.rerank import rerank
 from rag.agent.type import ContextSchema, MyState
-from rag.document import DEFAULT_KB_ID
 
 
 def _route_after_query(state: MyState) -> str:
@@ -85,7 +84,6 @@ async def invoke(
             "session_id": session_id,
             "raw_query": query,
             "is_out_of_scope": False,
-            "knowledge_base_id": DEFAULT_KB_ID,
         },
         context=context,
         stream_mode=["custom"],

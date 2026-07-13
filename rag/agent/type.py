@@ -10,7 +10,7 @@ class RetrieverProtocol(Protocol):
 	"""agent 层所需的检索器接口。具体实现(如 KnowledgeRetriever)只需满足此协议即可。"""
 
 	async def search(
-		self, query: str, knowledge_base_id: str, top_k: int = 5
+		self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5
 	) -> list[dict]: ...
 
 
@@ -80,7 +80,6 @@ class MyState(TypedDict):
 	context: str
 	rewrite_query: str
 	is_out_of_scope: bool  # True 表示查询与知识库无关，跳过召回直接大模型兜底
-	knowledge_base_id: str  # 目标知识库 ID，API 注入
 
 	# ----------- 召回 -----------
 	recall_bm25_results: list[dict]

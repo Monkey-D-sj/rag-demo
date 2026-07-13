@@ -53,11 +53,13 @@ async def search_chunks(
     async with get_cursor(pool) as cur:
         await cur.execute(
             """
-            SELECT id, document_id, chunk_index, text,
-                   1 - (embedding <=> %(emb)s) AS similarity
-            FROM document_chunks
-            WHERE knowledge_base_id = %(kb)s
-            ORDER BY embedding <=> %(emb)s
+            SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
+                   1 - (dc.embedding <=> %(emb)s) AS similarity,
+                   d.filename
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE dc.knowledge_base_id = %(kb)s
+            ORDER BY dc.embedding <=> %(emb)s
             LIMIT %(k)s
             """,
             {"emb": Vector(embedding), "kb": knowledge_base_id, "k": top_k},
@@ -75,11 +77,13 @@ async def search_chunks_bm25(
     async with get_cursor(pool) as cur:
         await cur.execute(
             """
-            SELECT id, document_id, chunk_index, text,
-                   paradedb.score(id) AS score
-            FROM document_chunks
-            WHERE text @@@ paradedb.match('text', %(q)s)
-              AND knowledge_base_id = %(kb)s
+            SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
+                   paradedb.score(dc.id) AS score,
+                   d.filename
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE dc.text @@@ paradedb.match('text', %(q)s)
+              AND dc.knowledge_base_id = %(kb)s
             ORDER BY score DESC
             LIMIT %(k)s
             """,

@@ -1,6 +1,8 @@
 import { Component, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
 import { createChatStream } from "@/api/stream";
+import type { Citation } from "@/types";
 
 // 将文本中 [n] 引用标记拆分为 React 节点（用于流式 / 降级渲染）
 function renderContent(text: string): React.ReactNode[] {
@@ -16,8 +18,25 @@ function escapeCitations(text: string): string {
   return text.replace(/\[(\d+)\]/g, "\\[$1\\]");
 }
 
+// 将 [n] 替换为 HTML <cite> 标签，供 rehype-raw 解析后由 components 映射
+function injectCitationHtml(text: string): string {
+  return text.replace(/\[(\d+)\]/g, '<cite data-idx="$1"></cite>');
+}
+
+// 点击外部关闭 hook
+function useClickOutside(ref: React.RefObject<HTMLElement | null>, handler: () => void) {
+  useEffect(() => {
+    const listener = (e: MouseEvent) => {
+      if (!ref.current || ref.current.contains(e.target as Node)) return;
+      handler();
+    };
+    document.addEventListener("mousedown", listener);
+    return () => document.removeEventListener("mousedown", listener);
+  }, [ref, handler]);
+}
+
 // ReactMarkdown 解析失败时降级为纯文本（含上标）
-class MarkdownSafe extends Component<{ content: string }> {
+class MarkdownSafe extends Component<{ content: string; citations?: Citation[] }> {
   state = { error: false };
 
   static getDerivedStateFromError() {
@@ -25,11 +44,63 @@ class MarkdownSafe extends Component<{ content: string }> {
   }
 
   render() {
+    const { content, citations } = this.props;
     if (this.state.error) {
-      return <span className="whitespace-pre-wrap">{renderContent(this.props.content)}</span>;
+      return <span className="whitespace-pre-wrap">{renderContent(content)}</span>;
     }
-    return <ReactMarkdown>{escapeCitations(this.props.content)}</ReactMarkdown>;
+    // 有引用数据时：将 [n] 转换为 HTML cite 标签 → rehype-raw 解析 → components 映射
+    if (citations && citations.length > 0) {
+      return (
+        <ReactMarkdown
+          rehypePlugins={[rehypeRaw]}
+          components={{
+            cite: ({ 'data-idx': idx }: any) => (
+              <CitationBadgeInline idx={Number(idx)} citations={citations} />
+            ),
+          }}
+        >
+          {injectCitationHtml(content)}
+        </ReactMarkdown>
+      );
+    }
+    return <ReactMarkdown>{escapeCitations(content)}</ReactMarkdown>;
   }
+}
+
+// 内联引用徽章（在 MarkdownSafe 的 components 中使用，不经过 text split）
+function CitationBadgeInline({ idx, citations }: { idx: number; citations: Citation[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useClickOutside(ref, () => setOpen(false));
+
+  const cit = citations.find((c) => c.index === idx);
+  if (!cit) return <sup>[{idx}]</sup>;
+
+  const preview = cit.text.length > 300
+    ? cit.text.slice(0, 300) + "…"
+    : cit.text;
+
+  return (
+    <span ref={ref} className="relative inline-block">
+      <sup
+        onClick={() => setOpen((v) => !v)}
+        className="cursor-pointer text-emerald-400 hover:text-emerald-300 hover:underline transition-colors"
+        title={`来源: ${cit.document_title}`}
+      >
+        [{idx}]
+      </sup>
+      {open && (
+        <div className="absolute bottom-full left-0 mb-2 w-80 max-h-64 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl z-50 p-3 text-xs leading-relaxed">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-emerald-400 font-semibold">[{idx}]</span>
+            <span className="text-gray-400">{cit.document_title}</span>
+          </div>
+          <p className="text-gray-300 whitespace-pre-wrap">{preview}</p>
+        </div>
+      )}
+    </span>
+  );
 }
 
 interface Message {
@@ -37,6 +108,7 @@ interface Message {
   content: string;
   isStreaming?: boolean;
   status?: string;
+  citations?: Citation[];
 }
 
 export default function ChatBox({
@@ -49,6 +121,7 @@ export default function ChatBox({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const citationsRef = useRef<Citation[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -97,6 +170,10 @@ export default function ChatBox({
                 content: msg.content + `\n\n> ⚠️ ${ev.data}`,
                 isStreaming: false,
               };
+              break;
+            case "citations":
+              citationsRef.current = ev.data;
+              next[assistantIdx] = { ...msg, citations: ev.data };
               break;
             case "done":
               next[assistantIdx] = { ...msg, isStreaming: false };
@@ -154,7 +231,10 @@ export default function ChatBox({
                   {m.isStreaming ? (
                     <span className="whitespace-pre-wrap">{renderContent(m.content)}</span>
                   ) : (
-                    <MarkdownSafe content={m.content} />
+                    <MarkdownSafe
+                      content={m.content}
+                      citations={m.citations}
+                    />
                   )}
                   {m.isStreaming && (
                     <span className="inline-block w-2 h-4 bg-emerald-400 ml-0.5 animate-pulse align-text-bottom" />

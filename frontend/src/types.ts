@@ -40,9 +40,17 @@ export interface GraphRetryResult {
 
 // ── SSE 事件类型 ──────────────────────────────────────
 
+/** 单条引用元数据 */
+export interface Citation {
+  index: number;
+  text: string;
+  document_title: string;
+}
+
 /** 后端 /chat SSE 下发的事件的联合类型 */
 export type ChatEvent =
-  | { type: "status";  data: string }
-  | { type: "message"; data: string }
-  | { type: "error";   data: string }
-  | { type: "done";    data: null };
+  | { type: "status";    data: string }
+  | { type: "message";   data: string }
+  | { type: "error";     data: string }
+  | { type: "citations"; data: Citation[] }
+  | { type: "done";      data: null };

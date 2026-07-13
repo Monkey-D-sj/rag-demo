@@ -40,13 +40,19 @@ class ChatError(BaseModel):
     data: str
 
 
-ChatEvent = ChatStatus | ChatMessage | ChatError
+class ChatCitations(BaseModel):
+    type: StreamEventType = StreamEventType.CITATIONS
+    data: list[dict]
+
+
+ChatEvent = ChatStatus | ChatMessage | ChatError | ChatCitations
 
 # 事件类型 → Pydantic 模型映射
 _EVENT_MODELS: dict[StreamEventType, type[BaseModel]] = {
     StreamEventType.STATUS: ChatStatus,
     StreamEventType.MESSAGE: ChatMessage,
     StreamEventType.ERROR: ChatError,
+    StreamEventType.CITATIONS: ChatCitations,
 }
 
 

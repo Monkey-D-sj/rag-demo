@@ -65,6 +65,7 @@ class StreamEventType(str, Enum):
 	STATUS = "status"
 	MESSAGE = "message"
 	ERROR = "error"
+	CITATIONS = "citations"
 
 
 def stream_event(type: StreamEventType, data: str) -> dict:
@@ -86,6 +87,7 @@ class MyState(TypedDict):
 
 	# ----------- 生成 -----------
 	generated: str
+	citations: list[dict]  # 引用元数据 [{index, text, document_title}, ...]
 
 @runtime_checkable
 class RerankerProtocol(Protocol):

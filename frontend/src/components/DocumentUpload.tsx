@@ -8,9 +8,10 @@ const ALLOWED = ["txt", "md", "pdf", "docx"];
 
 interface Props {
   onUploaded: (id: string) => void;
+  knowledgeBaseId: string;
 }
 
-export default function DocumentUpload({ onUploaded }: Props) {
+export default function DocumentUpload({ onUploaded, knowledgeBaseId }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -44,7 +45,7 @@ export default function DocumentUpload({ onUploaded }: Props) {
     setUploading(true);
     setError("");
     try {
-      const { document_id } = await uploadDocument(file);
+      const { document_id } = await uploadDocument(file, knowledgeBaseId);
       setFile(null);
       onUploaded(document_id);
     } catch (err: unknown) {

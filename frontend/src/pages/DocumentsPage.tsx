@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import DocumentUpload from "@/components/DocumentUpload";
 import DocumentList from "@/components/DocumentList";
-import { getDocumentStatus, listDocuments } from "@/api/client";
+import { DEFAULT_KB_ID, getDocumentStatus, listDocuments } from "@/api/client";
 import type { DocumentItem } from "@/types";
 
 export default function DocumentsPage() {
@@ -14,7 +14,7 @@ export default function DocumentsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await listDocuments({ limit: 100 });
+      const res = await listDocuments({ knowledgeBaseId: DEFAULT_KB_ID, limit: 100 });
       setDocs(res.items);
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载文档列表失败");
@@ -61,7 +61,7 @@ export default function DocumentsPage() {
 
       {/* 内容 */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        <DocumentUpload onUploaded={onUploaded} />
+        <DocumentUpload onUploaded={onUploaded} knowledgeBaseId={DEFAULT_KB_ID} />
         {error ? (
           <div className="flex items-center justify-center h-48">
             <p className="text-red-400/80 text-sm">{error}</p>

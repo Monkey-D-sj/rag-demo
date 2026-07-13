@@ -80,6 +80,7 @@ class MyState(TypedDict):
 	context: str
 	rewrite_query: str
 	is_out_of_scope: bool  # True 表示查询与知识库无关，跳过召回直接大模型兜底
+	knowledge_base_id: str  # 目标知识库 ID，API 注入
 
 	# ----------- 召回 -----------
 	recall_bm25_results: list[dict]

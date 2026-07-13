@@ -9,6 +9,7 @@ from rag.agent.nodes.recall.recall import recall
 from rag.agent.nodes.recall_memory.memory import recall_memory
 from rag.agent.nodes.rerank.rerank import rerank
 from rag.agent.type import ContextSchema, MyState
+from rag.document import DEFAULT_KB_ID
 
 
 def _route_after_query(state: MyState) -> str:
@@ -74,13 +75,20 @@ async def invoke(
     session_id: str,
     query: str,
     context: ContextSchema,
+    *,
+    kb_id: str | None = None,
     config: dict | None = None,
 ):
     """归一化事件流:仅保留 custom 通道事件(status/message/error),
     updates 通道(state 增量)不再下发。config 用于透传 LangChain 回调(如 Langfuse)。
     """
     async for mode, chunk in graph.astream(
-        {"session_id": session_id, "raw_query": query, "is_out_of_scope": False},
+        {
+            "session_id": session_id,
+            "raw_query": query,
+            "is_out_of_scope": False,
+            "knowledge_base_id": kb_id or DEFAULT_KB_ID,
+        },
         context=context,
         stream_mode=["custom"],
         config=config,

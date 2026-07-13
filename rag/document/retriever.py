@@ -80,13 +80,13 @@ class KnowledgeRetriever:
 
     @observe_if_enabled(name="knowledge_retrieve")
     async def search(
-        self, query: str, knowledge_base_id: str, top_k: int = 5
+        self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5
     ) -> list[dict]:
         candidates = top_k * self._candidate_multiplier
         timings: dict[str, float] = {}
         lexical_query = _lexical_query(query)
 
-        span_input = {"query": query[:200], "kb_id": knowledge_base_id, "candidates": candidates}
+        span_input = {"query": query[:200], "kb_ids": knowledge_base_ids, "candidates": candidates}
 
         async def _vec_leg() -> list[dict]:
             # 子 span 让两路在 trace 里各自可见，而不是只有融合后的黑盒输出
@@ -97,7 +97,7 @@ class KnowledgeRetriever:
                     timings["embed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
                     t1 = time.perf_counter()
                     rows = await store.search_chunks(
-                        self._pool, emb, knowledge_base_id, candidates
+                        self._pool, emb, knowledge_base_ids, candidates
                     )
                     timings["search_ms"] = round((time.perf_counter() - t1) * 1000, 1)
                     # 低相似度截断：低于阈值的 chunk 不参与合并，减少噪音稀释
@@ -126,7 +126,7 @@ class KnowledgeRetriever:
                 else:
                     try:
                         rows = await store.search_chunks_bm25(
-                            self._pool, lexical_query, knowledge_base_id, candidates
+                            self._pool, lexical_query, knowledge_base_ids, candidates
                         )
                     except Exception:  # noqa: BLE001 - 词法路失败降级，不拖垮检索
                         logger.warning("BM25 召回失败，降级纯向量", exc_info=True)

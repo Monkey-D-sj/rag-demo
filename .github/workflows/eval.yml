@@ -1,0 +1,78 @@
+name: Retrieval Eval
+
+on:
+  pull_request:
+    paths:
+      - "rag/document/retriever.py"
+      - "rag/document/store.py"
+      - "rag/models/embedding.py"
+      - "rag/models/rerank.py"
+      - "rag/agent/nodes/recall/**"
+      - "rag/agent/nodes/rerank/**"
+      - "rag/eval/**"
+  push:
+    branches: [master, main]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: paradedb/paradedb:latest
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag123
+          POSTGRES_DB: rag_memory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run migrations
+        env:
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_DATABASE: rag_memory
+          PG_USER: rag
+          PG_PASSWORD: rag123
+        run: uv run alembic upgrade head
+
+      - name: Seed eval KB
+        env:
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_DATABASE: rag_memory
+          PG_USER: rag
+          PG_PASSWORD: rag123
+          EMBEDDING_KEY: ${{ secrets.EMBEDDING_KEY }}
+          EMBEDDING_URL: ${{ secrets.EMBEDDING_URL }}
+        run: uv run python -m rag.eval.seed_corpus
+
+      - name: Run eval gate
+        env:
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_DATABASE: rag_memory
+          PG_USER: rag
+          PG_PASSWORD: rag123
+          EMBEDDING_KEY: ${{ secrets.EMBEDDING_KEY }}
+          EMBEDDING_URL: ${{ secrets.EMBEDDING_URL }}
+          MODEL_KEY: ${{ secrets.MODEL_KEY }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          MODEL_URL: ${{ secrets.MODEL_URL }}
+          RERANK_ENABLED: "false"
+        run: uv run pytest -m eval -v

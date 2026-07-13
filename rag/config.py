@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     LOG_FILE_BACKUP_COUNT: int = 5                 # 轮转保留份数
 
     # ── Rerank ──
-    RERANK_ENABLED: bool = True
+    RERANK_ENABLED: bool = False
     RERANK_KEY: str = ""
     RERANK_BASE_URL: str = ""
     RERANK_MODEL: str = "qwen3-rerank"

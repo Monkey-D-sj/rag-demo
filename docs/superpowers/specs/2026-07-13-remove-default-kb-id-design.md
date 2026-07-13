@@ -32,14 +32,13 @@ INSERT INTO knowledge_bases (id, name) VALUES
   ('00000000-0000-0000-0000-000000000003', '法规');
 ```
 
-分区：
+分区（不设 DEFAULT 分区 — 新 KB 由 `ensure_kb_partition()` runtime 建）：
 
 ```sql
 CREATE TABLE dchunks_novel PARTITION OF document_chunks
     FOR VALUES IN ('00000000-0000-0000-0000-000000000002');
 CREATE TABLE dchunks_regulation PARTITION OF document_chunks
     FOR VALUES IN ('00000000-0000-0000-0000-000000000003');
-CREATE TABLE dchunks_other PARTITION OF document_chunks DEFAULT;
 ```
 
 ### 常量

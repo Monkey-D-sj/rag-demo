@@ -55,7 +55,7 @@ def _dynamic_truncate(
     return chunks[: min(default_top_k, len(chunks))]
 
 
-async def dynamic_topk(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
+async def dynamic_topk(state: MyState, _runtime: Runtime[ContextSchema]) -> MyState:
     """对 rerank 后的结果做动态 top-k 截断。
 
     未启用时透传；异常时降级透传原始结果，不中断检索链路。
@@ -77,9 +77,10 @@ async def dynamic_topk(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
 
     try:
         before = len(chunks)
+        top_k = max(1, settings.RERANK_DYNAMIC_TOPK_DEFAULT)
         filtered = _dynamic_truncate(
             chunks,
-            settings.RERANK_DYNAMIC_TOPK_DEFAULT,
+            top_k,
             settings.RERANK_DYNAMIC_TOPK_RATIO,
         )
         state["recall_vec_results"] = filtered

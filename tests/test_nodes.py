@@ -403,8 +403,8 @@ async def test_dynamic_truncate_gap_truncates():
     assert result[1]["text"] == "B"
 
 
-async def test_dynamic_truncate_first_gap_returns_empty():
-    """第一名本身分数极低且与第二名 gap 大，返回空。"""
+async def test_dynamic_truncate_gap_after_first_returns_one():
+    """第一名本身分数极低且与第二名 gap 大，保留第1条。"""
     chunks = [
         {"rerank_score": 1.0, "text": "A"},
         {"rerank_score": 0.1, "text": "B"},
@@ -500,8 +500,6 @@ async def test_dynamic_topk_enabled_filters(monkeypatch):
             "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
         }
     )())
-    from types import SimpleNamespace
-
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [
         {"rerank_score": 9.0, "text": "A"},
@@ -522,8 +520,6 @@ async def test_dynamic_topk_disabled_passthrough(monkeypatch):
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
         "S", (), {"RERANK_DYNAMIC_TOPK_ENABLED": False}
     )())
-    from types import SimpleNamespace
-
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [{"rerank_score": 9.0}, {"rerank_score": 8.0}]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
@@ -543,8 +539,6 @@ async def test_dynamic_topk_empty_passthrough(monkeypatch):
             "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
         }
     )())
-    from types import SimpleNamespace
-
     runtime = SimpleNamespace(context=SimpleNamespace())
     state = {"recall_vec_results": [], "raw_query": "q"}
 
@@ -563,8 +557,6 @@ async def test_dynamic_topk_non_list_passthrough(monkeypatch):
             "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
         }
     )())
-    from types import SimpleNamespace
-
     runtime = SimpleNamespace(context=SimpleNamespace())
     state = {"recall_vec_results": "not a list", "raw_query": "q"}
 
@@ -584,8 +576,6 @@ async def test_dynamic_topk_all_truncated_to_zero_emits_status(monkeypatch):
             "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
         }
     )())
-    from types import SimpleNamespace
-
     runtime = SimpleNamespace(context=SimpleNamespace())
     # 第一个 chunk rerank_score=0.0 → scores[0]=0 → 在 i=0 处截断返回 []
     chunks = [{"rerank_score": 0.0}, {"rerank_score": 9.0}]
@@ -609,7 +599,6 @@ async def test_dynamic_topk_exception_passthrough(monkeypatch):
     )())
     # 让 _dynamic_truncate 抛异常
     monkeypatch.setattr(topk_mod, "_dynamic_truncate", lambda c, d, r: (_ for _ in ()).throw(ValueError("boom")))
-    from types import SimpleNamespace
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [{"rerank_score": 9.0}]

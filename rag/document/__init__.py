@@ -1,5 +1,6 @@
-# 默认知识库 ID,须与 alembic 0002 迁移中的 DEFAULT_KB_ID 保持一致
-DEFAULT_KB_ID = "00000000-0000-0000-0000-000000000001"
+# 知识库 ID 常量，须与 alembic 0008 迁移中的种子数据保持一致
+NOVEL_KB_ID      = "00000000-0000-0000-0000-000000000002"
+REGULATION_KB_ID = "00000000-0000-0000-0000-000000000003"
 
 
 async def ensure_kb_partition(pool, kb_id: str) -> None:

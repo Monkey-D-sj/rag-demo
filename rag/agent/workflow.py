@@ -48,8 +48,8 @@ builder.add_node("add_memory", add_memory)
 # 召回为空时的兜底话术（不调 LLM）
 builder.add_node("no_results", no_results)
 
-#                                       ┌─ out-of-scope -> direct_answer ──────────────────────────────────┐
-# START -> recall_memory -> handle_query ┤                                                                END
+#                                       ┌─ out-of-scope -> direct_answer ──────────────────────────────────────────┐
+# START -> recall_memory -> handle_query ┤                                                                        END
 #                                       └─ in-scope -> recall -> rerank -> dynamic_topk ┬─ generate -> add_memory ─┘
 #                                                                                       └─ no_results ─────────────┘
 builder.add_edge(START, "recall_memory")

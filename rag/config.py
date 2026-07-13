@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     RERANK_BASE_URL: str = ""
     RERANK_MODEL: str = "qwen3-rerank"
 
+    # ── 动态 Top-K 截断（rerank 之后）──
+    RERANK_DYNAMIC_TOPK_ENABLED: bool = True
+    RERANK_DYNAMIC_TOPK_DEFAULT: int = 5
+    RERANK_DYNAMIC_TOPK_RATIO: float = 0.7
+
     # ── Loki ──
     LOKI_ENABLED: bool = False
     LOKI_URL: str = "http://localhost:3100"

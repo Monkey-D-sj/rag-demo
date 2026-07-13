@@ -46,23 +46,32 @@ async def create_document(
 async def search_chunks(
     pool: AsyncConnectionPool,
     embedding: list[float],
-    knowledge_base_id: str,
+    knowledge_base_ids: list[str] | None,
     top_k: int = 5,
 ) -> list[dict]:
-    """按余弦相似度从知识库召回最相关的 chunk。"""
+    """按余弦相似度从知识库召回最相关的 chunk。
+
+    knowledge_base_ids 为 None 时搜全部 KB；传入列表时走分区裁剪。
+    """
+    kb_filter = ""
+    params: dict = {"emb": Vector(embedding), "k": top_k}
+    if knowledge_base_ids is not None:
+        kb_filter = "AND dc.knowledge_base_id = ANY(%(kb_ids)s)"
+        params["kb_ids"] = knowledge_base_ids
+
     async with get_cursor(pool) as cur:
         await cur.execute(
-            """
+            f"""
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    1 - (dc.embedding <=> %(emb)s) AS similarity,
                    d.filename
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
-            WHERE dc.knowledge_base_id = %(kb)s
+            WHERE 1=1 {kb_filter}
             ORDER BY dc.embedding <=> %(emb)s
             LIMIT %(k)s
             """,
-            {"emb": Vector(embedding), "kb": knowledge_base_id, "k": top_k},
+            params,
         )
         return await cur.fetchall()
 
@@ -70,24 +79,33 @@ async def search_chunks(
 async def search_chunks_bm25(
     pool: AsyncConnectionPool,
     query_text: str,
-    knowledge_base_id: str,
+    knowledge_base_ids: list[str] | None,
     top_k: int = 5,
 ) -> list[dict]:
-    """BM25 词法召回:jieba 分词索引,paradedb.match 安全构造(特殊字符不炸解析器)。"""
+    """BM25 词法召回:jieba 分词索引,paradedb.match 安全构造(特殊字符不炸解析器)。
+
+    knowledge_base_ids 为 None 时搜全部 KB；传入列表时走分区裁剪。
+    """
+    kb_filter = ""
+    params: dict = {"q": query_text, "k": top_k}
+    if knowledge_base_ids is not None:
+        kb_filter = "AND dc.knowledge_base_id = ANY(%(kb_ids)s)"
+        params["kb_ids"] = knowledge_base_ids
+
     async with get_cursor(pool) as cur:
         await cur.execute(
-            """
+            f"""
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    paradedb.score(dc.id) AS score,
                    d.filename
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE dc.text @@@ paradedb.match('text', %(q)s)
-              AND dc.knowledge_base_id = %(kb)s
+                  {kb_filter}
             ORDER BY score DESC
             LIMIT %(k)s
             """,
-            {"q": query_text, "kb": knowledge_base_id, "k": top_k},
+            params,
         )
         return await cur.fetchall()
 

@@ -75,8 +75,6 @@ async def invoke(
     session_id: str,
     query: str,
     context: ContextSchema,
-    *,
-    kb_id: str | None = None,
     config: dict | None = None,
 ):
     """归一化事件流:仅保留 custom 通道事件(status/message/error),
@@ -87,7 +85,7 @@ async def invoke(
             "session_id": session_id,
             "raw_query": query,
             "is_out_of_scope": False,
-            "knowledge_base_id": kb_id or DEFAULT_KB_ID,
+            "knowledge_base_id": DEFAULT_KB_ID,
         },
         context=context,
         stream_mode=["custom"],

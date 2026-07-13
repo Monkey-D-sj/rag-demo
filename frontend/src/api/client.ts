@@ -8,14 +8,11 @@ import type {
 
 const BASE = "/api";
 
-/** 默认知识库 ID，与后端 rag.document.DEFAULT_KB_ID 保持一致 */
-export const DEFAULT_KB_ID = "00000000-0000-0000-0000-000000000001";
-
 // ── Documents ───────────────────────────────────────
 
 export async function uploadDocument(
   file: File,
-  knowledgeBaseId: string,
+  knowledgeBaseId: string = "00000000-0000-0000-0000-000000000001",
 ): Promise<{ document_id: string; status: string }> {
   const form = new FormData();
   form.append("file", file);

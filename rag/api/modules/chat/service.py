@@ -20,7 +20,6 @@ async def stream_chat(
     session_id: str,
     query: str,
     *,
-    knowledge_base_id: str = "00000000-0000-0000-0000-000000000001",
     llm: ChatModel,
     memory_manager: MemoryManager,
     retriever: KnowledgeRetriever,
@@ -54,7 +53,7 @@ async def stream_chat(
             # CallbackHandler 与 retriever 的 @observe span 均继承环境 OTel 上下文,
             # 嵌套进同一条 trace,而不是各自另起一条独立顶层 trace
             with session_scope(session_id):
-                async for event in invoke(session_id, query, context, kb_id=knowledge_base_id, config=config):
+                async for event in invoke(session_id, query, context, config=config):
                     await stream.send_event(event)
 
         if handler is not None:

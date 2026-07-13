@@ -15,7 +15,6 @@ chat_router = APIRouter(prefix="/chat")
 class ChatRequest(BaseModel):
     session_id: str
     query: str
-    knowledge_base_id: str = "00000000-0000-0000-0000-000000000001"  # 默认向后兼容
 
 
 @chat_router.post("/")
@@ -30,7 +29,6 @@ async def chat(
         service.stream_chat(
             body.session_id,
             body.query,
-            knowledge_base_id=body.knowledge_base_id,
             llm=llm,
             memory_manager=memory_manager,
             retriever=retriever,

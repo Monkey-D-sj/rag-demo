@@ -2,7 +2,6 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from rag.common.logging import get_logger
-from rag.document import DEFAULT_KB_ID
 from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
 
 logger = get_logger()
@@ -21,6 +20,6 @@ async def recall(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
 
     # 改写后的查询更适合检索,缺失时回退原始查询
     query = state.get("rewrite_query") or state["raw_query"]
-    kb_id = state.get("knowledge_base_id") or DEFAULT_KB_ID
-    state["recall_vec_results"] = await retriever.search(query, kb_id)
+    # kb_ids 不传 → 搜全部知识库
+    state["recall_vec_results"] = await retriever.search(query)
     return state

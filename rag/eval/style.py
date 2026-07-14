@@ -10,6 +10,11 @@ def bold(s: str) -> str:
     return f"\033[1m{s}{_RESET}"
 
 
+def dim(s: str) -> str:
+    """暗色 / 次要信息（分隔线等）"""
+    return f"\033[2m{s}{_RESET}"
+
+
 # ── 语义颜色 ──
 
 def green(s: str) -> str:

@@ -15,6 +15,7 @@ from rag.eval.style import (
     best_val,
     bold,
     delta_str,
+    dim,
     drop_arrow,
     failure,
     green,
@@ -124,7 +125,16 @@ def _print_table(result: dict) -> None:
     print("─" * _disp_width(header))
 
     # ── 数据行 ──
-    for key in sorted(all_keys):
+    sorted_keys = sorted(all_keys)
+    prev_prefix: str | None = None
+    line_w = _disp_width(header)
+    for key in sorted_keys:
+        # 不同指标族之间加分隔线（hit@ / recall@ / ndcg@ / mrr）
+        prefix = key.split("@")[0]
+        if prev_prefix is not None and prefix != prev_prefix:
+            print(dim("─" * line_w))
+        prev_prefix = prefix
+
         row = _pad(key, 10, left=False)
         best, worst = row_range.get(key, (None, None))
         for leg in legs:

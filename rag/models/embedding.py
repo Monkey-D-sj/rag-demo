@@ -27,6 +27,7 @@ class EmbeddingModel:
         )
         self._model = settings.EMBEDDING_MODEL
         self._dim = settings.EMBEDDING_DIM
+        self._batch_size = settings.EMBEDDING_BATCH_SIZE
 
     @property
     def model(self) -> str:
@@ -35,6 +36,10 @@ class EmbeddingModel:
     @property
     def dim(self) -> int:
         return self._dim
+
+    @property
+    def batch_size(self) -> int:
+        return self._batch_size
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         async for attempt in AsyncRetrying(

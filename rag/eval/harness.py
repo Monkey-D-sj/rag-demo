@@ -10,6 +10,7 @@ from rag.document.retriever import KnowledgeRetriever, _lexical_query
 from rag.eval import EVAL_KB_ID
 from rag.eval.embeddings_cache import load_cache, resolve_embeddings, save_cache
 from rag.eval.metrics import aggregate, evaluate_query
+from rag.eval.style import phase, success
 from rag.models.embedding import EmbeddingModel
 
 
@@ -76,7 +77,7 @@ async def run_eval(
     当 golden 标注了 rewrite_query 时追加 raw / raw_vec / raw_bm25 原始查询对照；
     当 reranker 注入时追加 fused_reranked 完整链路。
     """
-    print("开始评测")
+    print(phase("开始评测"))
 
     # ── 预计算所有 query embedding（缓存命中跳过 API 调用）──
     cache = load_cache()
@@ -165,7 +166,7 @@ async def run_eval(
             pct = idx * 100 // total
             print(f"  [{idx:>{len(str(total))}}/{total}] {pct:>3}% …", flush=True)
 
-    print(f"  评测完成，共 {total} 条\n")
+    print(success(f" 评测完成，共 {total} 条\n"))
 
     result = {
         "fused": {"aggregate": aggregate(fused_pq), "per_query": fused_pq},

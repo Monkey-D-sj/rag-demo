@@ -55,9 +55,12 @@ async def resolve_embeddings(
             missing.append(q)
 
     if missing:
-        # 去重后批量 embed（API 限制单批 ≤10）
+        # 去重后分批 embed（API 限制单批 ≤10）
         unique = list(dict.fromkeys(missing))
-        vectors = await embedding.embed(unique)
+        batch_size = embedding.batch_size
+        vectors: list[list[float]] = []
+        for i in range(0, len(unique), batch_size):
+            vectors += await embedding.embed(unique[i:i + batch_size])
         for q, vec in zip(unique, vectors):
             result[q] = vec
             cache[_cache_key(model, q)] = vec

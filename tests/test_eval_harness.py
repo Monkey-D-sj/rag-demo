@@ -52,6 +52,9 @@ class _FakeEmbedding:
     @property
     def dim(self): return 2
 
+    @property
+    def batch_size(self): return 10
+
     async def embed(self, texts):
         return [[0.1, 0.2] for _ in texts]
 

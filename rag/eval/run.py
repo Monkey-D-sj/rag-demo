@@ -10,6 +10,18 @@ from rag.eval.harness import build_retriever, eval_out_of_scope, load_golden, ru
 from rag.eval.metrics import aggregate_by_category, classify, gate, rewrite_gate
 from rag.models.embedding import EmbeddingModel
 
+from rag.eval.style import (
+    best_val,
+    bold,
+    delta_str,
+    drop_arrow,
+    failure,
+    green,
+    red,
+    success,
+    worst_val,
+)
+
 GOLDEN_PATH = DATASETS_DIR / "retrieval_golden.jsonl"
 BASELINE_PATH = EVAL_DIR / "baseline.json"
 HISTORY_DIR = EVAL_DIR / "history"
@@ -87,30 +99,50 @@ def _print_table(result: dict) -> None:
             if k not in all_keys:
                 all_keys.append(k)
 
-    # 表头
+    # ── 标题 ──
+    print(bold("📊 指标总览"))
+
+    # ── 计算每行最佳/最差值用于高亮 ──
+    row_range: dict[str, tuple[float, float]] = {}
+    for key in all_keys:
+        vals = [result[leg]["aggregate"].get(key) for leg in legs]
+        nums = [v for v in vals if v is not None]
+        if nums:
+            row_range[key] = (max(nums), min(nums))
+
+    # ── 表头 ──
     header = _pad("指标", 10, left=False)
     for leg in legs:
-        header += _pad(_LEG_LABEL[leg], col_w)
+        header += _pad(bold(_LEG_LABEL[leg]), col_w)
     print(header)
-    print("-" * _disp_width(header))
+    print("─" * _disp_width(header))
 
-    # 数据行
+    # ── 数据行 ──
     for key in sorted(all_keys):
         row = _pad(key, 10, left=False)
+        best, worst = row_range.get(key, (None, None))
         for leg in legs:
             v = result[leg]["aggregate"].get(key)
-            row += _pad(f"{v:.4f}", col_w) if v is not None else _pad("—", col_w)
+            if v is not None:
+                s = f"{v:.4f}"
+                if len(legs) > 1 and best is not None and v == best:
+                    s = best_val(s)
+                elif len(legs) > 1 and worst is not None and v == worst:
+                    s = worst_val(s)
+                row += _pad(s, col_w)
+            else:
+                row += _pad("—", col_w)
         print(row)
     print()
 
-    # 改写收益摘要（分路展示）
+    # ── 改写收益摘要 ──
     if "raw" in result:
+        print(bold("  🔄 改写收益"))
         pairs = [
-            ("改写收益(混合)", "fused", "raw"),
-            ("改写收益(向量)", "vec_only", "raw_vec"),
-            ("改写收益(BM25)", "bm25_only", "raw_bm25"),
+            ("混合", "fused", "raw"),
+            ("向量", "vec_only", "raw_vec"),
+            ("BM25", "bm25_only", "raw_bm25"),
         ]
-        lines = []
         for label, rw_leg, raw_leg in pairs:
             if rw_leg not in result or raw_leg not in result:
                 continue
@@ -121,12 +153,13 @@ def _print_table(result: dict) -> None:
                 if key not in rw_agg:
                     continue
                 d = rw_agg[key] - raw_agg[key]
-                deltas.append(f"{key}: {d:+.4f}")
-            lines.append(f"  {label}: {'  '.join(deltas)}")
-        print("\n".join(lines) + "\n")
+                deltas.append(f"{key}: {delta_str(d)}")
+            print(f"    {label}: {'  '.join(deltas)}")
+        print()
 
-    # 重排收益
+    # ── 重排收益 ──
     if "fused_reranked" in result and "fused" in result:
+        print(bold("  🔀 重排收益"))
         rerank_agg = result["fused_reranked"]["aggregate"]
         fused_agg = result["fused"]["aggregate"]
         deltas = []
@@ -134,8 +167,8 @@ def _print_table(result: dict) -> None:
             if key not in rerank_agg:
                 continue
             d = rerank_agg[key] - fused_agg[key]
-            deltas.append(f"{key}: {d:+.4f}")
-        print(f"  重排收益: {'  '.join(deltas)}\n")
+            deltas.append(f"{key}: {delta_str(d)}")
+        print(f"    {'  '.join(deltas)}\n")
 
 
 def _print_gate(result: dict, baseline: dict) -> bool:
@@ -152,11 +185,10 @@ def _print_gate(result: dict, baseline: dict) -> bool:
             all_passed = False
 
         for key, d in deltas.items():
-            arrow = "↓" if d["rel_drop"] > 0 else "↑"
             rows.append((
                 f"{_LEG_LABEL[leg]}.{key}",
                 f"{d['current']:.4f}",
-                f"{arrow}{abs(d['rel_drop']):.1%} (base={d['baseline']:.4f})",
+                f"{drop_arrow(d['rel_drop'])} (base={d['baseline']:.4f})",
             ))
 
     # 改写质量：分路检查改写是否降低检索质量
@@ -168,22 +200,30 @@ def _print_gate(result: dict, baseline: dict) -> bool:
             if not passed:
                 all_passed = False
             for key, d in deltas.items():
-                arrow = "↓" if d["rel_drop"] > 0 else "↑"
                 rows.append((
                     f"改写{label}.{key}",
                     f"{d['rewritten']:.4f}",
-                    f"{arrow}{abs(d['rel_drop']):.1%} (raw={d['raw']:.4f})",
+                    f"{drop_arrow(d['rel_drop'])} (raw={d['raw']:.4f})",
                 ))
 
     if not rows:
-        print("❌ 无 baseline 数据，门禁不通过（请先 --update-baseline 生成基线）\n")
+        print(red("  ❌ 无 baseline 数据，请先 --update-baseline 生成基线\n"))
         return False
 
-    header = f"{'指标':30s}{'现状':>10s}  偏差"
-    print(header)
-    print("-" * 65)
+    print(bold("🚦 门禁检查"))
+    hdr = f"{'指标':30s}{'现状':>10s}  偏差"
+    print(bold(hdr))
+    print("─" * 65)
     for metric, cur, delta in rows:
-        print(f"{metric:30s}{cur:>10s}  {delta}")
+        # 回归行标红，正常行标绿
+        icon = green("✓") if "▲" in delta else red("✗")
+        print(f"{icon} {metric:28s}{cur:>10s}  {delta}")
+    print()
+
+    if all_passed:
+        print(success(" 门禁通过 — 所有指标不低于 baseline"))
+    else:
+        print(failure(" 门禁不通过 — 存在指标退化"))
     print()
 
     return all_passed
@@ -213,14 +253,23 @@ def _print_category_table(result: dict) -> None:
         cat_w = max(max(_disp_width(_CAT_LABEL.get(c, c)) for c in by_cat), 12)
         metric_w = 10
 
-        print(f"\n=== 题型分类评测 — {_LEG_LABEL.get(leg, leg)} ===")
+        # ── 计算每列最佳/最差 ──
+        col_range: dict[str, tuple[float, float]] = {}
+        for m in metrics:
+            vals = [by_cat[c].get(m) for c in by_cat]
+            nums = [v for v in vals if v is not None]
+            if nums:
+                col_range[m] = (max(nums), min(nums))
+
+        title = f"📋 题型分类 — {_LEG_LABEL.get(leg, leg)}"
+        print(f"\n{bold(title)}")
 
         header = _pad("类型", cat_w, left=False)
         for m in metrics:
             header += _pad(m, metric_w)
         header += _pad("数量", 6)
-        print(header)
-        print("-" * _disp_width(header))
+        print(bold(header))
+        print("─" * _disp_width(header))
 
         for cat in _CAT_ORDER:
             if cat not in by_cat:
@@ -230,7 +279,16 @@ def _print_category_table(result: dict) -> None:
             row = _pad(display, cat_w, left=False)
             for m in metrics:
                 v = agg.get(m)
-                row += _pad(f"{v:.4f}", metric_w) if v is not None else _pad("—", metric_w)
+                if v is not None:
+                    s = f"{v:.4f}"
+                    best, worst = col_range.get(m, (None, None))
+                    if len(by_cat) > 1 and best is not None and v == best:
+                        s = best_val(s)
+                    elif len(by_cat) > 1 and worst is not None and v == worst:
+                        s = worst_val(s)
+                    row += _pad(s, metric_w)
+                else:
+                    row += _pad("—", metric_w)
             cat_count = sum(1 for pq in per_query if id_to_cat.get(pq.get("id", "")) == cat)
             row += _pad(str(cat_count), 6)
             print(row)
@@ -394,8 +452,7 @@ def main() -> None:
     all_passed = _print_gate(result, baseline)
 
     if not all_passed:
-        raise SystemExit("检索指标回归：核心指标跌破容差")
-    print("全部门禁通过")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

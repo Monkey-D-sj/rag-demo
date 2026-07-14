@@ -2,6 +2,7 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 按项目根目录解析 .env，无论从哪个目录启动都能正确加载
@@ -109,7 +110,8 @@ class Settings(BaseSettings):
         "EMBEDDING_KEY", "EMBEDDING_URL",
     )
 
-    def check_required(self) -> None:
+    @model_validator(mode="after")
+    def _validate_required(self):
         """校验必填配置项已设置；未设置则抛 ValueError，启动即失败。"""
         missing = [f for f in self._REQUIRED_FIELDS if not getattr(self, f)]
         if self.NEO4J_ENABLED:
@@ -121,6 +123,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"缺少必要配置: {', '.join(missing)}，请检查 .env 文件"
             )
+        return self
 
     @property
     def PG_ASYNC_DSN(self) -> str:

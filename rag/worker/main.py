@@ -33,7 +33,6 @@ class WorkerCtx(TypedDict):
 async def on_startup(ctx: dict) -> None:
     setup_logging()
     settings = get_settings()
-    settings.check_required()
     ctx["settings"] = settings
     ctx["pg"] = await create_pg_pool(settings)
     ctx["minio"] = create_minio_client(settings)

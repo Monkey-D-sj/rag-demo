@@ -327,10 +327,10 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
-    settings.check_required()
     items = load_golden(GOLDEN_PATH)
     if not items:
         raise SystemExit("golden 集为空，请先构造 retrieval_golden.jsonl")
+    print("评测集加载完成")
 
     # ── 按类别筛选 ──
     if args.category:
@@ -344,12 +344,15 @@ def main() -> None:
 
     async def _do() -> dict:
         pool, retriever = await build_retriever(settings)
+        print("检索器初始化成功")
         try:
             embedding = EmbeddingModel(settings)
+            print("embedding模型初始化成功")
             reranker = None
             if settings.RERANK_ENABLED and settings.RERANK_BASE_URL:
                 from rag.models.rerank import QwenReranker
                 reranker = QwenReranker(settings)
+                print("rerank模型初始化成功")
             return await run_eval(items, pool, embedding, retriever, reranker=reranker, ks=KS, top_k=max(KS))
         finally:
             await pool.close()

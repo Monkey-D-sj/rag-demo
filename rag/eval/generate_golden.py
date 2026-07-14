@@ -29,7 +29,6 @@ async def _load_chunks(pool) -> list[dict]:
 
 async def generate() -> int:
     settings = get_settings()
-    settings.check_required()
     pool = await create_pg_pool(settings)
     llm = NormalModel(settings)
     try:

@@ -42,7 +42,6 @@ def _close(name: str, closer):
 async def lifespan(app: FastAPI):
     setup_logging()
     settings = get_settings()
-    settings.check_required()
 
     logger.info("--------------------------------------------------------")
     logger.info("---------------------  初始化依赖项  ---------------------")

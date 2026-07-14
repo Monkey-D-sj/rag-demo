@@ -12,7 +12,6 @@ from rag.models.embedding import EmbeddingModel
 @pytest.mark.eval
 async def test_retrieval_no_regression():
     settings = get_settings()
-    settings.check_required()
     items = load_golden(GOLDEN_PATH)
     assert items, "golden 集为空"
 

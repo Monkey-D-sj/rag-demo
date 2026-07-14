@@ -36,7 +36,6 @@ def _normalize_pieces(pieces) -> list[tuple[str, dict]]:
 
 async def seed() -> int:
     settings = get_settings()
-    settings.check_required()
     text = CORPUS_PATH.read_text(encoding="utf-8")
     pieces = chunk(settings.SPLIT_STRATEGY, text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
     normalized = _normalize_pieces(pieces)

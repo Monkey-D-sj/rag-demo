@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from rag.eval import DATASETS_DIR
+from rag.eval.style import dim, green, yellow
 from rag.models.embedding import EmbeddingModel
 
 CACHE_PATH = DATASETS_DIR / "query_embeddings.json"
@@ -54,8 +55,11 @@ async def resolve_embeddings(
         else:
             missing.append(q)
     
-    print(f"命中缓存 {len(queries) - len(missing)} 条")
-    print(f"missing {len(missing)} 条")
+    hit = len(queries) - len(missing)
+    if missing:
+        print(dim(f"  📦 缓存命中 {hit} 条，待 embed ") + yellow(f"{len(missing)} 条"))
+    else:
+        print(green(f"  📦 缓存全部命中 ({hit} 条)"))
     if missing:
         # 去重后分批 embed（API 限制单批 ≤10）
         unique = list(dict.fromkeys(missing))

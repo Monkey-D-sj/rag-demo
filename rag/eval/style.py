@@ -32,6 +32,11 @@ def cyan(s: str) -> str:
     return f"\033[36m{s}{_RESET}"
 
 
+def yellow(s: str) -> str:
+    """警告 / 提示"""
+    return f"\033[33m{s}{_RESET}"
+
+
 # ── 组合样式 ──
 
 def success(s: str) -> str:

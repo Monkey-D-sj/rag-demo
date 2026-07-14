@@ -93,6 +93,9 @@ async def run_eval(
     q_embs = await resolve_embeddings(embedding, unique_queries, cache)
     save_cache(cache)
 
+    def _chunk_preview(rows: list[dict]) -> list[dict]:
+        return [{"chunk_index": r.get("chunk_index"), "text": r["text"][:120]} for r in rows]
+
     total = len(in_scope)
     fused_pq: list[dict] = []
     fused_rows_store: list[list[dict]] = []
@@ -114,6 +117,7 @@ async def run_eval(
         fused_pq.append({
             "id": item.id, "query": item.query,
             **evaluate_query([r["text"] for r in rows], item.gold_snippets, ks),
+            "chunks": _chunk_preview(rows),
         })
         fused_rows_store.append(rows)
 
@@ -124,21 +128,26 @@ async def run_eval(
             raw_pq.append({
                 "id": item.id, "query": item.query,
                 **evaluate_query([r["text"] for r in raw_rows], item.gold_snippets, ks),
+                "chunks": _chunk_preview(raw_rows),
             })
 
         # ── vec_only：改写后向量召回 ──
         vec_rows = await store.search_chunks(pool, rw_emb, None, top_k)
-        vec_pq.append(
-            {"id": item.id, **evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks)}
-        )
+        vec_pq.append({
+            "id": item.id,
+            **evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks),
+            "chunks": _chunk_preview(vec_rows),
+        })
 
         # ── raw vec：原始 query 向量召回 ──
         if has_rewrite:
             raw_emb = q_embs[item.query]
             raw_vec_rows = await store.search_chunks(pool, raw_emb, None, top_k)
-            raw_vec_pq.append(
-                {"id": item.id, **evaluate_query([r["text"] for r in raw_vec_rows], item.gold_snippets, ks)}
-            )
+            raw_vec_pq.append({
+                "id": item.id,
+                **evaluate_query([r["text"] for r in raw_vec_rows], item.gold_snippets, ks),
+                "chunks": _chunk_preview(raw_vec_rows),
+            })
 
         # ── bm25_only：改写后 BM25 ──
         lex = _lexical_query(rw)
@@ -146,9 +155,11 @@ async def run_eval(
             await store.search_chunks_bm25(pool, lex, None, top_k)
             if lex else []
         )
-        bm25_pq.append(
-            {"id": item.id, **evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks)}
-        )
+        bm25_pq.append({
+            "id": item.id,
+            **evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks),
+            "chunks": _chunk_preview(bm25_rows),
+        })
 
         # ── raw bm25：原始 query BM25 ──
         if has_rewrite:
@@ -157,9 +168,11 @@ async def run_eval(
                 await store.search_chunks_bm25(pool, raw_lex, None, top_k)
                 if raw_lex else []
             )
-            raw_bm25_pq.append(
-                {"id": item.id, **evaluate_query([r["text"] for r in raw_bm25_rows], item.gold_snippets, ks)}
-            )
+            raw_bm25_pq.append({
+                "id": item.id,
+                **evaluate_query([r["text"] for r in raw_bm25_rows], item.gold_snippets, ks),
+                "chunks": _chunk_preview(raw_bm25_rows),
+            })
 
         # ── 进度 ──
         if idx % 10 == 0 or idx == 1 or idx == total:
@@ -188,6 +201,7 @@ async def run_eval(
             reranked_pq.append({
                 "id": item.id, "query": item.query,
                 **evaluate_query([r["text"] for r in reranked], item.gold_snippets, ks),
+                "chunks": _chunk_preview(reranked),
             })
         result["fused_reranked"] = {"aggregate": aggregate(reranked_pq), "per_query": reranked_pq}
     return result

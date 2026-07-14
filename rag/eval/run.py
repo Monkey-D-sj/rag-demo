@@ -30,7 +30,7 @@ HISTORY_DIR = EVAL_DIR / "history"
 HISTORY_DIR.mkdir(exist_ok=True)
 # Top-K 评估粒度：对每条 query 分别计算 hit@k / recall@k / ndcg@k。
 # 只影响报告输出，不影响门禁——门禁固定用 recall@5 和 mrr（见 gate() 默认 keys）。
-KS = (1, 3, 5)
+KS = (3, 5)
 
 # 原查询和改写查询
 _LEG_LABEL = {

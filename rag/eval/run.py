@@ -160,8 +160,8 @@ def _print_gate(result: dict, baseline: dict) -> bool:
                 ))
 
     if not rows:
-        print("无 baseline 数据，跳过门禁（请先 --update-baseline）\n")
-        return True
+        print("❌ 无 baseline 数据，门禁不通过（请先 --update-baseline 生成基线）\n")
+        return False
 
     header = f"{'指标':30s}{'现状':>10s}  偏差"
     print(header)

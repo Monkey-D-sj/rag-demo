@@ -74,7 +74,19 @@ def test_gate_fails_on_regression_beyond_tolerance():
     assert deltas["recall@5"]["rel_drop"] > 0.03
 
 
-def test_gate_skips_missing_baseline_keys():
+def test_gate_fails_when_baseline_empty():
+    """baseline 为空或缺少全部要检查的 key 时，门禁必须 fail——不应静默放行。"""
     passed, deltas = gate({"recall@5": 0.5, "mrr": 0.5}, {})
-    assert passed is True
+    assert passed is False
     assert deltas == {}
+
+
+def test_gate_skips_only_missing_keys_still_checks_present():
+    """baseline 部分 key 缺失：只跳过缺失的，现有 key 正常比对。"""
+    passed, deltas = gate(
+        {"recall@5": 0.80, "mrr": 0.50},
+        {"recall@5": 0.78},  # mrr 缺失，只比 recall@5
+    )
+    assert passed is True  # 0.78→0.80 没有下降
+    assert "recall@5" in deltas
+    assert "mrr" not in deltas

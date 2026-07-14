@@ -88,6 +88,9 @@ def gate(
         deltas[key] = {"baseline": base, "current": cur, "rel_drop": rel_drop}
         if rel_drop > rel_tolerance:
             passed = False
+    if not deltas:
+        # 没有任何 key 能比对——baseline 实质为空，门禁无法生效
+        passed = False
     return passed, deltas
 
 
@@ -130,4 +133,7 @@ def rewrite_gate(
         deltas[key] = {"raw": raw, "rewritten": fused, "rel_drop": rel_drop}
         if rel_drop > rel_tolerance:
             passed = False
+    if not deltas:
+        # 没有任何 key 能比对——baseline 实质为空，门禁无法生效
+        passed = False
     return passed, deltas

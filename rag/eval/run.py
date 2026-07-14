@@ -31,6 +31,7 @@ HISTORY_DIR.mkdir(exist_ok=True)
 # 只影响报告输出，不影响门禁——门禁固定用 recall@5 和 mrr（见 gate() 默认 keys）。
 KS = (1, 3, 5)
 
+# 原查询和改写查询
 _LEG_LABEL = {
     "fused": "混合(改)",
     "fused_reranked": "混合重排",
@@ -347,8 +348,8 @@ def _git_sha() -> str:
 
 def _save_history(result: dict) -> None:
     """每次评测保存为一个独立文件：history/YYYYMMDD-HHMMSS-{commit}.json。"""
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    name = f"{ts}-{_git_sha()}.json"
+    ts = datetime.now().strftime("%Y:%m:%d-%H:%M:%S")
+    name = f"{ts}.json"
     legs = {k: result[k]["aggregate"] for k in result if k in _LEG_KEYS}
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

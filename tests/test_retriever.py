@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from rag.config import Settings
 from rag.document.retriever import KnowledgeRetriever, _merge_dedup
 
@@ -41,14 +43,17 @@ def _retriever(monkeypatch, vec_rows, bm25_rows=None, bm25_exc=None):
 
 # ── _merge_dedup 纯逻辑 ──
 
-def test_merge_overlap_dedup_with_vec_priority():
+def test_merge_rrf_fuses_by_reciprocal_rank():
+    """RRF 融合：两路都命中的 chunk 得分最高，单路排名靠前的优于另一路靠后的。"""
     vec = [_row("a", similarity=0.9), _row("b", similarity=0.8)]
     bm25 = [_row("c", score=5.0), _row("a", score=4.0)]
-    fused = _merge_dedup(vec, bm25, top_k=3)
-    assert [r["id"] for r in fused] == ["a", "b", "c"]  # vec 优先，a 排第一
+    fused = _merge_dedup(vec, bm25, top_k=3, rrf_k=60)
+    # RRF: a = 1/61 + 1/62 ≈ 0.0325, c = 1/61 ≈ 0.0164, b = 1/62 ≈ 0.0161
+    assert [r["id"] for r in fused] == ["a", "c", "b"]
     assert fused[0]["sources"] == ["vec", "bm25"]
     assert fused[0]["similarity"] == 0.9
     assert fused[0]["score"] == 4.0  # bm25 原始分补充
+    assert fused[0]["rrf_score"] == pytest.approx(1 / 61 + 1 / 62, rel=1e-6)
 
 
 def test_merge_disjoint_concatenates():

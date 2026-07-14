@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     # ── Retriever ──
     RETRIEVER_CANDIDATE_MULTIPLIER: int = 2
     RETRIEVER_VEC_SIMILARITY_THRESHOLD: float = 0.5
+    RETRIEVER_RRF_K: int = 60  # RRF 融合常数，越大两路权重越均匀
 
     # ── Embedding ──
     EMBEDDING_KEY: str = ""

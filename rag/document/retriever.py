@@ -17,43 +17,55 @@ def _lexical_query(query: str) -> str:
 
 
 def _merge_dedup(
-    vec_rows: list[dict], bm25_rows: list[dict], top_k: int
+    vec_rows: list[dict], bm25_rows: list[dict], top_k: int, rrf_k: int = 60
 ) -> list[dict]:
-    """合并两路召回结果：去重（vec 优先），保留原始分，截断 top_k。
+    """RRF (Reciprocal Rank Fusion) 融合两路召回结果。
 
-    最终排名由下游 reranker 负责，此处不做融合排序。
+    对每路按排名计算 RRF 分: 1/(k + rank)，两路分数加和，
+    按总分降序排列取 top_k。同一 chunk 在两路均命中时累加 RRF 分。
     """
-    seen: set[str] = set()
-    results: list[dict] = []
+    if not vec_rows and not bm25_rows:
+        return []
 
-    # vec 路优先（已过相似度阈值过滤）
-    for row in vec_rows:
+    chunk_map: dict[str, dict] = {}
+
+    # vec 路：rank 1 = 最高相似度
+    for rank, row in enumerate(vec_rows, 1):
         rid = str(row["id"])
-        if rid not in seen:
-            seen.add(rid)
+        rrf = 1.0 / (rrf_k + rank)
+        if rid in chunk_map:
+            chunk_map[rid]["sources"].append("vec")
+            chunk_map[rid]["rrf_score"] = chunk_map[rid]["rrf_score"] + rrf
+        else:
             r = dict(row)
             r["sources"] = ["vec"]
+            r["rrf_score"] = rrf
             r["score"] = None
-            results.append(r)
+            chunk_map[rid] = r
 
-    # bm25 路补充
-    for row in bm25_rows:
+    # bm25 路：rank 1 = 最高分
+    for rank, row in enumerate(bm25_rows, 1):
         rid = str(row["id"])
-        if rid not in seen:
-            seen.add(rid)
+        rrf = 1.0 / (rrf_k + rank)
+        if rid in chunk_map:
+            chunk_map[rid]["sources"].append("bm25")
+            chunk_map[rid]["rrf_score"] = chunk_map[rid]["rrf_score"] + rrf
+            chunk_map[rid]["score"] = row.get("score")
+        else:
             r = dict(row)
             r["sources"] = ["bm25"]
+            r["rrf_score"] = rrf
             r["similarity"] = None
-            results.append(r)
-        else:
-            # 两路都命中：标记 sources，补充 bm25 原始分
-            for r in results:
-                if str(r["id"]) == rid:
-                    r["sources"].append("bm25")
-                    r["score"] = row.get("score")
-                    break
+            chunk_map[rid] = r
 
-    return results[:top_k]
+    # 按 RRF 分降序，同分时保持插入顺序（vec 先插入的优先）
+    sorted_chunks = sorted(
+        chunk_map.values(),
+        key=lambda r: r["rrf_score"],
+        reverse=True,
+    )
+
+    return sorted_chunks[:top_k]
 
 
 def _rank_summary(rows: list[dict], score_key: str) -> list[dict]:
@@ -77,6 +89,7 @@ class KnowledgeRetriever:
         self._embedding = embedding
         self._candidate_multiplier = settings.RETRIEVER_CANDIDATE_MULTIPLIER
         self._vec_threshold = settings.RETRIEVER_VEC_SIMILARITY_THRESHOLD
+        self._rrf_k = settings.RETRIEVER_RRF_K
 
     @observe_if_enabled(name="knowledge_retrieve")
     async def search(
@@ -138,6 +151,6 @@ class KnowledgeRetriever:
 
         # 两路并发，各自内部兜底；单路失败降级不影响另一路，双路皆败返回空。
         vec_rows, bm25_rows = await asyncio.gather(_vec_leg(), _bm25_leg())
-        results = _merge_dedup(vec_rows, bm25_rows, top_k)
+        results = _merge_dedup(vec_rows, bm25_rows, top_k, self._rrf_k)
 
         return results

@@ -53,7 +53,9 @@ async def resolve_embeddings(
             result[q] = cached
         else:
             missing.append(q)
-
+    
+    print(f"命中缓存 {len(queries) - len(missing)} 条")
+    print(f"missing {len(missing)} 条")
     if missing:
         # 去重后分批 embed（API 限制单批 ≤10）
         unique = list(dict.fromkeys(missing))

@@ -28,6 +28,14 @@ class EmbeddingModel:
         self._model = settings.EMBEDDING_MODEL
         self._dim = settings.EMBEDDING_DIM
 
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(3),

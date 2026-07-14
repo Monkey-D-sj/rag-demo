@@ -46,15 +46,21 @@ def test_load_golden_rejects_missing_fields(tmp_path: Path):
 
 
 class _FakeEmbedding:
+    @property
+    def model(self): return "fake"
+
+    @property
+    def dim(self): return 2
+
     async def embed(self, texts):
-        return [[0.1, 0.2]]
+        return [[0.1, 0.2] for _ in texts]
 
 
 class _FakeRetriever:
     def __init__(self, mapping):
         self._mapping = mapping  # query -> list[chunk text]
 
-    async def search(self, query, knowledge_base_id, top_k=5):
+    async def search(self, query, knowledge_base_id=None, top_k=5, query_emb=None):
         return [{"id": f"c{i}", "chunk_index": i, "text": t}
                 for i, t in enumerate(self._mapping.get(query, [])[:top_k])]
 

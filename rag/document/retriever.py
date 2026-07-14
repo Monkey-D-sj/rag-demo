@@ -93,7 +93,8 @@ class KnowledgeRetriever:
 
     @observe_if_enabled(name="knowledge_retrieve")
     async def search(
-        self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5
+        self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5,
+        query_emb: list[float] | None = None,
     ) -> list[dict]:
         candidates = top_k * self._candidate_multiplier
         timings: dict[str, float] = {}
@@ -106,8 +107,12 @@ class KnowledgeRetriever:
             with span_scope("vector_recall", input=span_input) as span:
                 t0 = time.perf_counter()
                 try:
-                    emb = (await self._embedding.embed([query]))[0]
-                    timings["embed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+                    if query_emb is not None:
+                        emb = query_emb
+                        timings["embed_ms"] = 0
+                    else:
+                        emb = (await self._embedding.embed([query]))[0]
+                        timings["embed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
                     t1 = time.perf_counter()
                     rows = await store.search_chunks(
                         self._pool, emb, knowledge_base_ids, candidates

@@ -8,6 +8,7 @@ from rag.db.postgres import create_pg_pool
 from rag.document import store
 from rag.document.retriever import KnowledgeRetriever, _lexical_query
 from rag.eval import EVAL_KB_ID
+from rag.eval.embeddings_cache import load_cache, resolve_embeddings, save_cache
 from rag.eval.metrics import aggregate, evaluate_query
 from rag.models.embedding import EmbeddingModel
 
@@ -75,24 +76,40 @@ async def run_eval(
     当 golden 标注了 rewrite_query 时追加 raw / raw_vec / raw_bm25 原始查询对照；
     当 reranker 注入时追加 fused_reranked 完整链路。
     """
+    print("开始评测")
+
+    # ── 预计算所有 query embedding（缓存命中跳过 API 调用）──
+    cache = load_cache()
+    in_scope = [it for it in items if not it.out_of_scope]
+    unique_queries = list(dict.fromkeys(
+        (it.rewrite_query or it.query) for it in in_scope
+    ))
+    if any(it.rewrite_query for it in in_scope):
+        unique_queries += list(dict.fromkeys(
+            it.query for it in in_scope if it.rewrite_query
+        ))
+    unique_queries = list(dict.fromkeys(unique_queries))
+    q_embs = await resolve_embeddings(embedding, unique_queries, cache)
+    save_cache(cache)
+
+    total = len(in_scope)
     fused_pq: list[dict] = []
-    fused_rows_store: list[list[dict]] = []  # 保留原始行供 reranker 复用
+    fused_rows_store: list[list[dict]] = []
     raw_pq: list[dict] = []
     vec_pq: list[dict] = []
     raw_vec_pq: list[dict] = []
     bm25_pq: list[dict] = []
     raw_bm25_pq: list[dict] = []
 
-    in_scope = [it for it in items if not it.out_of_scope]
-    total = len(in_scope)
     print(f"\n评测中: {len(items)} 条 ({total} in-scope), 每条含 3+ 路检索…\n", flush=True)
 
     for idx, item in enumerate(in_scope, 1):
         rw = item.rewrite_query or item.query
         has_rewrite = item.rewrite_query is not None
+        rw_emb = q_embs[rw]
 
         # ── fused：改写后 query 走检索管线 ──
-        rows = await retriever.search(rw, [EVAL_KB_ID], top_k=top_k)
+        rows = await retriever.search(rw, None, top_k=top_k, query_emb=rw_emb)
         fused_pq.append({
             "id": item.id, "query": item.query,
             **evaluate_query([r["text"] for r in rows], item.gold_snippets, ks),
@@ -101,23 +118,23 @@ async def run_eval(
 
         # ── raw fused：原始 query 走完整管线 ──
         if has_rewrite:
-            raw_rows = await retriever.search(item.query, [EVAL_KB_ID], top_k=top_k)
+            raw_emb = q_embs[item.query]
+            raw_rows = await retriever.search(item.query, None, top_k=top_k, query_emb=raw_emb)
             raw_pq.append({
                 "id": item.id, "query": item.query,
                 **evaluate_query([r["text"] for r in raw_rows], item.gold_snippets, ks),
             })
 
         # ── vec_only：改写后向量召回 ──
-        emb = (await embedding.embed([rw]))[0]
-        vec_rows = await store.search_chunks(pool, emb, [EVAL_KB_ID], top_k)
+        vec_rows = await store.search_chunks(pool, rw_emb, None, top_k)
         vec_pq.append(
             {"id": item.id, **evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks)}
         )
 
         # ── raw vec：原始 query 向量召回 ──
         if has_rewrite:
-            raw_emb = (await embedding.embed([item.query]))[0]
-            raw_vec_rows = await store.search_chunks(pool, raw_emb, [EVAL_KB_ID], top_k)
+            raw_emb = q_embs[item.query]
+            raw_vec_rows = await store.search_chunks(pool, raw_emb, None, top_k)
             raw_vec_pq.append(
                 {"id": item.id, **evaluate_query([r["text"] for r in raw_vec_rows], item.gold_snippets, ks)}
             )
@@ -125,7 +142,7 @@ async def run_eval(
         # ── bm25_only：改写后 BM25 ──
         lex = _lexical_query(rw)
         bm25_rows = (
-            await store.search_chunks_bm25(pool, lex, [EVAL_KB_ID], top_k)
+            await store.search_chunks_bm25(pool, lex, None, top_k)
             if lex else []
         )
         bm25_pq.append(
@@ -136,7 +153,7 @@ async def run_eval(
         if has_rewrite:
             raw_lex = _lexical_query(item.query)
             raw_bm25_rows = (
-                await store.search_chunks_bm25(pool, raw_lex, [EVAL_KB_ID], top_k)
+                await store.search_chunks_bm25(pool, raw_lex, None, top_k)
                 if raw_lex else []
             )
             raw_bm25_pq.append(

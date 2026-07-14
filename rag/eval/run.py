@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from rag.config import get_settings
 from rag.eval import DATASETS_DIR, EVAL_DIR
 from rag.eval.harness import build_retriever, eval_out_of_scope, load_golden, run_eval
-from rag.eval.metrics import classify, gate, rewrite_gate
+from rag.eval.metrics import aggregate_by_category, classify, gate, rewrite_gate
 from rag.models.embedding import EmbeddingModel
 
 GOLDEN_PATH = DATASETS_DIR / "retrieval_golden.jsonl"
@@ -28,6 +28,22 @@ _LEG_LABEL = {
     "raw_bm25": "BM25(原)",
 }
 _LEG_ORDER = ("fused", "fused_reranked", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
+_CAT_LABEL = {
+    "basic": "基础召回",
+    "chunk_boundary": "Chunk边界",
+    "synonym": "同义词",
+    "metadata": "Metadata过滤",
+    "multi_chunk": "多Chunk聚合",
+    "multi_doc": "多文档聚合",
+    "out_of_scope": "无答案",
+    "ambiguous": "歧义问题",
+    "long_tail": "长尾问题",
+}
+_CAT_ORDER = (
+    "basic", "chunk_boundary", "synonym", "metadata",
+    "multi_chunk", "multi_doc", "ambiguous", "long_tail", "out_of_scope",
+)
+_LEG_KEYS = frozenset(_LEG_ORDER)  # result 中非 leg 键（如 "categories"）的过滤
 _CJK_RANGES = [
     (0x1100, 0x115F), (0x2E80, 0xA4CF), (0xA960, 0xA97F),
     (0xAC00, 0xD7AF), (0xF900, 0xFAFF), (0xFE30, 0xFE4F),
@@ -173,6 +189,54 @@ def _print_gate(result: dict, baseline: dict) -> bool:
     return all_passed
 
 
+def _print_category_table(result: dict) -> None:
+    """按题型分类展示每条腿的指标，方便定位薄弱环节。"""
+    id_to_cat = result.get("categories", {})
+    if not id_to_cat:
+        return
+
+    key_metrics = ["recall@5", "mrr", "ndcg@5"]
+    # 取第一个 leg 的 aggregate 来确定实际存在的指标
+    sample_leg = next((result[k] for k in _LEG_ORDER if k in result), None)
+    if sample_leg is None:
+        return
+    metrics = [m for m in key_metrics if m in sample_leg["aggregate"]]
+
+    for leg in [l for l in _LEG_ORDER if l in result]:
+        per_query = result[leg].get("per_query", [])
+        if not per_query:
+            continue
+        by_cat = aggregate_by_category(per_query, id_to_cat)
+        if not by_cat:
+            continue
+
+        cat_w = max(max(_disp_width(_CAT_LABEL.get(c, c)) for c in by_cat), 12)
+        metric_w = 10
+
+        print(f"\n=== 题型分类评测 — {_LEG_LABEL.get(leg, leg)} ===")
+
+        header = _pad("类型", cat_w, left=False)
+        for m in metrics:
+            header += _pad(m, metric_w)
+        header += _pad("数量", 6)
+        print(header)
+        print("-" * _disp_width(header))
+
+        for cat in _CAT_ORDER:
+            if cat not in by_cat:
+                continue
+            agg = by_cat[cat]
+            display = _CAT_LABEL.get(cat, cat)
+            row = _pad(display, cat_w, left=False)
+            for m in metrics:
+                v = agg.get(m)
+                row += _pad(f"{v:.4f}", metric_w) if v is not None else _pad("—", metric_w)
+            cat_count = sum(1 for pq in per_query if id_to_cat.get(pq.get("id", "")) == cat)
+            row += _pad(str(cat_count), 6)
+            print(row)
+        print()
+
+
 async def _run_classify(items, llm) -> dict:
     """范围判断评测：跑 LLM 分类 vs golden 标注。"""
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -222,15 +286,28 @@ def _save_history(result: dict) -> None:
     """每次评测保存为一个独立文件：history/YYYYMMDD-HHMMSS-{commit}.json。"""
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     name = f"{ts}-{_git_sha()}.json"
+    legs = {k: result[k]["aggregate"] for k in result if k in _LEG_KEYS}
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "commit": _git_sha(),
-        "legs": {leg: result[leg]["aggregate"] for leg in result},
+        "legs": legs,
         "per_query": {
             leg: result[leg].get("per_query", [])
-            for leg in result if "per_query" in result[leg]
+            for leg in result if leg in _LEG_KEYS and "per_query" in result[leg]
         },
+        "categories": result.get("categories", {}),
+        "per_category": {},
     }
+    # 按类别聚合每条腿
+    id_to_cat = result.get("categories", {})
+    if id_to_cat:
+        for leg in result:
+            if leg not in _LEG_KEYS:
+                continue
+            per_query = result[leg].get("per_query", [])
+            if per_query:
+                record["per_category"][leg] = aggregate_by_category(per_query, id_to_cat)
+
     filepath = HISTORY_DIR / name
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2)
@@ -245,6 +322,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="检索层评测（含查询改写与范围判断）")
     parser.add_argument("--update-baseline", action="store_true", help="用本次结果刷新全部 baseline")
     parser.add_argument("--classify", action="store_true", help="跑范围判断 LLM 分类评测")
+    parser.add_argument("--category", type=str, default=None,
+                        help="只评测指定类别（basic, synonym, chunk_boundary, …）")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -252,6 +331,16 @@ def main() -> None:
     items = load_golden(GOLDEN_PATH)
     if not items:
         raise SystemExit("golden 集为空，请先构造 retrieval_golden.jsonl")
+
+    # ── 按类别筛选 ──
+    if args.category:
+        valid = sorted({it.category for it in items})
+        items = [it for it in items if it.category == args.category]
+        if not items:
+            raise SystemExit(
+                f"类别 '{args.category}' 无匹配条目，可用: {', '.join(valid)}"
+            )
+        print(f"筛选类别 '{args.category}': {len(items)} 条 (in-scope {sum(1 for it in items if not it.out_of_scope)})\n")
 
     async def _do() -> dict:
         pool, retriever = await build_retriever(settings)
@@ -273,6 +362,9 @@ def main() -> None:
     # ── 指标表格 ──
     _print_table(result)
 
+    # ── 题型分类评测 ──
+    _print_category_table(result)
+
     # ── 范围判断评测 ──
     if args.classify:
         from rag.models.normal import NormalModel
@@ -288,7 +380,7 @@ def main() -> None:
 
     # ── 更新 baseline ──
     if args.update_baseline:
-        new_baseline = {leg: result[leg]["aggregate"] for leg in result}
+        new_baseline = {leg: result[leg]["aggregate"] for leg in result if leg in _LEG_KEYS}
         with open(BASELINE_PATH, "w", encoding="utf-8") as f:
             json.dump(new_baseline, f, ensure_ascii=False, indent=2, sort_keys=True)
         print(f"已更新 baseline -> {BASELINE_PATH}")

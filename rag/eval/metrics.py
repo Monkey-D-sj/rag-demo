@@ -66,6 +66,21 @@ def aggregate(per_query: list[dict[str, float]]) -> dict[str, float]:
     return {k: sum(q[k] for q in per_query) / n for k in numeric_keys}
 
 
+def aggregate_by_category(
+    per_query: list[dict],
+    id_to_category: dict[str, str],
+) -> dict[str, dict[str, float]]:
+    """按类别分组聚合：用 per_query 中每条记录的 "id" 查找类别，分别 aggregate。
+
+    返回 {category: {metric: avg}}。无 id 或类别未知的条目归入 "unknown"。
+    """
+    groups: dict[str, list[dict]] = {}
+    for pq in per_query:
+        cat = id_to_category.get(pq.get("id", ""), "unknown")
+        groups.setdefault(cat, []).append(pq)
+    return {cat: aggregate(items) for cat, items in groups.items()}
+
+
 def gate(
     current: dict[str, float],
     baseline: dict[str, float],

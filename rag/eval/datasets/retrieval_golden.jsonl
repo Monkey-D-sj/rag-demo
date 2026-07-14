@@ -1,14 +1,100 @@
-{"id":"q001","query":"孙悟空是从哪里出生的？","rewrite_query":"石猴孙悟空出生地","gold_snippets":["那座山正当顶上有一块仙石","内育仙胞一日迸裂产一石卵似圆球样大。因见风化作一个石猴五官俱备四肢皆全"],"out_of_scope":false}
-{"id":"q002","query":"水帘洞里有什么陈设？","rewrite_query":"花果山水帘洞内部家具陈设","gold_snippets":["房内有石窝、石灶、石碗、石盆、石床、石凳。中间一块石碣上镌着'花果山福地水帘洞洞天。'"],"out_of_scope":false}
-{"id":"q003","query":"金箍棒有多重？","rewrite_query":"如意金箍棒重量","gold_snippets":["如意金箍棒重一万三千五百斤"],"out_of_scope":false}
-{"id":"q004","query":"金箍棒原本是什么东西？","rewrite_query":"金箍棒原是定海神针 大禹治水","gold_snippets":["那是大禹治水之时定江海浅深的一个定子","唤做“如意金箍棒”重一万三千五百斤"],"out_of_scope":false}
-{"id":"q005","query":"美猴王为什么会去龙宫？","rewrite_query":"美猴王去东海龙宫寻兵器原因","gold_snippets":["奈我这口刀着实榔槺不遂我意","我们这铁板桥下水通东海龙宫。大王若肯下去寻着老龙王问他要件甚么兵器"],"out_of_scope":false}
-{"id":"q006","query":"孙悟空从龙宫拿到了哪些装备？","rewrite_query":"孙悟空龙宫获得披挂装备","gold_snippets":["藕丝步云履","锁子黄金甲","凤翅紫金冠"],"out_of_scope":false}
-{"id":"q007","query":"孙悟空如何修改了生死簿？","rewrite_query":"孙悟空勾生死簿猴属除名","gold_snippets":["悟空拿过簿子把猴属之类但有名者一概勾之。捽下簿子道：'了帐！了帐！今番不伏你管了！'"],"out_of_scope":false}
-{"id":"q008","query":"孙悟空在花果山结拜了哪七个兄弟？","rewrite_query":"花果山美猴王结拜七兄弟名单","gold_snippets":["牛魔王、蛟魔王、鹏魔王、狮驼王、猕猴王、□狨王连自家美猴王七个"],"out_of_scope":false}
-{"id":"q009","query":"花果山在哪个国家附近？","rewrite_query":"花果山地理位置 傲来国","gold_snippets":["海外有一国土名曰傲来国。国近大海海中有一座山唤为花果山"],"out_of_scope":false}
-{"id":"q010","query":"孙悟空是如何当上美猴王的？","rewrite_query":"孙悟空成为美猴王经过","gold_snippets":["那一个有本事的钻进去寻个源头出来不伤身体者我等即拜他为王","寻了这一个洞天与列位安眠稳睡","遂称美猴王"],"out_of_scope":false}
-{"id":"q011","query":"你好啊","gold_snippets":[],"out_of_scope":true}
-{"id":"q012","query":"帮我用Python写一个快速排序","gold_snippets":[],"out_of_scope":true}
-{"id":"q013","query":"今天天气怎么样","gold_snippets":[],"out_of_scope":true}
-{"id":"q014","query":"你是谁","gold_snippets":[],"out_of_scope":true}
+{"id": "q001", "query": "孙悟空是从哪里出生的？", "rewrite_query": "孙悟空出生地 仙石 花果山", "gold_snippets": ["那座山正当顶上有一块仙石", "内育仙胞一日迸裂产一石卵似圆球样大。因见风化作一个石猴五官俱备四肢皆全"], "out_of_scope": false, "category": "basic"}
+{"id": "q002", "query": "水帘洞里有什么家具陈设？", "rewrite_query": "花果山水帘洞内部石制家具陈设", "gold_snippets": ["房内有石窝、石灶、石碗、石盆、石床、石凳。中间一块石碣上镌着'花果山福地水帘洞洞天。'"], "out_of_scope": false, "category": "basic"}
+{"id": "q003", "query": "金箍棒有多重？", "rewrite_query": "如意金箍棒重量", "gold_snippets": ["如意金箍棒重一万三千五百斤"], "out_of_scope": false, "category": "basic"}
+{"id": "q004", "query": "金箍棒原本是什么东西？", "rewrite_query": "金箍棒原是大禹定海神针", "gold_snippets": ["那是大禹治水之时定江海浅深的一个定子", "唤做「如意金箍棒」重一万三千五百斤"], "out_of_scope": false, "category": "basic"}
+{"id": "q005", "query": "美猴王为什么去龙宫？", "rewrite_query": "美猴王去龙宫原因 兵器不趁手", "gold_snippets": ["奈我这口刀着实榔槺不遂我意", "我们这铁板桥下水通东海龙宫。大王若肯下去寻着老龙王问他要件甚么兵器"], "out_of_scope": false, "category": "basic"}
+{"id": "q006", "query": "孙悟空从龙宫拿到了哪些披挂？", "rewrite_query": "孙悟空龙宫获得披挂装备清单", "gold_snippets": ["藕丝步云履", "锁子黄金甲", "凤翅紫金冠"], "out_of_scope": false, "category": "basic"}
+{"id": "q007", "query": "孙悟空如何修改了生死簿？", "rewrite_query": "孙悟空勾生死簿 猴属除名", "gold_snippets": ["悟空拿过簿子把猴属之类但有名者一概勾之。捽下簿子道：'了帐！了帐！今番不伏你管了！'"], "out_of_scope": false, "category": "basic"}
+{"id": "q008", "query": "美猴王在花果山结拜了哪七个兄弟？", "rewrite_query": "花果山美猴王结拜七兄弟名单", "gold_snippets": ["牛魔王、蛟魔王、鹏魔王、狮驼王、猕猴王、□狨王连自家美猴王七个"], "out_of_scope": false, "category": "basic"}
+{"id": "q009", "query": "花果山在哪个国家附近？", "rewrite_query": "花果山地理位置 傲来国", "gold_snippets": ["海外有一国土名曰傲来国。国近大海海中有一座山唤为花果山"], "out_of_scope": false, "category": "basic"}
+{"id": "q010", "query": "孙悟空是如何当上美猴王的？", "rewrite_query": "孙悟空成为美猴王经过", "gold_snippets": ["那一个有本事的钻进去寻个源头出来不伤身体者我等即拜他为王", "寻了这一个洞天与列位安眠稳睡", "遂称美猴王"], "out_of_scope": false, "category": "basic"}
+{"id": "q011", "query": "菩提祖师在什么地方修行？", "rewrite_query": "菩提祖师道场 灵台方寸山斜月三星洞", "gold_snippets": ["此山叫做灵台方寸山。山中有座斜月三星洞。那洞中有一个神仙称名须菩提祖师"], "out_of_scope": false, "category": "basic"}
+{"id": "q012", "query": "孙悟空的名字是谁起的？", "rewrite_query": "孙悟空名字由来 菩提祖师赐名", "gold_snippets": ["教你姓'孙'罢", "与你起个法名叫做'孙悟空'好么"], "out_of_scope": false, "category": "basic"}
+{"id": "q013", "query": "菩提祖师教了孙悟空哪些本领？", "rewrite_query": "七十二变 筋斗云 长生之道", "gold_snippets": ["有一般天罡数该三十六般变化有一般地煞数该七十二般变化", "我今只就你这个势传你个'筋斗云'罢", "一筋斗就有十万八千里路哩"], "out_of_scope": false, "category": "basic"}
+{"id": "q014", "query": "菩提祖师为什么赶走孙悟空？", "rewrite_query": "菩提祖师驱逐孙悟空原因 卖弄变化", "gold_snippets": ["我问你弄甚么精神变甚么松树？这个工夫可好在人前卖弄？", "你快回去全你性命若在此间断然不可"], "out_of_scope": false, "category": "basic"}
+{"id": "q015", "query": "阎罗殿里有哪十位冥王？", "rewrite_query": "阴间十代冥王名号", "gold_snippets": ["我等是秦广王、初江王、宋帝王、忤官王、阎罗王、平等王、泰山王、都市王、卞城王、转轮王"], "out_of_scope": false, "category": "basic"}
+{"id": "q016", "query": "孙悟空在生死簿上写的寿命是多少？", "rewrite_query": "孙悟空生死簿注寿三百四十二岁", "gold_snippets": ["魂字一千三百五十号上方注着孙悟空名字乃天产石猴该寿三百四十二岁善终"], "out_of_scope": false, "category": "basic"}
+{"id": "q017", "query": "太白金星第一次招安给了孙悟空什么官职？", "rewrite_query": "弼马温 御马监 孙悟空第一次招安官职", "gold_snippets": ["天宫里各宫各殿各方各处都不少官只是御马监缺个正堂管事", "就除他做个'弼马温'罢"], "out_of_scope": false, "category": "basic"}
+{"id": "q018", "query": "孙悟空为什么反下天宫？", "rewrite_query": "孙悟空嫌弼马温官小未入流", "gold_snippets": ["怎么叫做'未入流'", "末等。这样官儿最低最小只可与他看马", "猴王闻此不觉心头火起咬牙大怒"], "out_of_scope": false, "category": "basic"}
+{"id": "q019", "query": "孙悟空偷吃了哪几种东西搅乱了蟠桃会？", "rewrite_query": "偷桃偷酒偷丹 搅乱蟠桃会", "gold_snippets": ["先偷桃后偷酒搅乱了蟠桃大会又窃了老君仙丹"], "out_of_scope": false, "category": "basic"}
+{"id": "q020", "query": "如来佛祖用什么方法降伏了孙悟空？", "rewrite_query": "如来佛祖打赌 孙悟空翻不出手掌 五行山", "gold_snippets": ["被佛祖翻掌一扑把这猴王推出西天门外将五指化作金、木、水、火、土五座联山唤名「五行山」轻轻的把他压住"], "out_of_scope": false, "category": "basic"}
+{"id": "c001", "query": "孙悟空诞生后，眼睛里射出什么光惊动了天庭？", "rewrite_query": "孙悟空目运金光射冲斗府", "gold_snippets": ["目运两道金光射冲斗府"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c002", "query": "石猴跳进瀑布泉后看到的第一件东西是什么？", "rewrite_query": "石猴进瀑布泉 忽睁睛抬头观看 铁板桥", "gold_snippets": ["你看他瞑目蹲身将身一纵径跳入瀑布泉中忽睁睛抬头观看那里边却无水无波明明朗朗的一架桥梁"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c003", "query": "菩提祖师问孙悟空想学什么道时，列举了哪几个门？", "rewrite_query": "祖师道字门 术门 流门 静门 动门", "gold_snippets": ["祖师道：'道'字门中有三百六十傍门傍门皆有正果", "我教你个'术'字门中之道如何", "教你'流'字门中之道如何", "教你'静'字门中之道如何", "教你'动'字门中之道如何"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c004", "query": "龙王介绍金箍棒时是怎么说的？", "rewrite_query": "龙王介绍大禹治水定子天河镇底神珍铁", "gold_snippets": ["那是大禹治水之时定江海浅深的一个定子。是一块神铁能中何用", "扛不动！抬不动！须上仙亲去看看"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c005", "query": "孙悟空怎么对付混世魔王的？", "rewrite_query": "孙悟空拔毫毛变小猴围殴混世魔王", "gold_snippets": ["即使身外身法拔一把毫毛丢在口中嚼碎望空中喷去叫一声'变！'即变做三二百个小猴周围攒簇"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c006", "query": "阎王看到孙悟空打进森罗殿时是什么反应？", "rewrite_query": "阴间十代冥王看见孙悟空毛脸雷公 惧怕", "gold_snippets": ["慌得那十代冥王急整衣来着；见他相貌凶恶即排下班次应声高叫道：'上仙留名！上仙留名！'"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c007", "query": "蟠桃园的蟠桃树分为哪三种，分别多少年一熟？", "rewrite_query": "蟠桃园三千六百株 三千年六千年九千年", "gold_snippets": ["前面一千二百株花微果小三千年一熟人吃了成仙了道体健身轻。中间一千二百株层花甘实六千年一熟人吃了霞举飞升长生不老。后面一千二百株紫纹缃核九千年一熟人吃了与天地齐寿日月同庚"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c008", "query": "孙悟空在八卦炉中躲在了什么位置，炼出了什么？", "rewrite_query": "八卦炉巽宫位 火眼金睛", "gold_snippets": ["他即将身钻在'巽宫'位下。巽乃风也有风则无火。只是风搅得烟来把一双眼熏红了弄做个老害眼病故唤作'火眼金睛'"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c009", "query": "二郎神和孙悟空赌斗变化时，两人各变了哪些东西？", "rewrite_query": "二郎神孙悟空变化赌斗 麻雀雀鹰鱼儿水蛇庙宇", "gold_snippets": ["摇身一变变作个麻雀儿飞在树稍头钉住", "二郎见了急抖翎毛摇身一变变作一只大海鹤钻上云霄来衔", "大圣又将身按下入涧中变作一个鱼儿淬入水内", "水蛇跳一跳又变做一只花鸨", "又变变一座土地庙儿"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "c010", "query": "孙悟空逃出八卦炉后一路打到了哪里，被谁拦住？", "rewrite_query": "孙悟空蹬倒八卦炉 打到通明殿 王灵官", "gold_snippets": ["他就忍不住将身一纵跳出丹炉忽喇的一声蹬倒八卦炉往外就走", "只打到通明殿里灵霄殿外。幸有佑圣真君的佐使王灵官执殿"], "out_of_scope": false, "category": "chunk_boundary"}
+{"id": "s001", "query": "定海神针是什么时候被谁放在海底的？", "rewrite_query": "定海神铁 大禹治水 天河镇底", "gold_snippets": ["那是大禹治水之时定江海浅深的一个定子"], "out_of_scope": false, "category": "synonym"}
+{"id": "s002", "query": "石猴怎么变成美猴王的，过程是怎样的？", "rewrite_query": "石猴成为美猴王 探水帘洞 群猴拜王", "gold_snippets": ["那一个有本事的钻进去寻个源头出来不伤身体者我等即拜他为王", "自此石猴高登王位将'石'字儿隐了遂称美猴王"], "out_of_scope": false, "category": "synonym"}
+{"id": "s003", "query": "如意金箍棒有哪些别名或称呼？", "rewrite_query": "金箍棒别名 天河镇底神珍铁 定海神珍 灵阳棒", "gold_snippets": ["唤做'如意金箍棒'重一万三千五百斤", "天河镇底神珍", "那是大禹治水之时定江海浅深的一个定子"], "out_of_scope": false, "category": "synonym"}
+{"id": "s004", "query": "孙猴子在阎王那里做了什么？", "rewrite_query": "孙悟空大闹森罗殿勾销生死簿", "gold_snippets": ["悟空拿过簿子把猴属之类但有名者一概勾之"], "out_of_scope": false, "category": "synonym"}
+{"id": "s005", "query": "猴王的仙丹是怎么吃到的？", "rewrite_query": "孙悟空偷吃太上老君九转金丹", "gold_snippets": ["他就把那葫芦都倾出来就都吃了如吃炒豆相似"], "out_of_scope": false, "category": "synonym"}
+{"id": "s006", "query": "悟空犯了天条后，天庭派了多少兵将去抓他？", "rewrite_query": "十万天兵天罗地网 四大天王 二十八宿围剿花果山", "gold_snippets": ["即差四大天王协同李天王并哪吒太子点二十八宿、九曜星官、十二元辰、五方揭谛、四值功曹、东西星斗、南北二神、五岳四渎、普天星相共十万天兵布一十八架天罗地网下界去花果山围困"], "out_of_scope": false, "category": "synonym"}
+{"id": "s007", "query": "大圣偷吃了蟠桃会上的什么东西？", "rewrite_query": "孙悟空偷吃玉液琼浆 百味珍馐 仙肴仙酒", "gold_snippets": ["把那仙品、仙酒都是我偷吃了", "玉液琼浆", "百味珍馐佳肴异品"], "out_of_scope": false, "category": "synonym"}
+{"id": "s008", "query": "二郎真君住在什么地方，手下有哪些兄弟？", "rewrite_query": "二郎神灌江口 梅山六兄弟 康张姚李郭申直健", "gold_snippets": ["显圣二郎真君现居灌洲灌江口享受下方香火", "乃康、张、姚、李四太尉郭申、直健二将军"], "out_of_scope": false, "category": "synonym"}
+{"id": "s009", "query": "如来佛怎么把妖猴降伏的？", "rewrite_query": "如来佛祖降伏孙悟空 五行山 六字真言", "gold_snippets": ["被佛祖翻掌一扑把这猴王推出西天门外将五指化作金、木、水、火、土五座联山唤名'五行山'轻轻的把他压住"], "out_of_scope": false, "category": "synonym"}
+{"id": "s010", "query": "老君的炼丹炉烧了悟空多久，结果怎么样？", "rewrite_query": "八卦炉七七四十九日 炼出火眼金睛", "gold_snippets": ["真个光阴迅不觉七七四十九日老君的火候俱全", "他即将身钻在'巽宫'位下。巽乃风也有风则无火。只是风搅得烟来把一双眼熏红了弄做个老害眼病故唤作'火眼金睛'"], "out_of_scope": false, "category": "synonym"}
+{"id": "s011", "query": "傲来国在哪个大洲，有什么特征？", "rewrite_query": "傲来国 东胜神洲 海外国家", "gold_snippets": ["海外有一国土名曰傲来国。国近大海海中有一座山唤为花果山"], "out_of_scope": false, "category": "synonym"}
+{"id": "s012", "query": "孙大圣被绑在降妖柱上，天庭用了什么方法都杀不死他？", "rewrite_query": "斩妖台刀砍斧剁雷打火烧 孙悟空金刚不坏之身", "gold_snippets": ["刀砍斧剁枪刺剑刳莫想伤及其身。南斗星奋令火部众神放火煨烧亦不能烧着。又着雷部众神以雷屑钉打越不能伤损一毫"], "out_of_scope": false, "category": "synonym"}
+{"id": "s013", "query": "悟空被叫去管蟠桃园，他想了什么办法偷吃桃子？", "rewrite_query": "孙悟空支开随从 上树偷桃", "gold_snippets": ["汝等且出门外伺候让我在这亭上少憩片时", "只见那猴王脱了冠着服爬上大树拣那熟透的大桃摘了许多就在树枝上自在受用"], "out_of_scope": false, "category": "synonym"}
+{"id": "s014", "query": "菩提祖师讲道时悟空听得高兴，做了什么样的表现？", "rewrite_query": "孙悟空听讲抓耳挠腮眉花眼笑 手舞足蹈", "gold_snippets": ["孙悟空在旁闻听喜得他抓耳挠腮眉花眼笑。忍不住手之舞之足之蹈之"], "out_of_scope": false, "category": "synonym"}
+{"id": "s015", "query": "悟空从龙宫回到花果山后，给四只老猴封了什么官职？", "rewrite_query": "赤尻马猴马流二元帅 通背猿猴崩芭二将军", "gold_snippets": ["将两个赤尻马猴唤做马、流二元帅；两个通背猿猴唤做崩、芭二将军"], "out_of_scope": false, "category": "synonym"}
+{"id": "m001", "query": "西游记第一回里提到的花果山在什么位置？", "rewrite_query": "第一回 花果山 东胜神洲 傲来国", "gold_snippets": ["海外有一国土名曰傲来国。国近大海海中有一座山唤为花果山"], "out_of_scope": false, "category": "metadata"}
+{"id": "m002", "query": "第五回里孙悟空偷了什么东西、搅乱了什么？", "rewrite_query": "第五回 偷桃偷酒偷丹 蟠桃会", "gold_snippets": ["先偷桃后偷酒搅乱了蟠桃大会又窃了老君仙丹"], "out_of_scope": false, "category": "metadata"}
+{"id": "m003", "query": "第三回中孙悟空去龙宫的起因是怎样的？", "rewrite_query": "第三回 孙悟空嫌大刀榔槺 四老猴建议去龙宫", "gold_snippets": ["奈我这口刀着实榔槺不遂我意奈何", "我们这铁板桥下水通东海龙宫。大王若肯下去寻着老龙王问他要件甚么兵器却不趁心"], "out_of_scope": false, "category": "metadata"}
+{"id": "m004", "query": "在西游记第七回，孙悟空从八卦炉里出来后做了什么？", "rewrite_query": "第七回 蹬倒八卦炉 一路打向灵霄殿", "gold_snippets": ["他就忍不住将身一纵跳出丹炉忽喇的一声蹬倒八卦炉往外就走", "只打到通明殿里灵霄殿外"], "out_of_scope": false, "category": "metadata"}
+{"id": "m005", "query": "孙悟空大闹天宫发生在第几回，结果如何？", "rewrite_query": "大闹天宫 被如来压在五行山下 第七回", "gold_snippets": ["被佛祖翻掌一扑把这猴王推出西天门外将五指化作金、木、水、火、土五座联山唤名'五行山'轻轻的把他压住"], "out_of_scope": false, "category": "metadata"}
+{"id": "m006", "query": "西游记第二回中悟空被赶走前，学了哪几年？他偷学了什么？", "rewrite_query": "第二回 菩提祖师夜半三更传道 悟空七年打杂三年修炼", "gold_snippets": ["在洞中不觉倏六七年", "却早过了三年祖师复登宝座与众说法", "此时说破根源悟空心灵福至切切记了口诀对祖师拜谢深恩"], "out_of_scope": false, "category": "metadata"}
+{"id": "m007", "query": "西游记第一回提到孙悟空是如何寻到菩提祖师的？", "rewrite_query": "第一回 孙悟空飘洋过海 西牛贺洲 灵台方寸山", "gold_snippets": ["飘洋过海寻仙道立志潜心建大功", "此山叫做灵台方寸山。山中有座斜月三星洞。那洞中有一个神仙称名须菩提祖师"], "out_of_scope": false, "category": "metadata"}
+{"id": "m008", "query": "西游记第四回哪咤变成什么样子去打孙悟空？", "rewrite_query": "第四回 哪吒三头六臂 六般兵器", "gold_snippets": ["即变做三头六臂恶狠狠手持着六般兵器乃是斩妖剑、砍妖刀、缚妖索、降妖杵、绣球儿、火轮儿"], "out_of_scope": false, "category": "metadata"}
+{"id": "m009", "query": "西游记第三回中孙悟空的新武器有什么特殊功能？", "rewrite_query": "第三回 金箍棒如意 变大变小藏耳中", "gold_snippets": ["'如意金箍棒'重一万三千五百斤", "即时就小做一个绣花针儿相似可以塞在耳朵里面藏下", "叫：'大！大！大！'即又大做斗来粗细二丈长短"], "out_of_scope": false, "category": "metadata"}
+{"id": "m010", "query": "西游记第一回开头关于天地生成的理论说了什么？", "rewrite_query": "第一回 天地之数 十二万九千六百岁一元 十二会 人生于寅", "gold_snippets": ["盖闻天地之数有十二万九千六百岁为一元。将一元分为十二会乃子、丑、寅、卯、辰、巳、午、未、申、酉、戌、亥之十二支也", "正当寅会生人生兽生禽正谓天地人三才定位。故曰人生于寅"], "out_of_scope": false, "category": "metadata"}
+{"id": "m011", "query": "第五回中王母娘娘的蟠桃会让谁去摘桃？后来发现了什么？", "rewrite_query": "第五回 七衣仙女摘桃 大桃都被猴王偷吃", "gold_snippets": ["即着那红衣仙女、素衣仙女、青衣仙女、皂衣仙女、紫衣仙女、黄衣仙女、绿衣仙女各顶花篮去蟠桃园摘桃建会", "到后树上摘取只见那树上花果稀疏止有几个毛蒂青皮的。原来熟的都是猴王吃了"], "out_of_scope": false, "category": "metadata"}
+{"id": "m012", "query": "第六回观音菩萨推荐了谁去捉拿孙悟空？这个人有什么背景？", "rewrite_query": "第六回 观音推荐二郎神 玉帝外甥 听调不听宣", "gold_snippets": ["乃陛下令甥显圣二郎真君现居灌洲灌江口享受下方香火。他昔日曾力诛六怪又有梅山兄弟与帐前一千二百草头神神通广大。奈他只是听调不听宣"], "out_of_scope": false, "category": "metadata"}
+{"id": "m013", "query": "第四回孙悟空的花果山有多少猴子？他在天宫待了多久（天上时间）？", "rewrite_query": "第四回 花果山四万七千余口 天上半月有余", "gold_snippets": ["悟空会集群猴计有四万七千馀口", "我才半月有馀那里有十数年", "天上一日就是下界一年哩"], "out_of_scope": false, "category": "metadata"}
+{"id": "m014", "query": "西游记第三回孙悟空从傲来国抢兵器用了什么手段？", "rewrite_query": "第三回 孙悟空傲来国 狂风 分身法搬兵器", "gold_snippets": ["他就捻起诀来念动咒语向巽地上吸一口气呼的吹将去便是一阵风飞沙走石好惊人也", "拔一把毫毛入口嚼烂喷将出去念动咒语叫声：'变！'变做千百个小猴都乱搬乱抢"], "out_of_scope": false, "category": "metadata"}
+{"id": "m015", "query": "第七回如来佛降伏悟空后，玉帝举办了什么大会庆祝？", "rewrite_query": "第七回 安天大会 王母献蟠桃 寿星献灵芝", "gold_snippets": ["请如来将此会立一名如何", "可作个'安天大会'", "王母娘娘引一班仙子、仙娥、美姬、美女飘飘荡荡舞向佛前施礼", "寿星又到"], "out_of_scope": false, "category": "metadata"}
+{"id": "a001", "query": "孙悟空学艺的过程包括哪些步骤？从拜师到被赶走，他先后经历了什么？", "rewrite_query": "孙悟空学艺全过程 打杂七年 三更传道 学七十二变 学筋斗云 被逐", "gold_snippets": ["在洞中不觉倏六七年", "次早与众师兄学言语礼貌、讲经论道习字焚香每日如此", "此时说破根源悟空心灵福至切切记了口诀对祖师拜谢深恩", "将七十二般变化都学成了", "我今只就你这个势传你个'筋斗云'罢", "你快回去全你性命若在此间断然不可"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a002", "query": "从发现水帘洞到七十二洞妖王归顺，孙悟空在花果山的势力是如何一步步壮大的？", "rewrite_query": "孙悟空势力壮大 美猴王 七十二洞妖王 四健将 猴兵四万七千口", "gold_snippets": ["自此石猴高登王位将'石'字儿隐了遂称美猴王", "悟空会集群猴计有四万七千馀口", "各样妖王共有七十二洞都来参拜猴王为尊"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a003", "query": "孙悟空两次招安分别获得什么官职？这两次招安有什么区别？", "rewrite_query": "孙悟空两次招安对比 弼马温 齐天大圣", "gold_snippets": ["就除他做个'弼马温'罢", "就教他做个齐天大圣。只是加他个空衔有官无禄便了", "名是齐天大圣只不与他事管不与他俸禄"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a004", "query": "孙悟空与二郎神的打斗过程中，哪些外援起到了关键作用？", "rewrite_query": "老君金钢琢 细犬咬 梅山七圣围捕 照妖镜", "gold_snippets": ["捋起衣袖左膊上取下一个圈子说道：'这件兵器乃锟钢抟炼的被我将还丹点成养就一身灵气善能变化水火不侵又能套诸物；一名金钢琢'", "被二郎爷爷的细犬赶上照腿肚子上一口又扯了一跌", "被七圣一拥按住即将绳索捆绑使勾刀穿了琵琶骨再不能变化"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a005", "query": "孙悟空被压五行山后，如来安排了哪些措施确保他跑不了？", "rewrite_query": "五行山措施 六字帖 土地神监押 铁丸铜汁", "gold_snippets": ["袖中只抽出一张帖子上有六个金字：'唵、嘛、呢、叭、〔口迷〕、吽'", "将五行山召一尊土地神祗会同五方揭谛居住此山监押", "但他饥时与他铁丸子吃；渴时与他溶化的铜汁饮"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a006", "query": "孙悟空的名字和称号经历了哪些变化？", "rewrite_query": "孙悟空称号变化 石猴 美猴王 孙悟空 弼马温 齐天大圣", "gold_snippets": ["因见风化作一个石猴五官俱备四肢皆全", "遂称美猴王", "与你起个法名叫做'孙悟空'", "就除他做个'弼马温'罢", "就教他做个齐天大圣"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a007", "query": "金箍棒从被介绍到最终被孙悟空掌握，全过程是怎样的？", "rewrite_query": "金箍棒获得过程 龙宫寻宝 大禹定子 如意变化", "gold_snippets": ["那是大禹治水之时定江海浅深的一个定子", "扛不动！抬不动！须上仙亲去看看", "再短细些方可用", "唤做'如意金箍棒'重一万三千五百斤", "即时就小做一个绣花针儿相似可以塞在耳朵里面藏下"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a008", "query": "孙悟空为什么觉得自己该做玉皇大帝？他提出了什么理由？", "rewrite_query": "孙悟空想当玉帝 强者为尊 皇帝轮流做", "gold_snippets": ["强者为尊该让我英雄只此敢争先", "皇帝轮流做明年到我家。只教他搬出去将天宫让与我变罢了"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a009", "query": "孙悟空从石头里迸出到被压在五行山下，一共经历了哪些重大事件？", "rewrite_query": "孙悟空大事记 出世 学艺 闹龙宫 闹地府 弼马温 齐天大圣 闹天宫 压五行山", "gold_snippets": ["内育仙胞一日迸裂产一石卵似圆球样大。因见风化作一个石猴五官俱备四肢皆全", "遂称美猴王", "与你起个法名叫做'孙悟空'", "唤做'如意金箍棒'重一万三千五百斤", "悟空拿过簿子把猴属之类但有名者一概勾之", "就除他做个'弼马温'罢", "就教他做个齐天大圣", "先偷桃后偷酒搅乱了蟠桃大会又窃了老君仙丹", "被佛祖翻掌一扑把这猴王推出西天门外将五指化作金、木、水、火、土五座联山唤名'五行山'轻轻的把他压住"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "a010", "query": "如来佛向孙悟空提出的赌赛具体内容是什么？孙悟空为什么会输？", "rewrite_query": "如来孙悟空打赌 一筋斗打出右手掌 天尽头五根柱子是手指", "gold_snippets": ["你若有本事一筋斗打出我这右手掌中算你赢再不用动刀兵苦争战就请玉帝到西方居住把天宫让你；若不能打出手掌你还下界为妖再修几劫却来争吵", "大圣行时忽见有五根肉红柱子撑着一股青气", "原来佛祖右手中指写着'齐天大圣到此一游。'"], "out_of_scope": false, "category": "multi_chunk"}
+{"id": "x001", "query": "孙悟空取经路上遇到的第一个妖怪是谁？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x002", "query": "猪八戒的九齿钉耙有多重？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x003", "query": "唐僧在什么地方收沙和尚为徒？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x004", "query": "帮我用Python写一个冒泡排序", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x005", "query": "今天北京天气怎么样？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x006", "query": "三国演义里关羽用的是什么兵器？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x007", "query": "林黛玉进贾府时多少岁？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x008", "query": "量子力学中的薛定谔方程怎么推导？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x009", "query": "2024年诺贝尔文学奖获得者是谁？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x010", "query": "面粉怎么做馒头？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x011", "query": "JavaScript和Python哪个更适合入门？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x012", "query": "什么是区块链技术？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x013", "query": "你好啊", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x014", "query": "水泊梁山一百零八将有哪些？", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "x015", "query": "介绍一下唐宋八大家", "rewrite_query": "", "gold_snippets": [], "out_of_scope": true, "category": "out_of_scope"}
+{"id": "d001", "query": "孙悟空第一次被招安后升了什么官？", "rewrite_query": "孙悟空第一次招安弼马温", "gold_snippets": ["就除他做个'弼马温'罢"], "out_of_scope": false, "category": "ambiguous"}
+{"id": "d002", "query": "金箍棒到底算是谁的兵器？", "rewrite_query": "金箍棒原是大禹定子 孙悟空抢来的 龙王赠送", "gold_snippets": ["那是大禹治水之时定江海浅深的一个定子", "悟空道：'多谢贤邻厚意'"], "out_of_scope": false, "category": "ambiguous"}
+{"id": "d003", "query": "猴王在蟠桃园吃了哪几种桃子？", "rewrite_query": "孙悟空偷吃蟠桃 大桃熟透的", "gold_snippets": ["拣那熟透的大桃摘了许多就在树枝上自在受用"], "out_of_scope": false, "category": "ambiguous"}
+{"id": "d004", "query": "老君用什么法宝打了悟空？", "rewrite_query": "太上老君金刚琢", "gold_snippets": ["一名'金钢琢'又名'金钢套'"], "out_of_scope": false, "category": "ambiguous"}
+{"id": "d005", "query": "孙悟空在什么山被压了多久？", "rewrite_query": "孙悟空五行山下压五百年", "gold_snippets": ["将五指化作金、木、水、火、土五座联山唤名'五行山'轻轻的把他压住"], "out_of_scope": false, "category": "ambiguous"}
+{"id": "l001", "query": "孙悟空被关在八卦炉中，炉中用的是火还是烟？", "rewrite_query": "八卦炉 巽位 有风无火 火眼金睛", "gold_snippets": ["他即将身钻在'巽宫'位下。巽乃风也有风则无火。只是风搅得烟来把一双眼熏红了弄做个老害眼病故唤作'火眼金睛'"], "out_of_scope": false, "category": "long_tail"}
+{"id": "l002", "query": "悟空在生死簿上的编号是多少？", "rewrite_query": "孙悟空生死簿魂字一千三百五十号", "gold_snippets": ["魂字一千三百五十号上方注着孙悟空名字乃天产石猴该寿三百四十二岁善终"], "out_of_scope": false, "category": "long_tail"}
+{"id": "l003", "query": "金箍棒两头两个金箍中间是什么材质的？", "rewrite_query": "金箍棒两个金箍中间乌铁", "gold_snippets": ["两头是两个金箍中间乃一段乌铁；紧挨箍有镌成的一行字唤做'如意金箍棒'重一万三千五百斤"], "out_of_scope": false, "category": "long_tail"}
+{"id": "l004", "query": "悟空打混世魔王前，魔王穿的是什么甲胄？", "rewrite_query": "混世魔王披挂 乌金盔 皂罗袍 黑铁甲", "gold_snippets": ["头戴乌金盔映日光明；身挂皂罗袍迎风飘荡。下穿着黑铁甲紧勒皮条；足踏着花褶靴雄如上将"], "out_of_scope": false, "category": "long_tail"}
+{"id": "l005", "query": "七衣仙女分别是哪七种颜色的衣服？", "rewrite_query": "七衣仙女 红衣 素衣 青衣 皂衣 紫衣 黄衣 绿衣", "gold_snippets": ["即着那红衣仙女、素衣仙女、青衣仙女、皂衣仙女、紫衣仙女、黄衣仙女、绿衣仙女各顶花篮去蟠桃园摘桃建会"], "out_of_scope": false, "category": "long_tail"}
+{"id": "g001", "query": "石猴在花果山第一次感到了什么忧虑？这个忧虑后来如何解决的？", "rewrite_query": "美猴王忧虑死亡 访仙学长生不老术 最终勾销生死簿", "gold_snippets": ["将来年老血衰暗中有阎王老子管着一旦身亡可不枉生世界之中不得久住天人之内", "寻一个不老长生常躲过阎君之难", "悟空拿过簿子把猴属之类但有名者一概勾之。捽下簿子道：'了帐！了帐！今番不伏你管了！'"], "out_of_scope": false, "category": "multi_doc"}
+{"id": "g002", "query": "从修炼成仙到被压五行山，孙悟空一共跟天庭打了哪几场仗？", "rewrite_query": "孙悟空与天庭历次交战 巨灵神 哪吒 十万天兵 二郎神 如来", "gold_snippets": ["巨灵神抵敌他不住被猴王劈头一棒慌忙将斧架隔呵嚓的一声把个斧柄打做两截急撤身败阵逃生", "被他着了一下负痛逃走；收了法把六件兵器依旧归身败阵而回", "大圣一条棒抵住了四大天神与李托塔、哪吒太子俱在半空中", "这大圣与惠岸战经五六十合惠岸臂膊酸麻不能迎敌虚幌一幌败阵而走", "被七圣一拥按住即将绳索捆绑使勾刀穿了琵琶骨再不能变化", "被佛祖翻掌一扑把这猴王推出西天门外将五指化作金、木、水、火、土五座联山唤名'五行山'轻轻的把他压住"], "out_of_scope": false, "category": "multi_doc"}
+{"id": "g003", "query": "孙悟空前后两次接受招安时，态度有什么区别？", "rewrite_query": "孙悟空两次招安 第一次欢欢喜喜 第二次安然接受", "gold_snippets": ["当时猴王欢欢喜喜与木德星官径去到任", "悟空道：'来得好！来得好！想是前番来的那太白金星。那次请我上界虽是官爵不堪却也天上走了一次认得那天门内外之路。今番又来定有好意。'", "他才遂心满意喜地欢天在于天宫快乐无挂无碍"], "out_of_scope": false, "category": "multi_doc"}
+{"id": "g004", "query": "太上老君在整件事中出现了几次，分别做了什么？", "rewrite_query": "太上老君多次出现 金刚琢 八卦炉炼丹", "gold_snippets": ["捋起衣袖左膊上取下一个圈子说道：'这件兵器乃锟钢抟炼的被我将还丹点成养就一身灵气善能变化水火不侵又能套诸物；一名金钢琢'", "不若与老道领去放在'八卦炉'中以文武火煅炼。炼出我的丹来他身自为灰烬矣", "那老君到兜率宫将大圣解去绳索放了穿琵琶骨之器推入八卦炉中命看炉的道人架火的童子将火煽起煅炼"], "out_of_scope": false, "category": "multi_doc"}
+{"id": "g005", "query": "观音菩萨在大闹天宫事件中一共做了哪些事？", "rewrite_query": "观音菩萨 赴蟠桃会发现被搅乱 派惠岸打探 推荐二郎神 建议老君用金刚琢", "gold_snippets": ["话表南海普陀落伽山大慈大悲救苦救难灵感观世音菩萨自王母娘娘请赴蟠桃大会", "你可快下天宫到花果山打探军情如何", "乃陛下令甥显圣二郎真君现居灌洲灌江口享受下方香火", "菩萨道：'我将那净瓶杨柳抛下去打那猴头'"], "out_of_scope": false, "category": "multi_doc"}

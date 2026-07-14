@@ -19,6 +19,7 @@ class GoldenItem:
     gold_snippets: list[str]
     rewrite_query: str | None = None
     out_of_scope: bool = False
+    category: str = ""
 
 
 def load_golden(path) -> list[GoldenItem]:
@@ -46,6 +47,7 @@ def load_golden(path) -> list[GoldenItem]:
                     gold_snippets=list(obj.get("gold_snippets", [])),
                     rewrite_query=obj.get("rewrite_query"),
                     out_of_scope=out_of_scope,
+                    category=obj.get("category", ""),
                 )
             )
     return items
@@ -82,8 +84,10 @@ async def run_eval(
     raw_bm25_pq: list[dict] = []
 
     in_scope = [it for it in items if not it.out_of_scope]
+    total = len(in_scope)
+    print(f"\n评测中: {len(items)} 条 ({total} in-scope), 每条含 3+ 路检索…\n", flush=True)
 
-    for item in in_scope:
+    for idx, item in enumerate(in_scope, 1):
         rw = item.rewrite_query or item.query
         has_rewrite = item.rewrite_query is not None
 
@@ -107,7 +111,7 @@ async def run_eval(
         emb = (await embedding.embed([rw]))[0]
         vec_rows = await store.search_chunks(pool, emb, [EVAL_KB_ID], top_k)
         vec_pq.append(
-            evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks)
+            {"id": item.id, **evaluate_query([r["text"] for r in vec_rows], item.gold_snippets, ks)}
         )
 
         # ── raw vec：原始 query 向量召回 ──
@@ -115,7 +119,7 @@ async def run_eval(
             raw_emb = (await embedding.embed([item.query]))[0]
             raw_vec_rows = await store.search_chunks(pool, raw_emb, [EVAL_KB_ID], top_k)
             raw_vec_pq.append(
-                evaluate_query([r["text"] for r in raw_vec_rows], item.gold_snippets, ks)
+                {"id": item.id, **evaluate_query([r["text"] for r in raw_vec_rows], item.gold_snippets, ks)}
             )
 
         # ── bm25_only：改写后 BM25 ──
@@ -125,7 +129,7 @@ async def run_eval(
             if lex else []
         )
         bm25_pq.append(
-            evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks)
+            {"id": item.id, **evaluate_query([r["text"] for r in bm25_rows], item.gold_snippets, ks)}
         )
 
         # ── raw bm25：原始 query BM25 ──
@@ -136,18 +140,26 @@ async def run_eval(
                 if raw_lex else []
             )
             raw_bm25_pq.append(
-                evaluate_query([r["text"] for r in raw_bm25_rows], item.gold_snippets, ks)
+                {"id": item.id, **evaluate_query([r["text"] for r in raw_bm25_rows], item.gold_snippets, ks)}
             )
+
+        # ── 进度 ──
+        if idx % 10 == 0 or idx == 1 or idx == total:
+            pct = idx * 100 // total
+            print(f"  [{idx:>{len(str(total))}}/{total}] {pct:>3}% …", flush=True)
+
+    print(f"  评测完成，共 {total} 条\n")
 
     result = {
         "fused": {"aggregate": aggregate(fused_pq), "per_query": fused_pq},
-        "vec_only": {"aggregate": aggregate(vec_pq)},
-        "bm25_only": {"aggregate": aggregate(bm25_pq)},
+        "vec_only": {"aggregate": aggregate(vec_pq), "per_query": vec_pq},
+        "bm25_only": {"aggregate": aggregate(bm25_pq), "per_query": bm25_pq},
+        "categories": {it.id: it.category for it in in_scope},
     }
     if raw_pq:
-        result["raw"] = {"aggregate": aggregate(raw_pq)}
-        result["raw_vec"] = {"aggregate": aggregate(raw_vec_pq)}
-        result["raw_bm25"] = {"aggregate": aggregate(raw_bm25_pq)}
+        result["raw"] = {"aggregate": aggregate(raw_pq), "per_query": raw_pq}
+        result["raw_vec"] = {"aggregate": aggregate(raw_vec_pq), "per_query": raw_vec_pq}
+        result["raw_bm25"] = {"aggregate": aggregate(raw_bm25_pq), "per_query": raw_bm25_pq}
 
     # ── fused_reranked：fused 结果经过 reranker 重排序 ──
     if reranker is not None:
@@ -159,7 +171,7 @@ async def run_eval(
                 "id": item.id, "query": item.query,
                 **evaluate_query([r["text"] for r in reranked], item.gold_snippets, ks),
             })
-        result["fused_reranked"] = {"aggregate": aggregate(reranked_pq)}
+        result["fused_reranked"] = {"aggregate": aggregate(reranked_pq), "per_query": reranked_pq}
     return result
 
 

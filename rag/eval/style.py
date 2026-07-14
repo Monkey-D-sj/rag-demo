@@ -1,10 +1,4 @@
-"""终端输出样式工具。
-
-注意：_disp_width / _pad 对 CJK 字符串使用特殊的显示宽度计算，
-中文环境下的表格对齐依赖它们，不要用普通字符串对齐替代。
-"""
-
-import re
+"""终端输出样式工具。"""
 
 # ── 基础样式 ──
 
@@ -14,11 +8,6 @@ _RESET = "\033[0m"
 def bold(s: str) -> str:
     """粗体"""
     return f"\033[1m{s}{_RESET}"
-
-
-def dim(s: str) -> str:
-    """暗色 / 次要信息"""
-    return f"\033[2m{s}{_RESET}"
 
 
 # ── 语义颜色 ──
@@ -31,11 +20,6 @@ def green(s: str) -> str:
 def red(s: str) -> str:
     """负向指标：跌、失败、最差"""
     return f"\033[31m{s}{_RESET}"
-
-
-def yellow(s: str) -> str:
-    """警告"""
-    return f"\033[33m{s}{_RESET}"
 
 
 def cyan(s: str) -> str:
@@ -86,13 +70,3 @@ def best_val(val: str) -> str:
 def worst_val(val: str) -> str:
     """行内最差值（红色）"""
     return red(val)
-
-
-# ── 颜色剥离（写文件或管道时用）──
-
-_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
-
-
-def strip(s: str) -> str:
-    """移除所有 ANSI 转义序列。"""
-    return _ANSI_RE.sub("", s)

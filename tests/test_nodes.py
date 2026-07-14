@@ -390,17 +390,37 @@ async def test_dynamic_truncate_no_gap_returns_default_topk():
 
 
 async def test_dynamic_truncate_gap_truncates():
-    """第 2-3 名之间 gap 大（1.0/9.0=0.11 < 0.7），应在第 2 条后截断。"""
+    """第 2-3 名之间 gap 大（1.0/8.5=0.118 < 0.7），且 post-gap 内部也有 gap
+    （0.3/1.0=0.3 < 0.7），非高原 → 应在第 2 条后截断。"""
     chunks = [
         {"rerank_score": 9.0, "text": "A"},
         {"rerank_score": 8.5, "text": "B"},
         {"rerank_score": 1.0, "text": "C"},
-        {"rerank_score": 0.9, "text": "D"},
+        {"rerank_score": 0.3, "text": "D"},
     ]
     result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
     assert len(result) == 2
     assert result[0]["text"] == "A"
     assert result[1]["text"] == "B"
+
+
+async def test_dynamic_truncate_plateau_skips_gap():
+    """gap 之后的分数形成高原（内部比值均 >= threshold），跳过此 gap 继续扫描。
+    模拟场景：前 2 条高分 → 一条低分 → 但后续多条分数紧密（第二梯队），不应截断。"""
+    chunks = [
+        {"rerank_score": 9.0, "text": "A"},
+        {"rerank_score": 8.5, "text": "B"},
+        {"rerank_score": 1.0, "text": "C"},
+        {"rerank_score": 0.98, "text": "D"},
+        {"rerank_score": 0.96, "text": "E"},
+        {"rerank_score": 0.95, "text": "F"},
+    ]
+    # 1.0/8.5=0.118 < 0.7 → gap 候选
+    # post=[1.0, 0.98, 0.96, 0.95] 内部: 0.98, 0.98, 0.99 均 >= 0.7 → plateau → 跳过
+    # 后续无 gap → 取 default_top_k=5
+    result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
+    assert len(result) == 5
+    assert [r["text"] for r in result] == ["A", "B", "C", "D", "E"]
 
 
 async def test_dynamic_truncate_gap_after_first_returns_one():

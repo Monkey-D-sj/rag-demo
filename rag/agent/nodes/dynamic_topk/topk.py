@@ -13,12 +13,15 @@ def _dynamic_truncate(
     default_top_k: int,
     ratio_threshold: float,
 ) -> list[dict]:
-    """相邻分差法动态截断 rerank 结果。
+    """相邻分差法动态截断 rerank 结果（含 plateau 保护）。
 
     从第 1 名开始，比较 score[k+1] / score[k]：
       - 比值 >= threshold → gap 小，继续
-      - 比值 <  threshold → gap 大，在 k+1 处截断（保留前 k+1 条）
-      - 没有任何 gap 超过阈值 → 取 min(default_top_k, len(chunks))
+      - 比值 <  threshold → 候选截断点，但需确认不是“台阶到高原”：
+          若 post-gap 的分数彼此紧密（内部相邻比值均 >= threshold），
+          说明它们是质量一致的第二梯队，跳过此 gap 继续扫描；
+          若 post-gap 内也有 gap（持续衰减），才是真正的质量悬崖，截断。
+      - 没有任何 gap 触发 → 取 min(default_top_k, len(chunks))
 
     score[k] 为 0 时视为无限大 gap，在 k 处截断。
     """
@@ -48,7 +51,21 @@ def _dynamic_truncate(
         if scores[i] == 0.0:
             # score[i] 为 0，视为无限大 gap，在 i 处截断
             return chunks[:i] if i > 0 else []
+
         if scores[i + 1] / scores[i] < threshold:
+            # 候选 gap：检查 post-gap 分数是否形成高原（内部紧密一致）
+            post = scores[i + 1 :]
+            if len(post) >= 2:
+                plateau = True
+                for j in range(len(post) - 1):
+                    if post[j] == 0.0:
+                        continue
+                    if post[j + 1] / post[j] < threshold:
+                        plateau = False
+                        break
+                if plateau:
+                    # 台阶到第二梯队，非质量悬崖，继续扫描
+                    continue
             return chunks[: i + 1]
 
     # 无 gap 触发，取默认 top_k

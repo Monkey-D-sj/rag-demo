@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 
@@ -63,8 +64,12 @@ _CJK_RANGES = [
 ]
 
 
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
 def _disp_width(s: str) -> int:
-    """计算字符串的终端显示宽度（CJK 字符占 2 列）。"""
+    """计算字符串的终端显示宽度（CJK 字符占 2 列，ANSI 转义不计）。"""
+    s = _ANSI_RE.sub("", s)
     w = 0
     for ch in s:
         cp = ord(ch)

@@ -11,8 +11,6 @@ import argparse
 import asyncio
 import json
 from datetime import datetime, timezone
-from pathlib import Path
-
 from rag.common.logging import get_logger
 from rag.config import get_settings
 from rag.eval import DATASETS_DIR, EVAL_DIR
@@ -145,7 +143,7 @@ async def _run_generate() -> int:
         await pool.close()
 
 
-async def _run_eval(gate_mode: bool = False) -> dict:
+async def _run_eval() -> dict:
     """加载静态评测集，跑 faithfulness 评分。"""
     from langchain_openai import ChatOpenAI
     from ragas.llms import LangchainLLMWrapper
@@ -158,6 +156,8 @@ async def _run_eval(gate_mode: bool = False) -> dict:
 
     settings = get_settings()
     items = load_answer_golden(ANSWER_GOLDEN_PATH)
+    if not items:
+        raise SystemExit(f"评测集为空: {ANSWER_GOLDEN_PATH}")
     print(f"评测集加载完成: {len(items)} 条\n")
 
     # 构造 RAGAS 所需的 LLM（独立 ChatOpenAI 实例，不经过 NormalModel 重试）
@@ -204,7 +204,7 @@ def main() -> None:
         return
 
     # ── 评测模式 ──
-    result = asyncio.run(_run_eval(gate_mode=args.gate))
+    result = asyncio.run(_run_eval())
 
     # ── 持久化 ──
     _save_history(result)

@@ -3,6 +3,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -22,7 +23,7 @@ class AnswerGoldenItem:
     contexts: list[str]
 
 
-def load_answer_golden(path) -> list[AnswerGoldenItem]:
+def load_answer_golden(path: str | Path) -> list[AnswerGoldenItem]:
     """读取 answer_golden.jsonl，返回评测条目列表。
 
     校验必填字段：id, query, answer, contexts。
@@ -55,7 +56,7 @@ def load_answer_golden(path) -> list[AnswerGoldenItem]:
 
 async def run_faithfulness_eval(
     items: list[AnswerGoldenItem],
-    evaluator_llm,  # LangchainLLMWrapper — 由 CLI 层构造传入
+    evaluator_llm: Any,  # LangchainLLMWrapper — 由 CLI 层构造传入
 ) -> dict:
     """对静态评测集逐条打分，返回 aggregate + per_query 结果。
 
@@ -113,8 +114,8 @@ async def run_faithfulness_eval(
 
 async def generate_answer_dataset(
     golden_items: list[GoldenItem],
-    retriever,       # KnowledgeRetriever
-    llm,             # NormalModel (for ainvoke)
+    retriever: Any,       # KnowledgeRetriever
+    llm: Any,             # NormalModel (for ainvoke)
     output_path: Path,
     top_k: int = 5,
 ) -> int:

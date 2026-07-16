@@ -159,3 +159,7 @@ class KnowledgeRetriever:
         results = _merge_dedup(vec_rows, bm25_rows, top_k, self._rrf_k)
 
         return results
+
+    async def fetch_parent_contents(self, document_ids: list[str]) -> dict[str, str]:
+        """按 doc_id 批量补查父文档全文（parent-child retrieval 展开用）。"""
+        return await store.get_documents_content(self._pool, document_ids)

@@ -9,6 +9,7 @@ from rag.agent.nodes.recall.recall import recall
 from rag.agent.nodes.recall_memory.memory import recall_memory
 from rag.agent.nodes.rerank.rerank import rerank
 from rag.agent.nodes.dynamic_topk.topk import dynamic_topk
+from rag.agent.nodes.neighbor_expand.expand import neighbor_expand
 from rag.agent.nodes.parent_expand.expand import parent_expand
 from rag.agent.type import ContextSchema, MyState
 
@@ -36,6 +37,8 @@ builder.add_node("recall_memory", recall_memory)
 builder.add_node("handle_query", handle_query)
 # 知识库召回
 builder.add_node("recall", recall)
+# Sentence Window：召回后拉取相邻 chunk 扩展上下文
+builder.add_node("neighbor_expand", neighbor_expand)
 # 语义重排序
 builder.add_node("rerank", rerank)
 # 动态 top-k 截断
@@ -53,8 +56,8 @@ builder.add_node("no_results", no_results)
 
 #                                       ┌─ out-of-scope -> direct_answer ──────────────────────────────────────────┐
 # START -> recall_memory -> handle_query ┤                                                                        END
-#                                       └─ in-scope -> recall -> rerank -> dynamic_topk -> parent_expand ┬─ generate -> add_memory ─┘
-#                                                                                                        └─ no_results ─────────────┘
+#                                       └─ in-scope -> recall -> neighbor_expand -> rerank -> dynamic_topk -> parent_expand ┬─ generate -> add_memory ─┘
+#                                                                                                                          └─ no_results ─────────────┘
 builder.add_edge(START, "recall_memory")
 builder.add_edge("recall_memory", "handle_query")
 builder.add_conditional_edges(
@@ -62,7 +65,8 @@ builder.add_conditional_edges(
     _route_after_query,
     {"recall": "recall", "direct_answer": "direct_answer"},
 )
-builder.add_edge("recall", "rerank")
+builder.add_edge("recall", "neighbor_expand")
+builder.add_edge("neighbor_expand", "rerank")
 builder.add_edge("rerank", "dynamic_topk")
 builder.add_edge("dynamic_topk", "parent_expand")
 builder.add_conditional_edges(

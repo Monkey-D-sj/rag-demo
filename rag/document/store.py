@@ -65,8 +65,8 @@ async def search_chunks(
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    1 - (dc.embedding <=> %(emb)s) AS similarity,
                    d.filename,
-                   d.content AS document_content,
-                   d.knowledge_base_id
+                   d.knowledge_base_id,
+                   dc.metadata
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE 1=1 {kb_filter}
@@ -100,8 +100,8 @@ async def search_chunks_bm25(
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    paradedb.score(dc.id) AS score,
                    d.filename,
-                   d.content AS document_content,
-                   d.knowledge_base_id
+                   d.knowledge_base_id,
+                   dc.metadata
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE dc.text @@@ paradedb.match('text', %(q)s)
@@ -112,6 +112,27 @@ async def search_chunks_bm25(
             params,
         )
         return await cur.fetchall()
+
+
+async def get_documents_content(
+    pool: AsyncConnectionPool, document_ids: list[str],
+) -> dict[str, str]:
+    """批量查询文档 content，返回 {document_id: content, ...}。
+
+    不存在的文档或 content 为空的文档不在结果中。
+    """
+    if not document_ids:
+        return {}
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT id, content FROM documents
+            WHERE id = ANY(%(ids)s) AND content IS NOT NULL
+            """,
+            {"ids": document_ids},
+        )
+        rows = await cur.fetchall()
+    return {str(row["id"]): row["content"] for row in rows if row["content"]}
 
 
 async def get_document(pool: AsyncConnectionPool, document_id: str) -> dict | None:
@@ -310,6 +331,29 @@ async def set_document_content(
         )
 
 
+async def get_documents_content(
+    pool: AsyncConnectionPool, document_ids: list[str]
+) -> dict[str, str]:
+    """按 doc_id 批量取父文档全文，供 parent-child retrieval 展开时补查。
+
+    检索 SQL 不携带 d.content（避免每次召回都拖全量文档文本），
+    仅对确定要展开的文档按需取回。content 为空的文档不出现在结果中。
+    """
+    if not document_ids:
+        return {}
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT id, content
+            FROM documents
+            WHERE id = ANY(%(ids)s::uuid[]) AND content IS NOT NULL
+            """,
+            {"ids": document_ids},
+        )
+        rows = await cur.fetchall()
+    return {str(row["id"]): row["content"] for row in rows}
+
+
 async def set_status(
     pool: AsyncConnectionPool, document_id: str, status: str, *, error: str | None = None
 ) -> None:
@@ -386,6 +430,33 @@ async def get_chunks_for_graph(
             ORDER BY chunk_index
             """,
             {"id": document_id},
+        )
+        return await cur.fetchall()
+
+
+async def get_neighbor_chunks(
+    pool: AsyncConnectionPool,
+    document_id: str,
+    center_index: int,
+    window_size: int,
+) -> list[dict]:
+    """Sentence Window: 拉取中心 chunk 相邻的 ±window_size 个 chunk。
+
+    返回 chunk_index, text, metadata；不包含中心 chunk 自身。
+    """
+    lo = max(0, center_index - window_size)
+    hi = center_index + window_size
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT chunk_index, text, metadata
+            FROM document_chunks
+            WHERE document_id = %(doc)s
+              AND chunk_index BETWEEN %(lo)s AND %(hi)s
+              AND chunk_index != %(center)s
+            ORDER BY chunk_index
+            """,
+            {"doc": document_id, "lo": lo, "hi": hi, "center": center_index},
         )
         return await cur.fetchall()
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -20,6 +20,7 @@ class ChatRequest(BaseModel):
 @chat_router.post("/")
 async def chat(
     body: ChatRequest,
+    request: Request,
     memory_manager: MemoryManager = Depends(get_memory_manager),
     llm: ChatModel = Depends(get_llm),
     retriever: KnowledgeRetriever = Depends(get_retriever),
@@ -33,6 +34,7 @@ async def chat(
             memory_manager=memory_manager,
             retriever=retriever,
             reranker=reranker,
+            pool=request.app.state.pg,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

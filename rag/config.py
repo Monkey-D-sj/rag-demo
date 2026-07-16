@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     RERANK_BASE_URL: str = ""
     RERANK_MODEL: str = "qwen3-rerank"
 
+    # ── Sentence Window（recall 之后、rerank 之前）──
+    SENTENCE_WINDOW_ENABLED: bool = True
+    SENTENCE_WINDOW_SIZE: int = 2          # 中心 chunk 左右各取 N 个邻居
+    SENTENCE_WINDOW_MAX_MULTIPLIER: int = 3  # 结果最多膨胀到原始数量的 N 倍
+
     # ── Parent-Child Retrieval（rerank + dynamic_topk 之后）──
     PARENT_CHILD_ENABLED: bool = True
 

@@ -49,12 +49,15 @@ def _parse_and_chunk(
     返回 (full_text, chunks) — full_text 用于 parent-child retrieval 的 document_content 存储。
     """
     full_text = parse(data, content_type)
-    chunks = chunk(strategy, full_text, chunk_size, chunk_overlap)
+    chunks: list[tuple[str, dict[str, str]]] = chunk(strategy, full_text, chunk_size, chunk_overlap)
     if doc_title:
         doc_title = doc_title.rsplit(".", 1)[0]  # strip extension
-        chunks = [f"《{doc_title}》{c}" for c in chunks]
+        chunks = [
+            (f"《{doc_title}》{text}", {**meta, "document_title": doc_title})
+            for text, meta in chunks
+        ]
         full_text = f"《{doc_title}》{full_text}"
-    return full_text, [(c, {}) for c in chunks]
+    return full_text, chunks
 
 
 async def _extract_and_summarize_tables(

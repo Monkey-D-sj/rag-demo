@@ -24,6 +24,7 @@ async def stream_chat(
     memory_manager: MemoryManager,
     retriever: KnowledgeRetriever,
     reranker: QwenReranker | None = None,
+    pool: object | None = None,
 ) -> AsyncIterator[str]:
     """把工作流事件通过 ChatStream 编码为 SSE 行下发。
 
@@ -33,7 +34,8 @@ async def stream_chat(
     token = bind_session(session_id)
     try:
         context = ContextSchema(
-            llm=llm, memory_manager=memory_manager, retriever=retriever, reranker=reranker
+            llm=llm, memory_manager=memory_manager, retriever=retriever, reranker=reranker,
+            pool=pool,
         )
         stream = ChatStream()
 

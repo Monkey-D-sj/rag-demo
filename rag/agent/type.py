@@ -13,6 +13,10 @@ class RetrieverProtocol(Protocol):
 		self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5
 	) -> list[dict]: ...
 
+	async def fetch_parent_contents(
+		self, document_ids: list[str],
+	) -> dict[str, str]: ...
+
 
 @runtime_checkable
 class MemoryManagerProtocol(Protocol):
@@ -104,5 +108,6 @@ class ContextSchema:
 	memory_manager: MemoryManagerProtocol
 	retriever: RetrieverProtocol | None = None
 	reranker: RerankerProtocol | None = None
+	pool: object | None = None  # AsyncConnectionPool，供节点直接查 DB
 
 	

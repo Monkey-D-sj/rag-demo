@@ -14,9 +14,9 @@ def _should_expand(chunk: dict) -> bool:
 
 
 async def parent_expand(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
-    """Parent-Child Retrieval：对政策法规 KB 的 chunk 按 document_id 去重，替换为完整父文档。
+    """Parent-Child Retrieval：对法规 KB chunk 按 doc_id 补查全文替换 text。
 
-    关闭时透传；非法规 KB 或缺少 document_content 时保持原样。
+    关闭时透传；补查失败或无 retriever 时降级为仅去重（保留原始 text）。
     """
     settings = get_settings()
 
@@ -27,7 +27,23 @@ async def parent_expand(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
     if not isinstance(chunks, list) or not chunks:
         return state
 
-    # 按 document_id 分组，每组保留 rerank_score 最高的一条
+    # 收集需补查的法规文档 ID
+    expand_ids: set[str] = set()
+    for c in chunks:
+        if _should_expand(c) and c.get("document_id"):
+            expand_ids.add(str(c["document_id"]))
+
+    # 补查全文
+    contents: dict[str, str] = {}
+    if expand_ids:
+        retriever = getattr(runtime.context, "retriever", None)
+        if retriever is not None:
+            try:
+                contents = await retriever.fetch_parent_contents(list(expand_ids))
+            except Exception:
+                logger.warning("补查父文档全文失败，降级去重", exc_info=True)
+
+    # 按 document_id 分组去重，法规 KB 有全文时替换 text
     groups: dict[str, dict] = {}
     orphans: list[dict] = []
     for c in chunks:
@@ -36,48 +52,32 @@ async def parent_expand(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
             orphans.append(c)
             continue
 
-        # 非法规 KB → 透传，但按文档去重
-        if not _should_expand(c):
+        if _should_expand(c) and doc_id in contents:
+            # 法规 KB + 补查到全文：替换 text
             if doc_id not in groups:
-                groups[doc_id] = c
-            else:
-                existing_score = groups[doc_id].get("rerank_score", 0)
-                this_score = c.get("rerank_score", 0)
-                if this_score > existing_score:
-                    groups[doc_id] = c
-            continue
-
-        content = c.get("document_content")
-        if not content:
-            if doc_id not in groups:
-                groups[doc_id] = c
-            else:
-                existing_score = groups[doc_id].get("rerank_score", 0)
-                this_score = c.get("rerank_score", 0)
-                if this_score > existing_score:
-                    groups[doc_id] = c
-            continue
-
-        # 法规 KB + 有父文档内容：替换 text 为全文
-        if doc_id not in groups:
-            groups[doc_id] = dict(c)
-            groups[doc_id]["text"] = content
-            groups[doc_id].pop("document_content", None)
-        else:
-            existing_score = groups[doc_id].get("rerank_score", 0)
-            this_score = c.get("rerank_score", 0)
-            if this_score > existing_score:
                 groups[doc_id] = dict(c)
-                groups[doc_id]["text"] = content
-                groups[doc_id].pop("document_content", None)
+                groups[doc_id]["text"] = contents[doc_id]
+            else:
+                existing_score = groups[doc_id].get("rerank_score", 0)
+                this_score = c.get("rerank_score", 0)
+                if this_score > existing_score:
+                    groups[doc_id] = dict(c)
+                    groups[doc_id]["text"] = contents[doc_id]
+        else:
+            # 非法规 KB 或补查无结果：仅去重
+            if doc_id not in groups:
+                groups[doc_id] = c
+            else:
+                existing_score = groups[doc_id].get("rerank_score", 0)
+                this_score = c.get("rerank_score", 0)
+                if this_score > existing_score:
+                    groups[doc_id] = c
 
-    # 重建结果列表，保持 rerank_score 降序
     expanded: list[dict] = list(groups.values())
     expanded.sort(key=lambda c: c.get("rerank_score", 0), reverse=True)
     orphans.sort(key=lambda c: c.get("rerank_score", 0), reverse=True)
     expanded.extend(orphans)
 
     state["recall_vec_results"] = expanded
-
     logger.debug("parent_expand: %d chunks -> %d docs", len(chunks), len(expanded))
     return state

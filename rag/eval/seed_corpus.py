@@ -23,17 +23,11 @@ async def _reset_eval_kb(pool) -> None:
         )
 
 
-def _normalize_pieces(pieces: list[str]) -> list[tuple[str, dict]]:
-    """chunk() 输出归一化为 (text, metadata)，与 pipeline 保持一致。"""
-    return [(p, {}) for p in pieces]
-
-
 async def seed() -> int:
     settings = get_settings()
     text = CORPUS_PATH.read_text(encoding="utf-8")
     pieces = chunk(SplitStrategy.paragraph_semantic, text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
-    normalized = _normalize_pieces(pieces)
-    if not normalized:
+    if not pieces:
         raise SystemExit("corpus.txt 切块为空")
 
     pool = await create_pg_pool(settings)
@@ -53,8 +47,8 @@ async def seed() -> int:
         embedded: list[tuple[int, str, list[float], dict]] = []
         batch = settings.EMBEDDING_BATCH_SIZE
         index = 0
-        for i in range(0, len(normalized), batch):
-            window = normalized[i : i + batch]
+        for i in range(0, len(pieces), batch):
+            window = pieces[i : i + batch]
             vectors = await embedding.embed([t for t, _ in window])
             for (piece, meta), vec in zip(window, vectors):
                 embedded.append((index, piece, vec, meta))

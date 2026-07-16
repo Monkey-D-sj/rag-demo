@@ -9,6 +9,7 @@ import rag.agent.nodes.recall.recall as kb_recall_mod
 import rag.agent.nodes.recall_memory.memory as recall_mod
 import rag.agent.nodes.rerank.rerank as rerank_mod
 import rag.agent.nodes.dynamic_topk.topk as topk_mod
+import rag.agent.nodes.neighbor_expand.expand as neighbor_expand_mod
 import rag.agent.nodes.parent_expand.expand as parent_expand_mod
 from rag.agent.type import ContextSchema, StreamEventType, stream_event
 from rag.document import REGULATION_KB_ID
@@ -635,19 +636,39 @@ async def test_dynamic_topk_exception_passthrough(monkeypatch):
 # ── parent_expand node integration tests ──
 
 
+class _FakeParentRetriever:
+    """支持 fetch_parent_contents 的假检索器：记录调用并返回预设全文。"""
+
+    def __init__(self, contents=None, exc=None):
+        self.contents = contents or {}
+        self.exc = exc
+        self.calls = []
+
+    async def fetch_parent_contents(self, document_ids):
+        self.calls.append(sorted(document_ids))
+        if self.exc is not None:
+            raise self.exc
+        return self.contents
+
+
+def _parent_runtime(retriever=None):
+    return SimpleNamespace(context=SimpleNamespace(retriever=retriever))
+
+
 async def test_parent_expand_enabled_expands(monkeypatch):
-    """法规 KB chunk 应去重并替换 text 为 document_content。"""
+    """法规 KB chunk 应去重，并通过 retriever 按 doc_id 补查全文替换 text。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
-    runtime = SimpleNamespace(context=SimpleNamespace())
+    retriever = _FakeParentRetriever({"doc-1": "全文内容A", "doc-2": "全文内容C"})
+    runtime = _parent_runtime(retriever)
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
-         "document_content": "全文内容A", "knowledge_base_id": REGULATION_KB_ID},
+         "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B",
-         "document_content": "全文内容A", "knowledge_base_id": REGULATION_KB_ID},
+         "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-2", "rerank_score": 7.0, "text": "chunk C",
-         "document_content": "全文内容C", "knowledge_base_id": REGULATION_KB_ID},
+         "knowledge_base_id": REGULATION_KB_ID},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
 
@@ -655,38 +676,42 @@ async def test_parent_expand_enabled_expands(monkeypatch):
 
     results = out["recall_vec_results"]
     assert len(results) == 2  # doc-1 去重，doc-2 独立
-    # doc-1 取最高 scorerank 的 chunk，text 替换为全文
+    # 补查只发起一次，doc_id 已去重
+    assert retriever.calls == [["doc-1", "doc-2"]]
+    # doc-1 取最高 rerank_score 的 chunk，text 替换为全文
     doc1 = next(r for r in results if r["document_id"] == "doc-1")
     assert doc1["text"] == "全文内容A"
     assert doc1["rerank_score"] == 9.0
-    # doc-2 不变
     doc2 = next(r for r in results if r["document_id"] == "doc-2")
     assert doc2["text"] == "全文内容C"
 
 
 async def test_parent_expand_disabled_passthrough(monkeypatch):
-    """禁用时节点应透传原始结果不做任何修改。"""
+    """禁用时节点应透传原始结果不做任何修改，也不发起补查。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": False}
     )())
-    runtime = SimpleNamespace(context=SimpleNamespace())
+    retriever = _FakeParentRetriever({"doc-1": "全文A"})
+    runtime = _parent_runtime(retriever)
     chunks = [
-        {"document_id": "doc-1", "text": "chunk A", "document_content": "全文A"},
-        {"document_id": "doc-1", "text": "chunk B", "document_content": "全文A"},
+        {"document_id": "doc-1", "text": "chunk A"},
+        {"document_id": "doc-1", "text": "chunk B"},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
 
     out = await parent_expand_mod.parent_expand(state, runtime)
 
     assert out["recall_vec_results"] is chunks  # 引用不变
+    assert retriever.calls == []
 
 
-async def test_parent_expand_no_content_passthrough(monkeypatch):
-    """法规 KB 但无 document_content 的 chunk 按文档去重但保留原始 text。"""
+async def test_parent_expand_no_content_keeps_text(monkeypatch):
+    """法规 KB 但补查无全文（如旧文档 content 为空）时按文档去重但保留原始 text。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
-    runtime = SimpleNamespace(context=SimpleNamespace())
+    retriever = _FakeParentRetriever({})
+    runtime = _parent_runtime(retriever)
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
          "knowledge_base_id": REGULATION_KB_ID},
@@ -699,7 +724,46 @@ async def test_parent_expand_no_content_passthrough(monkeypatch):
 
     results = out["recall_vec_results"]
     assert len(results) == 1  # 按文档去重
-    assert results[0]["text"] == "chunk A"  # 保留原始 text（无 document_content 可展开）
+    assert results[0]["text"] == "chunk A"  # 保留原始 text（无全文可展开）
+
+
+async def test_parent_expand_fetch_failure_keeps_text(monkeypatch):
+    """补查失败时降级：按文档去重但保留原始 text，不向上抛。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": True}
+    )())
+    retriever = _FakeParentRetriever(exc=RuntimeError("db down"))
+    runtime = _parent_runtime(retriever)
+    chunks = [
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
+         "knowledge_base_id": REGULATION_KB_ID},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 1
+    assert results[0]["text"] == "chunk A"
+
+
+async def test_parent_expand_no_retriever_keeps_text(monkeypatch):
+    """runtime 未注入 retriever 时降级为仅去重。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": True}
+    )())
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    chunks = [
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
+         "knowledge_base_id": REGULATION_KB_ID},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 1
+    assert results[0]["text"] == "chunk A"
 
 
 async def test_parent_expand_different_docs_kept(monkeypatch):
@@ -707,14 +771,17 @@ async def test_parent_expand_different_docs_kept(monkeypatch):
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
-    runtime = SimpleNamespace(context=SimpleNamespace())
+    retriever = _FakeParentRetriever(
+        {"doc-1": "全文A", "doc-2": "全文B", "doc-3": "全文C"}
+    )
+    runtime = _parent_runtime(retriever)
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "A",
-         "document_content": "全文A", "knowledge_base_id": REGULATION_KB_ID},
+         "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-2", "rerank_score": 8.0, "text": "B",
-         "document_content": "全文B", "knowledge_base_id": REGULATION_KB_ID},
+         "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-3", "rerank_score": 7.0, "text": "C",
-         "document_content": "全文C", "knowledge_base_id": REGULATION_KB_ID},
+         "knowledge_base_id": REGULATION_KB_ID},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
 
@@ -724,19 +791,21 @@ async def test_parent_expand_different_docs_kept(monkeypatch):
     assert len(results) == 3
     doc_ids = {r["document_id"] for r in results}
     assert doc_ids == {"doc-1", "doc-2", "doc-3"}
+    assert [r["text"] for r in results] == ["全文A", "全文B", "全文C"]
 
 
 async def test_parent_expand_non_regulation_passthrough(monkeypatch):
-    """非法规 KB 的 chunk 不展开，仅按文档去重保留原始 text。"""
+    """非法规 KB 的 chunk 不展开也不补查，仅按文档去重保留原始 text。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
-    runtime = SimpleNamespace(context=SimpleNamespace())
+    retriever = _FakeParentRetriever({"doc-1": "全文A"})
+    runtime = _parent_runtime(retriever)
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
-         "document_content": "全文A", "knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
+         "knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
         {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B",
-         "document_content": "全文A", "knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
+         "knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
 
@@ -745,6 +814,7 @@ async def test_parent_expand_non_regulation_passthrough(monkeypatch):
     results = out["recall_vec_results"]
     assert len(results) == 1  # 按文档去重
     assert results[0]["text"] == "chunk A"  # text 是原始 chunk 文本，未展开为全文
+    assert retriever.calls == []  # 非法规 KB 不触发补查
 
 
 async def test_parent_expand_orphan_chunks_kept(monkeypatch):
@@ -752,10 +822,11 @@ async def test_parent_expand_orphan_chunks_kept(monkeypatch):
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
-    runtime = SimpleNamespace(context=SimpleNamespace())
+    retriever = _FakeParentRetriever({"doc-1": "全文A"})
+    runtime = _parent_runtime(retriever)
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "A",
-         "document_content": "全文A", "knowledge_base_id": REGULATION_KB_ID},
+         "knowledge_base_id": REGULATION_KB_ID},
         {"rerank_score": 5.0, "text": "orphan"},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
@@ -764,8 +835,116 @@ async def test_parent_expand_orphan_chunks_kept(monkeypatch):
 
     results = out["recall_vec_results"]
     assert len(results) == 2
+    assert results[0]["text"] == "全文A"  # 法规 chunk 展开为补查到的全文
     assert results[-1]["text"] == "orphan"  # orphan 在末尾
     assert "document_id" not in results[-1] or not results[-1]["document_id"]
+
+
+# ── neighbor_expand node integration tests ──
+
+
+async def test_neighbor_expand_enabled_adds_context(monkeypatch):
+    """启用时邻居 chunk 应被拉取并追加到结果中。"""
+    settings = type("S", (), {
+        "SENTENCE_WINDOW_ENABLED": True,
+        "SENTENCE_WINDOW_SIZE": 2,
+        "SENTENCE_WINDOW_MAX_MULTIPLIER": 3,
+    })()
+    monkeypatch.setattr(neighbor_expand_mod, "get_settings", lambda: settings)
+
+    async def fake_neighbors(pool, doc_id, center, window):
+        if doc_id == "doc-1" and center == 5:
+            return [
+                {"chunk_index": 3, "text": "neighbor before", "metadata": {}},
+                {"chunk_index": 6, "text": "neighbor after", "metadata": {}},
+            ]
+        return []
+
+    monkeypatch.setattr(neighbor_expand_mod.store, "get_neighbor_chunks", fake_neighbors)
+
+    pool = SimpleNamespace()
+    runtime = SimpleNamespace(context=SimpleNamespace(pool=pool))
+    chunks = [
+        {"document_id": "doc-1", "chunk_index": 5, "rerank_score": 0.9, "text": "center",
+         "filename": "test.txt", "knowledge_base_id": "kb-1", "sources": ["vec"]},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await neighbor_expand_mod.neighbor_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 3  # 原始 1 + 邻居 2
+    texts = {r["text"] for r in results}
+    assert "center" in texts
+    assert "neighbor before" in texts
+    assert "neighbor after" in texts
+
+
+async def test_neighbor_expand_disabled_passthrough(monkeypatch):
+    """禁用时节点应透传原始结果。"""
+    settings = type("S", (), {
+        "SENTENCE_WINDOW_ENABLED": False,
+    })()
+    monkeypatch.setattr(neighbor_expand_mod, "get_settings", lambda: settings)
+
+    runtime = SimpleNamespace(context=SimpleNamespace(pool=SimpleNamespace()))
+    chunks = [{"document_id": "doc-1", "chunk_index": 1, "text": "A"}]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await neighbor_expand_mod.neighbor_expand(state, runtime)
+
+    assert out["recall_vec_results"] is chunks
+
+
+async def test_neighbor_expand_no_pool_skips(monkeypatch):
+    """pool 未注入时静默跳过，不报错。"""
+    settings = type("S", (), {
+        "SENTENCE_WINDOW_ENABLED": True,
+    })()
+    monkeypatch.setattr(neighbor_expand_mod, "get_settings", lambda: settings)
+
+    runtime = SimpleNamespace(context=SimpleNamespace(pool=None))
+    chunks = [{"document_id": "doc-1", "chunk_index": 1, "text": "A"}]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await neighbor_expand_mod.neighbor_expand(state, runtime)
+
+    assert out["recall_vec_results"] is chunks
+
+
+async def test_neighbor_expand_dedup(monkeypatch):
+    """已存在的 chunk 不应被邻居重复添加。"""
+    settings = type("S", (), {
+        "SENTENCE_WINDOW_ENABLED": True,
+        "SENTENCE_WINDOW_SIZE": 2,
+        "SENTENCE_WINDOW_MAX_MULTIPLIER": 3,
+    })()
+    monkeypatch.setattr(neighbor_expand_mod, "get_settings", lambda: settings)
+
+    async def fake_neighbors(pool, doc_id, center, window):
+        # 返回邻居中包含中心 chunk 自身（应被去重）
+        return [
+            {"chunk_index": 4, "text": "already there", "metadata": {}},
+            {"chunk_index": 6, "text": "new neighbor", "metadata": {}},
+        ]
+
+    monkeypatch.setattr(neighbor_expand_mod.store, "get_neighbor_chunks", fake_neighbors)
+
+    pool = SimpleNamespace()
+    runtime = SimpleNamespace(context=SimpleNamespace(pool=pool))
+    chunks = [
+        {"document_id": "doc-1", "chunk_index": 4, "text": "already there",
+         "filename": "t.txt", "sources": ["vec"]},
+        {"document_id": "doc-1", "chunk_index": 5, "text": "center",
+         "filename": "t.txt", "sources": ["vec"]},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await neighbor_expand_mod.neighbor_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    # doc-1 idx=4 已存在，不应重复；idx=6 是新邻居
+    assert len(results) == 3
 
 
 # ── updated route tests ──

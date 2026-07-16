@@ -11,14 +11,18 @@ class SplitStrategy(Enum):
     paragraph_semantic = "paragraph_semantic"
 
 
-def chunk_by_fixed_size(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
+# ── 切块结果类型：每个元素为 (text, metadata) ──
+ChunkList = list[tuple[str, dict[str, str]]]
+
+
+def chunk_by_fixed_size(text: str, chunk_size: int, chunk_overlap: int) -> ChunkList:
     """按固定字符数切分，不感知语义边界。"""
     splitter = CharacterTextSplitter(
         separator="",
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
     )
-    return splitter.split_text(text)
+    return [(t, {}) for t in splitter.split_text(text)]
 
 
 # 中文分隔符:在默认 "\n\n" / "\n" / " " / "" 之前插入中文标点，
@@ -29,7 +33,7 @@ _SEPARATORS = [
     " ", "",
 ]
 
-def chunk_by_recursive_character(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
+def chunk_by_recursive_character(text: str, chunk_size: int, chunk_overlap: int) -> ChunkList:
     """按递归字符策略切分：依次用章节标题、段落、句子、字符等分隔符切分。"""
     splitter = RecursiveCharacterTextSplitter(
         separators=_SEPARATORS,
@@ -38,12 +42,16 @@ def chunk_by_recursive_character(text: str, chunk_size: int, chunk_overlap: int)
         is_separator_regex=True,
         keep_separator=False,
     )
-    return splitter.split_text(text)
+    return [(t, {}) for t in splitter.split_text(text)]
+
 
 def chunk(
     strategy: SplitStrategy, text: str, chunk_size: int, overlap: int,
-) -> list[str]:
-    """统一入口：按策略切分文本。"""
+) -> ChunkList:
+    """统一入口：按策略切分文本，返回 (text, metadata) 列表。
+
+    metadata 包含结构化标题信息（如 chapter、article），供 Contextual Chunk Headers 使用。
+    """
     text = text.replace("\x00", "")
     if not text.strip():
         return []
@@ -107,44 +115,56 @@ def _split_by_headings(
 
 def chunk_by_paragraph_semantic(
     text: str, max_chunk_size: int, chunk_overlap: int,
-) -> list[str]:
-    """逐级切分：章 → 条 → 尺寸回退。标题拼回正文，返回纯字符串列表。"""
-    results: list[str] = []
+) -> ChunkList:
+    """逐级切分：章 → 条 → 尺寸回退。标题拼回正文同时写入 metadata。"""
+    results: ChunkList = []
 
     chapters = _split_by_headings(text, _CHAPTER_HEADING_RE) or [("", text)]
     for ch_title, ch_text in chapters:
+        base_meta: dict[str, str] = {}
+        if ch_title:
+            base_meta["chapter"] = ch_title
+
         articles = _split_by_headings(ch_text, _ARTICLE_HEADING_RE)
 
         if not articles:
-            _emit(results, ch_title, ch_text, max_chunk_size, chunk_overlap)
+            _emit(results, ch_title, ch_text, max_chunk_size, chunk_overlap, meta=base_meta)
             continue
 
         for art_title, art_content in articles:
             prefix = f"{ch_title}\n{art_title}".strip() if ch_title else art_title
-            _emit(results, prefix, art_content, max_chunk_size, chunk_overlap)
+            meta = dict(base_meta)
+            if art_title:
+                meta["article"] = art_title
+            _emit(results, prefix, art_content, max_chunk_size, chunk_overlap, meta=meta)
 
     return results
 
 
 def _emit(
-    results: list[str],
+    results: ChunkList,
     prefix: str,
     content: str,
     max_chunk_size: int,
     chunk_overlap: int,
+    *,
+    meta: dict[str, str] | None = None,
 ) -> None:
-    """将标题拼回正文，填入结果。超过大小限制时切分。"""
+    """将标题拼回正文，填入结果。同时写入结构化 metadata。超过大小限制时切分。"""
     full = f"{prefix}\n{content}".strip() if prefix else content
+    if meta is None:
+        meta = {}
     if len(full) <= max_chunk_size:
-        results.append(full)
+        results.append((full, meta))
     else:
-        results.extend(_merge_small_chunks(
-            chunk_by_recursive_character(full, max_chunk_size, chunk_overlap),
-            min_size=min(_MIN_SUB_CHUNK_SIZE, max_chunk_size // 2),
-        ))
+        # 二次切分后碎片继承父级 metadata
+        sub_chunks = chunk_by_recursive_character(full, max_chunk_size, chunk_overlap)
+        merged = _merge_small_chunks(sub_chunks, min_size=min(_MIN_SUB_CHUNK_SIZE, max_chunk_size // 2))
+        for text_piece, _ in merged:
+            results.append((text_piece, dict(meta)))
 
 
-def _merge_small_chunks(chunks: list[str], min_size: int) -> list[str]:
+def _merge_small_chunks(chunks: ChunkList, min_size: int) -> ChunkList:
     """合并过短的 chunk：将不满足 min_size 的 chunk 向前并入相邻 chunk。
 
     递归消除：首轮合并后可能产生新的短 chunk（原短 chunk 并入后仍不足），
@@ -155,25 +175,31 @@ def _merge_small_chunks(chunks: list[str], min_size: int) -> list[str]:
 
     while True:
         changed = False
-        merged: list[str] = []
-        pending: str = ""  # 待并入下一个 chunk 的短内容
+        merged: ChunkList = []
+        pending_text: str = ""
+        pending_meta: dict[str, str] = {}
 
-        for c in chunks:
-            if pending:
-                c = pending + "\n\n" + c
-                pending = ""
+        for text_piece, meta in chunks:
+            if pending_text:
+                text_piece = pending_text + "\n\n" + text_piece
+                # 合并时保留首块的 metadata
+                meta = dict(pending_meta)
+                pending_text = ""
+                pending_meta = {}
                 changed = True
-            if len(c) < min_size:
-                pending = c
+            if len(text_piece) < min_size:
+                pending_text = text_piece
+                pending_meta = meta
             else:
-                merged.append(c)
+                merged.append((text_piece, meta))
 
         # 末尾残留的短内容：并入前一个 chunk
-        if pending:
+        if pending_text:
             if merged:
-                merged[-1] = merged[-1] + "\n\n" + pending
+                last_text, last_meta = merged[-1]
+                merged[-1] = (last_text + "\n\n" + pending_text, last_meta)
             else:
-                merged.append(pending)
+                merged.append((pending_text, pending_meta))
             changed = True
 
         chunks = merged

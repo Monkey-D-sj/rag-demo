@@ -10,6 +10,7 @@ from rag.api.common.schemas import ErrorResponse
 from rag.api.dependencies.db import get_pg
 from rag.api.dependencies.storage import get_arq_pool, get_minio
 from rag.api.modules.document import service
+from rag.api.modules.document.exceptions import FileTooLarge, UnsupportedFileType
 from rag.api.modules.document.schemas import (
     DocumentListResponse,
     DocumentRetryResponse,
@@ -18,6 +19,7 @@ from rag.api.modules.document.schemas import (
     DocumentUploadResponse,
     GraphRetryResponse,
 )
+from rag.config import get_settings
 document_router = APIRouter(prefix="/documents")
 
 
@@ -37,13 +39,26 @@ async def upload_document(
     minio=Depends(get_minio),
     arq_pool=Depends(get_arq_pool),
 ) -> DocumentUploadResponse:
+    # 1) 扩展名校验 — 只需文件名，零 I/O，不必先读入整个文件
+    name = service._safe_filename(file.filename)
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in service.ALLOWED_TYPES:
+        raise UnsupportedFileType(f"不支持的文件类型: {ext}")
+
+    # 2) 有界读取 — 只读上限+1字节，避免大文件撑爆内存
+    settings = get_settings()
+    max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise FileTooLarge("文件超过大小上限")
+
     document_id = await service.ingest_upload(
         pg=pg,
         minio=minio,
         arq_pool=arq_pool,
         filename=file.filename,
         content_type=file.content_type,
-        data=await file.read(),
+        data=data,
         knowledge_base_id=knowledge_base_id,
     )
     return DocumentUploadResponse(document_id=document_id, status="pending")

@@ -20,10 +20,9 @@ from rag.document.table_extractor import (
 from rag.models.base import ChatModel
 from rag.models.embedding import EmbeddingModel
 
-logger = get_logger()
+from rag.document import REGULATION_KB_ID
 
-# 法规知识库 UUID
-REGULATION_KB_ID = "00000000-0000-0000-0000-000000000003"
+logger = get_logger()
 
 
 class _IngestDeps(TypedDict, total=False):

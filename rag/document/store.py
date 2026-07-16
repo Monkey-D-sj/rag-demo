@@ -65,7 +65,8 @@ async def search_chunks(
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    1 - (dc.embedding <=> %(emb)s) AS similarity,
                    d.filename,
-                   d.content AS document_content
+                   d.content AS document_content,
+                   d.knowledge_base_id
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE 1=1 {kb_filter}
@@ -99,7 +100,8 @@ async def search_chunks_bm25(
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    paradedb.score(dc.id) AS score,
                    d.filename,
-                   d.content AS document_content
+                   d.content AS document_content,
+                   d.knowledge_base_id
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE dc.text @@@ paradedb.match('text', %(q)s)

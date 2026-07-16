@@ -11,6 +11,7 @@ import rag.agent.nodes.rerank.rerank as rerank_mod
 import rag.agent.nodes.dynamic_topk.topk as topk_mod
 import rag.agent.nodes.parent_expand.expand as parent_expand_mod
 from rag.agent.type import ContextSchema, StreamEventType, stream_event
+from rag.document import REGULATION_KB_ID
 
 
 class _FakeLLM:
@@ -635,18 +636,18 @@ async def test_dynamic_topk_exception_passthrough(monkeypatch):
 
 
 async def test_parent_expand_enabled_expands(monkeypatch):
-    """启用时同文档多 chunk 应去重并替换 text 为 document_content。"""
+    """法规 KB chunk 应去重并替换 text 为 document_content。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
-         "document_content": "全文内容A"},
+         "document_content": "全文内容A", "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B",
-         "document_content": "全文内容A"},
+         "document_content": "全文内容A", "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-2", "rerank_score": 7.0, "text": "chunk C",
-         "document_content": "全文内容C"},
+         "document_content": "全文内容C", "knowledge_base_id": REGULATION_KB_ID},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
 
@@ -681,14 +682,16 @@ async def test_parent_expand_disabled_passthrough(monkeypatch):
 
 
 async def test_parent_expand_no_content_passthrough(monkeypatch):
-    """无 document_content 的 chunk 按文档去重但保留原始 text。"""
+    """法规 KB 但无 document_content 的 chunk 按文档去重但保留原始 text。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [
-        {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A"},
-        {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B"},
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
+         "knowledge_base_id": REGULATION_KB_ID},
+        {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B",
+         "knowledge_base_id": REGULATION_KB_ID},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
 
@@ -700,18 +703,18 @@ async def test_parent_expand_no_content_passthrough(monkeypatch):
 
 
 async def test_parent_expand_different_docs_kept(monkeypatch):
-    """不同文档各自保留，去重仅在文档内生效。"""
+    """不同法规文档各自保留，去重仅在文档内生效。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
         "S", (), {"PARENT_CHILD_ENABLED": True}
     )())
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "A",
-         "document_content": "全文A"},
+         "document_content": "全文A", "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-2", "rerank_score": 8.0, "text": "B",
-         "document_content": "全文B"},
+         "document_content": "全文B", "knowledge_base_id": REGULATION_KB_ID},
         {"document_id": "doc-3", "rerank_score": 7.0, "text": "C",
-         "document_content": "全文C"},
+         "document_content": "全文C", "knowledge_base_id": REGULATION_KB_ID},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
 
@@ -723,6 +726,27 @@ async def test_parent_expand_different_docs_kept(monkeypatch):
     assert doc_ids == {"doc-1", "doc-2", "doc-3"}
 
 
+async def test_parent_expand_non_regulation_passthrough(monkeypatch):
+    """非法规 KB 的 chunk 不展开，仅按文档去重保留原始 text。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": True}
+    )())
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    chunks = [
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
+         "document_content": "全文A", "knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
+        {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B",
+         "document_content": "全文A", "knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 1  # 按文档去重
+    assert results[0]["text"] == "chunk A"  # text 是原始 chunk 文本，未展开为全文
+
+
 async def test_parent_expand_orphan_chunks_kept(monkeypatch):
     """无 document_id 的孤立 chunk 应原样保留在末尾。"""
     monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
@@ -731,7 +755,7 @@ async def test_parent_expand_orphan_chunks_kept(monkeypatch):
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [
         {"document_id": "doc-1", "rerank_score": 9.0, "text": "A",
-         "document_content": "全文A"},
+         "document_content": "全文A", "knowledge_base_id": REGULATION_KB_ID},
         {"rerank_score": 5.0, "text": "orphan"},
     ]
     state = {"recall_vec_results": chunks, "raw_query": "q"}

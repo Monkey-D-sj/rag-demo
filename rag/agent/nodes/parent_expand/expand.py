@@ -46,12 +46,14 @@ async def parent_expand(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
         if doc_id not in groups:
             groups[doc_id] = dict(c)
             groups[doc_id]["text"] = content
+            groups[doc_id].pop("document_content", None)
         else:
             existing_score = groups[doc_id].get("rerank_score", 0)
             this_score = c.get("rerank_score", 0)
             if this_score > existing_score:
                 groups[doc_id] = dict(c)
                 groups[doc_id]["text"] = content
+                groups[doc_id].pop("document_content", None)
 
     # 重建结果列表，保持 rerank_score 降序
     expanded: list[dict] = list(groups.values())

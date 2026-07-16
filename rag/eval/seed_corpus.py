@@ -23,15 +23,9 @@ async def _reset_eval_kb(pool) -> None:
         )
 
 
-def _normalize_pieces(pieces) -> list[tuple[str, dict]]:
+def _normalize_pieces(pieces: list[str]) -> list[tuple[str, dict]]:
     """chunk() 输出归一化为 (text, metadata)，与 pipeline 保持一致。"""
-    out: list[tuple[str, dict]] = []
-    for p in pieces:
-        if isinstance(p, dict):
-            out.append((p["content"], {"title": p["title"]} if p.get("title") else {}))
-        else:
-            out.append((p, {}))
-    return out
+    return [(p, {}) for p in pieces]
 
 
 async def seed() -> int:

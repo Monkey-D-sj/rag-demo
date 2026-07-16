@@ -24,9 +24,6 @@ def chunk_by_fixed_size(text: str, chunk_size: int, chunk_overlap: int) -> list[
 # 中文分隔符:在默认 "\n\n" / "\n" / " " / "" 之前插入中文标点，
 # 使得句子级的切分优先于空格和字符级，避免在句子中间切断。
 _SEPARATORS = [
-    r"第[零一二三四五六七八九十百千万0-9]+章",
-    r"第[零一二三四五六七八九十百千万0-9]+节",
-    r"第[零一二三四五六七八九十百千万0-9]+回",
     "\n\n", "\n",
     "。", "！", "？", "；", "，",
     " ", "",
@@ -38,20 +35,15 @@ def chunk_by_recursive_character(text: str, chunk_size: int, chunk_overlap: int)
         separators=_SEPARATORS,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        # _SEPARATORS 含章节标题正则；默认 is_separator_regex=False 会把它们 re.escape
-        # 成字面量导致永不命中，故显式开启正则模式。
         is_separator_regex=True,
+        keep_separator=False,
     )
     return splitter.split_text(text)
 
 def chunk(
     strategy: SplitStrategy, text: str, chunk_size: int, overlap: int,
-) -> list[str] | list[dict[str, str]]:
-    """统一入口：按策略切分文本。
-
-    fixed_size / recursive_character → list[str]
-    paragraph_semantic → list[dict[str, str]]（含章节标题元数据）
-    """
+) -> list[str]:
+    """统一入口：按策略切分文本。"""
     text = text.replace("\x00", "")
     if not text.strip():
         return []
@@ -70,59 +62,86 @@ def chunk(
 # 章内二次切分后，低于此阈值的碎片会被合并到相邻 chunk
 _MIN_SUB_CHUNK_SIZE = 200
 
-# 匹配章节标题行，group(1) 是 "第一回" 这类编号+量词
+# 匹配章节标题行
 _CHAPTER_HEADING_RE = re.compile(
     r"^(第[零一二三四五六七八九十百千万\d]+[章节回卷篇])\s*[^\n]*",
     re.MULTILINE,
 )
-def chunk_by_paragraph_semantic(
-    text: str, max_chunk_size: int, chunk_overlap: int,
-) -> list[dict[str, str]]:
-    """按章节切分文本，返回 [{"title": str, "content": str}, ...]。
 
-    章节由 "第X回/第X章/第X节" 等标题行识别。
-    若单章过长则用 RecursiveCharacterTextSplitter 进一步切分，
-    title 追加 "(1/3)" 式分段号。
+# 匹配条款标题行（整行，含后续内容直至换行）
+_ARTICLE_HEADING_RE = re.compile(
+    r"^(第[零一二三四五六七八九十百\d]+条[^\n]*\n)",
+    re.MULTILINE,
+)
+
+
+def _split_by_headings(
+    text: str,
+    heading_re: re.Pattern,
+) -> list[tuple[str, str]]:
+    """按标题行切分文本，返回 [(标题, 正文), ...]。无匹配则整篇作为一个分段。
+
+    第一个标题之前的前导内容会作为空标题段保留，不会丢失。
     """
-    matches = list(_CHAPTER_HEADING_RE.finditer(text))
-
+    matches = list(heading_re.finditer(text))
     if not matches:
-        # 无章节标题(普通 txt/md/无章回 PDF):回退到尺寸切分,
-        # 否则整篇作为单个巨型 chunk 会超 embedding token 上限且检索粒度失效。
-        stripped = text.strip()
-        sub_chunks = chunk_by_recursive_character(stripped, max_chunk_size, chunk_overlap)
-        return [{"title": "", "content": sub} for sub in sub_chunks]
+        return [("", text)]
 
-    results: list[dict[str, str]] = []
+    segments: list[tuple[str, str]] = []
     for i, m in enumerate(matches):
         title = m.group(0).strip()
-        # 章节标题行的下一行开始
         start = m.end()
-        if start < len(text) and text[start] == "\n":
-            start += 1
-        # 到下一个章节标题行之前为止
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         content = text[start:end].strip()
 
-        if not content:
+        # 第一个标题之前的前导内容作为前置段
+        if i == 0:
+            preamble = text[: m.start()].strip()
+            if preamble:
+                segments.append(("", preamble))
+
+        if content:
+            segments.append((title, content))
+    return segments
+
+
+def chunk_by_paragraph_semantic(
+    text: str, max_chunk_size: int, chunk_overlap: int,
+) -> list[str]:
+    """逐级切分：章 → 条 → 尺寸回退。标题拼回正文，返回纯字符串列表。"""
+    results: list[str] = []
+
+    chapters = _split_by_headings(text, _CHAPTER_HEADING_RE) or [("", text)]
+    for ch_title, ch_text in chapters:
+        articles = _split_by_headings(ch_text, _ARTICLE_HEADING_RE)
+
+        if not articles:
+            _emit(results, ch_title, ch_text, max_chunk_size, chunk_overlap)
             continue
 
-        if len(content) > max_chunk_size:
-            sub_chunks = chunk_by_recursive_character(content, max_chunk_size, chunk_overlap)
-            # 合并因段落边界产生的孤立短 chunk（如章首诗歌、对话片段）
-            sub_chunks = _merge_small_chunks(
-                sub_chunks,
-                min_size=min(_MIN_SUB_CHUNK_SIZE, max_chunk_size // 2),
-            )
-            for j, sub in enumerate(sub_chunks):
-                results.append({
-                    "title": f"{title}({j + 1}/{len(sub_chunks)})",
-                    "content": sub,
-                })
-        else:
-            results.append({"title": title, "content": content})
+        for art_title, art_content in articles:
+            prefix = f"{ch_title}\n{art_title}".strip() if ch_title else art_title
+            _emit(results, prefix, art_content, max_chunk_size, chunk_overlap)
 
     return results
+
+
+def _emit(
+    results: list[str],
+    prefix: str,
+    content: str,
+    max_chunk_size: int,
+    chunk_overlap: int,
+) -> None:
+    """将标题拼回正文，填入结果。超过大小限制时切分。"""
+    full = f"{prefix}\n{content}".strip() if prefix else content
+    if len(full) <= max_chunk_size:
+        results.append(full)
+    else:
+        results.extend(_merge_small_chunks(
+            chunk_by_recursive_character(full, max_chunk_size, chunk_overlap),
+            min_size=min(_MIN_SUB_CHUNK_SIZE, max_chunk_size // 2),
+        ))
 
 
 def _merge_small_chunks(chunks: list[str], min_size: int) -> list[str]:

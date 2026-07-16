@@ -27,13 +27,12 @@ def test_chunk_fixed_size():
 def test_paragraph_semantic_splits_by_chapter():
     text = "第一回 灵根育孕\n内容甲。\n第二回 悟彻菩提\n内容乙。"
     out = chunk(SplitStrategy.paragraph_semantic, text, 800, 100)
-    assert [c["title"] for c in out] == ["第一回 灵根育孕", "第二回 悟彻菩提"]
-    assert out[0]["content"] == "内容甲。"
+    assert out == ["第一回 灵根育孕\n内容甲。", "第二回 悟彻菩提\n内容乙。"]
 
 
 def test_paragraph_semantic_no_heading_returns_whole_text():
     out = chunk(SplitStrategy.paragraph_semantic, "没有章节标题的正文。", 800, 100)
-    assert out == [{"title": "", "content": "没有章节标题的正文。"}]
+    assert out == ["没有章节标题的正文。"]
 
 
 def test_paragraph_semantic_no_heading_long_text_respects_max_size():
@@ -41,5 +40,4 @@ def test_paragraph_semantic_no_heading_long_text_respects_max_size():
     text = "这是一段没有任何章节标题的普通正文，用来验证回退切分。" * 200
     out = chunk(SplitStrategy.paragraph_semantic, text, 800, 100)
     assert len(out) > 1
-    assert all(len(c["content"]) <= 800 for c in out)
-    assert all(c["title"] == "" for c in out)
+    assert all(len(c) <= 800 for c in out)

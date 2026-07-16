@@ -43,22 +43,13 @@ def _parse_and_chunk(
     strategy: SplitStrategy,
     chunk_size: int,
     chunk_overlap: int,
-) -> list[tuple[str, dict[str, str]]]:
+) -> list[str]:
     """CPU 密集段(PDF 解析 + 切块)合并到一次调用,由调用方 to_thread 整体 offload。
 
-    统一归一化为 (text, metadata):
-    - list[str] 策略 → metadata 为空 {}
-    - paragraph_semantic → text 取 content,章节标题存入 metadata["title"]
+    返回 (text, metadata) 列表，metadata 保留给表格块使用，正文切块统一为空 {}。
     """
     text = parse(data, content_type)
-    chunks = chunk(strategy, text, chunk_size, chunk_overlap)
-    normalized: list[tuple[str, dict[str, str]]] = []
-    for c in chunks:
-        if isinstance(c, dict):
-            normalized.append((c["content"], {"title": c["title"]} if c["title"] else {}))
-        else:
-            normalized.append((c, {}))
-    return normalized
+    return [(c, {}) for c in chunk(strategy, text, chunk_size, chunk_overlap)]
 
 
 async def _extract_and_summarize_tables(

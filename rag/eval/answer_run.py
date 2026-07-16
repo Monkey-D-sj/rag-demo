@@ -179,9 +179,14 @@ async def _run_eval(gate_mode: bool = False) -> dict:
 
 
 def main() -> None:
+    import sys
+
     from rag.common.platform import setup_windows_loop
 
     setup_windows_loop()
+    # Windows 控制台默认 GBK 无法输出 Unicode（如 ▶），统一设 UTF-8
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="答案忠实度离线评测（基于 RAGAS Faithfulness）")
     group = parser.add_mutually_exclusive_group()

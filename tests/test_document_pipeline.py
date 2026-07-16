@@ -35,7 +35,7 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
         statuses.append((status, error))
 
     async def fake_get_document(pool, doc_id):
-        return {"object_key": "k1", "content_type": "txt", "knowledge_base_id": "kb1"}
+        return {"object_key": "k1", "content_type": "txt", "knowledge_base_id": "kb1", "filename": "test.pdf"}
 
     async def fake_store_complete(pool, doc_id, kb, embedded):
         completed["embedded"] = embedded
@@ -52,6 +52,9 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
     monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
     monkeypatch.setattr(pipe.store, "set_graph_status", fake_set_graph_status)
+    async def fake_set_doc_content(pool, doc_id, full_text):
+        pass
+    monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "full text")
     monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a", "b", "c"])
@@ -66,13 +69,12 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
 
     assert claimed == ["d1"]
     assert statuses == []  # happy path 不写 set_status(只在失败时写)
-    assert emb.batches == [["a", "b"], ["c"]]
+    assert emb.batches == [["《test》a", "《test》b"], ["《test》c"]]
     assert completed["kb"] == "kb1"
-    # embedded 归一化为 (index, text, vector, metadata);list[str] 策略 metadata 为空 {}
     assert completed["embedded"] == [
-        (0, "a", [0.0, 0.0, 0.0, 0.0], {}),
-        (1, "b", [0.0, 0.0, 0.0, 0.0], {}),
-        (2, "c", [0.0, 0.0, 0.0, 0.0], {}),
+        (0, "《test》a", [0.0, 0.0, 0.0, 0.0], {}),
+        (1, "《test》b", [0.0, 0.0, 0.0, 0.0], {}),
+        (2, "《test》c", [0.0, 0.0, 0.0, 0.0], {}),
     ]
 
 
@@ -107,7 +109,7 @@ async def test_ingest_empty_chunks_marks_failed(monkeypatch):
         statuses.append((status, error))
 
     async def fake_get_document(pool, doc_id):
-        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb", "filename": "test.txt"}
 
     async def fake_get_object(*a, **k):
         return b"data"
@@ -140,7 +142,7 @@ async def test_ingest_cancellation_marks_failed_and_reraises(monkeypatch):
         statuses.append((status, error))
 
     async def fake_get_document(pool, doc_id):
-        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb", "filename": "test.txt"}
 
     async def fake_get_object(*a, **k):
         return b"data"
@@ -152,6 +154,9 @@ async def test_ingest_cancellation_marks_failed_and_reraises(monkeypatch):
     monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
     monkeypatch.setattr(pipe.store, "set_status", fake_set_status)
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
+    async def fake_set_doc_content(pool, doc_id, full_text):
+        pass
+    monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
     monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
@@ -176,7 +181,7 @@ async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
         return True
 
     async def fake_get_document(pool, doc_id):
-        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb", "filename": "test.txt"}
 
     async def fake_store_complete(pool, doc_id, kb, embedded):
         pass
@@ -191,6 +196,9 @@ async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
     monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
     monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
+    async def fake_set_doc_content(pool, doc_id, full_text):
+        pass
+    monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
     monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
@@ -218,7 +226,7 @@ async def test_ingest_marks_graph_skipped_when_disabled(monkeypatch):
         return True
 
     async def fake_get_document(pool, doc_id):
-        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb"}
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb", "filename": "test.txt"}
 
     async def fake_store_complete(pool, doc_id, kb, embedded):
         pass
@@ -233,6 +241,9 @@ async def test_ingest_marks_graph_skipped_when_disabled(monkeypatch):
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
     monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
     monkeypatch.setattr(pipe.store, "set_graph_status", fake_set_graph_status)
+    async def fake_set_doc_content(pool, doc_id, full_text):
+        pass
+    monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
     monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])

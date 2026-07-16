@@ -43,13 +43,19 @@ def _parse_and_chunk(
     strategy: SplitStrategy,
     chunk_size: int,
     chunk_overlap: int,
-) -> list[str]:
+    doc_title: str = "",
+) -> tuple[str, list[tuple[str, dict[str, str]]]]:
     """CPU 密集段(PDF 解析 + 切块)合并到一次调用,由调用方 to_thread 整体 offload。
 
-    返回 (text, metadata) 列表，metadata 保留给表格块使用，正文切块统一为空 {}。
+    返回 (full_text, chunks) — full_text 用于 parent-child retrieval 的 document_content 存储。
     """
-    text = parse(data, content_type)
-    return [(c, {}) for c in chunk(strategy, text, chunk_size, chunk_overlap)]
+    full_text = parse(data, content_type)
+    chunks = chunk(strategy, full_text, chunk_size, chunk_overlap)
+    if doc_title:
+        doc_title = doc_title.rsplit(".", 1)[0]  # strip extension
+        chunks = [f"《{doc_title}》{c}" for c in chunks]
+        full_text = f"《{doc_title}》{full_text}"
+    return full_text, [(c, {}) for c in chunks]
 
 
 async def _extract_and_summarize_tables(
@@ -87,7 +93,7 @@ async def _extract_and_summarize_tables(
 
 # 知识库 → 切分策略（硬编码，每个 KB 固定策略）
 _KB_STRATEGY: dict[str, SplitStrategy] = {
-    REGULATION_KB_ID: SplitStrategy.recursive_character,  # 法规
+    REGULATION_KB_ID: SplitStrategy.paragraph_semantic,  # 法规：章→条逐级切分
 }
 
 
@@ -115,16 +121,20 @@ async def _ingest(ctx: _IngestDeps, document_id: str) -> None:
         data = await get_object(minio, bucket, doc["object_key"])
 
         # parse + chunk 是纯 CPU(GIL 活),合并到一次线程池调用,避免阻塞 event loop
-        chunks = await asyncio.to_thread(
+        full_text, chunks = await asyncio.to_thread(
             _parse_and_chunk,
             data,
             doc["content_type"],
             strategy,
             settings.CHUNK_SIZE,
             settings.CHUNK_OVERLAP,
+            doc["filename"],
         )
         if not chunks:
             raise ValueError("切块结果为空,无可入库内容")
+
+        # 存储解析后的全文，供 parent-child retrieval 使用
+        await store.set_document_content(pool, document_id, full_text)
 
         # ── 表格提取（best-effort，不影响正文入库） ──
         table_blocks = await _extract_and_summarize_tables(

@@ -1,6 +1,9 @@
 # 知识库 ID 常量，须与 alembic 0008 迁移中的种子数据保持一致
-NOVEL_KB_ID      = "00000000-0000-0000-0000-000000000002"
+BOOK_KB_ID       = "00000000-0000-0000-0000-000000000002"
 REGULATION_KB_ID = "00000000-0000-0000-0000-000000000003"
+
+# 向后兼容别名（v0.1 旧名 NOVEL_KB_ID → BOOK_KB_ID）
+NOVEL_KB_ID = BOOK_KB_ID
 
 
 async def ensure_kb_partition(pool, kb_id: str) -> None:

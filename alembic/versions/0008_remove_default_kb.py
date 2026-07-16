@@ -1,4 +1,4 @@
-"""remove default KB, seed novel + regulation KBs
+"""remove default KB, seed book + regulation KBs
 
 Revision ID: 0008
 Revises: 0007
@@ -12,7 +12,7 @@ branch_labels = None
 depends_on = None
 
 EMBEDDING_DIM = 1024
-NOVEL_KB_ID = "00000000-0000-0000-0000-000000000002"
+BOOK_KB_ID = "00000000-0000-0000-0000-000000000002"
 REGULATION_KB_ID = "00000000-0000-0000-0000-000000000003"
 
 
@@ -41,7 +41,7 @@ def upgrade() -> None:
     op.execute(
         f"""
         INSERT INTO knowledge_bases (id, name) VALUES
-            ('{NOVEL_KB_ID}', '小说'),
+            ('{BOOK_KB_ID}', '书籍文献'),
             ('{REGULATION_KB_ID}', '法规')
         """
     )
@@ -89,8 +89,8 @@ def upgrade() -> None:
     # 6. 为两个 KB 创建分区（无 DEFAULT 分区 — 新 KB 由 ensure_kb_partition() runtime 建）
     op.execute(
         f"""
-        CREATE TABLE dchunks_novel PARTITION OF document_chunks
-            FOR VALUES IN ('{NOVEL_KB_ID}')
+        CREATE TABLE dchunks_book PARTITION OF document_chunks
+            FOR VALUES IN ('{BOOK_KB_ID}')
         """
     )
     op.execute(
@@ -131,7 +131,7 @@ def upgrade() -> None:
             """
         )
     except Exception:
-        for partition in ["dchunks_novel", "dchunks_regulation"]:
+        for partition in ["dchunks_book", "dchunks_regulation"]:
             try:
                 op.execute(
                     f"""

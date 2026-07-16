@@ -6,20 +6,16 @@ import { formatBytes } from "@/lib/utils";
 const MAX_MB = 20;
 const ALLOWED = ["txt", "md", "pdf", "docx"];
 
-const KB_OPTIONS: Record<string, string> = {
-  "小说": "00000000-0000-0000-0000-000000000002",
-  "法规": "00000000-0000-0000-0000-000000000003",
-};
-
 interface Props {
+  kbId: string;
+  kbLabel: string;
   onUploaded: (id: string) => void;
 }
 
-export default function DocumentUpload({ onUploaded }: Props) {
+export default function DocumentUpload({ kbId, kbLabel, onUploaded }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
-  const [kbId, setKbId] = useState(Object.values(KB_OPTIONS)[0]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const validate = useCallback((f: File): string | null => {
@@ -62,36 +58,26 @@ export default function DocumentUpload({ onUploaded }: Props) {
 
   return (
     <div className="space-y-3">
-      {/* KB 选择器 */}
-      <div className="flex items-center gap-2">
-        <label className="text-xs text-gray-400">知识库：</label>
-        <select
-          value={kbId}
-          onChange={(e) => setKbId(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200
-                     focus:outline-none focus:border-emerald-500/50 transition-colors"
-        >
-          {Object.entries(KB_OPTIONS).map(([name, id]) => (
-            <option key={id} value={id}>{name}</option>
-          ))}
-        </select>
-      </div>
+      {/* KB 标签（只读） */}
+      <p className="text-xs text-gray-500">
+        上传至 <span className="text-gray-300 font-medium">{kbLabel}</span>
+      </p>
 
       {/* 拖拽区 */}
       <div
         onDrop={handleDrop}
         onDragOver={(e) => e.preventDefault()}
         onClick={() => inputRef.current?.click()}
-        className="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center
+        className="border-2 border-dashed border-gray-700 rounded-xl p-6 text-center
                    cursor-pointer hover:border-emerald-500/50 hover:bg-gray-800/50
                    transition-colors"
       >
-        <Upload className="w-8 h-8 mx-auto mb-2 text-gray-500" />
+        <Upload className="w-6 h-6 mx-auto mb-2 text-gray-500" />
         <p className="text-sm text-gray-400">
-          拖拽文件到此处或 <span className="text-emerald-400">点击选择</span>
+          拖拽文件或 <span className="text-emerald-400">点击选择</span>
         </p>
         <p className="text-xs text-gray-600 mt-1">
-          支持 txt / md / pdf / docx（最大 {MAX_MB}MB）
+          txt / md / pdf / docx（最大 {MAX_MB}MB）
         </p>
         <input
           ref={inputRef}

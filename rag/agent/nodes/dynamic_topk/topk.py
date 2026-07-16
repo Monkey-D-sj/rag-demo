@@ -72,7 +72,7 @@ def _dynamic_truncate(
     return chunks[: min(default_top_k, len(chunks))]
 
 
-async def dynamic_topk(state: MyState, _runtime: Runtime[ContextSchema]) -> MyState:
+async def dynamic_topk(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
     """对 rerank 后的结果做动态 top-k 截断。
 
     未启用时透传；异常时降级透传原始结果，不中断检索链路。

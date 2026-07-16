@@ -1,4 +1,3 @@
-from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
@@ -7,12 +6,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 按项目根目录解析 .env，无论从哪个目录启动都能正确加载
 _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
-
-
-class SplitStrategy(Enum):
-    fixed_size = "fixed_size"
-    recursive_character = "recursive_character"
-    paragraph_semantic = "paragraph_semantic"
 
 
 class Settings(BaseSettings):

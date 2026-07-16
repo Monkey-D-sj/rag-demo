@@ -1,4 +1,4 @@
-from rag.config import SplitStrategy
+from rag.document.chunker import SplitStrategy
 from rag.document.chunker import chunk
 
 

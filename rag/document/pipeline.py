@@ -8,9 +8,9 @@ from psycopg_pool import AsyncConnectionPool
 
 from rag.common.logging import get_logger
 from rag.common.minio_client import get_object
-from rag.config import Settings, SplitStrategy
+from rag.config import Settings
+from rag.document.chunker import SplitStrategy, chunk
 from rag.document import store
-from rag.document.chunker import chunk
 from rag.document.parser import parse
 from rag.document.table_extractor import (
     TableBlock,

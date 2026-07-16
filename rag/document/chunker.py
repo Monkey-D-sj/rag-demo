@@ -1,9 +1,14 @@
 import re
+from enum import Enum
 from typing import assert_never
 
 from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 
-from rag.config import SplitStrategy
+
+class SplitStrategy(Enum):
+    fixed_size = "fixed_size"
+    recursive_character = "recursive_character"
+    paragraph_semantic = "paragraph_semantic"
 
 
 def chunk_by_fixed_size(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:

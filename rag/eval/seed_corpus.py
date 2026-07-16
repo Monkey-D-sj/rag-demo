@@ -1,9 +1,9 @@
 import asyncio
 
-from rag.config import SplitStrategy, get_settings
+from rag.config import get_settings
 from rag.db.postgres import create_pg_pool, get_cursor
 from rag.document import store
-from rag.document.chunker import chunk
+from rag.document.chunker import SplitStrategy, chunk
 from rag.eval import DATASETS_DIR, EVAL_KB_ID
 from rag.models.embedding import EmbeddingModel
 

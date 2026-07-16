@@ -12,18 +12,25 @@ from rag.config import Settings, SplitStrategy
 from rag.document import store
 from rag.document.chunker import chunk
 from rag.document.parser import parse
+from rag.document.table_extractor import (
+    TableBlock,
+    extract_tables,
+    generate_table_summary,
+)
+from rag.models.base import ChatModel
 from rag.models.embedding import EmbeddingModel
 
 logger = get_logger()
 
 
-class _IngestDeps(TypedDict):
+class _IngestDeps(TypedDict, total=False):
     """`ingest_document` 所需依赖,由 arq worker ctx 注入。"""
     pg: AsyncConnectionPool
     minio: Minio
     bucket: str
     embedding: EmbeddingModel
     settings: Settings
+    llm: ChatModel  # 可选，用于表格摘要生成；缺失时降级为规则摘要
     redis: object  # arq 框架自动注入 ArqRedis,仅用于 enqueue_job
 
 
@@ -49,6 +56,39 @@ def _parse_and_chunk(
         else:
             normalized.append((c, {}))
     return normalized
+
+
+async def _extract_and_summarize_tables(
+    data: bytes,
+    content_type: str,
+    llm: ChatModel | None = None,
+) -> list[TableBlock]:
+    """提取文档中的表格，并（可选）用 LLM 生成自然语言摘要。
+
+    LLM 摘要失败时静默降级为规则摘要（`TableBlock.meta` 已包含），
+    不阻塞表格入库。
+    """
+    # CPU 密集段（PDF 表格解析）offload 到线程池
+    blocks = await asyncio.to_thread(extract_tables, data, content_type)
+    if not blocks:
+        return []
+
+    if llm is not None:
+        for tb in blocks:
+            try:
+                summary = await generate_table_summary(
+                    llm, tb.markdown, tb.headers, tb.caption
+                )
+                if summary:
+                    # 覆盖规则摘要为 LLM 生成的更高质版本
+                    tb.meta["table_summary"] = summary
+            except Exception:
+                logger.warning(
+                    "表格摘要生成失败（列: %s），降级为规则摘要",
+                    tb.headers, exc_info=True,
+                )
+
+    return blocks
 
 
 async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
@@ -80,6 +120,27 @@ async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
         )
         if not chunks:
             raise ValueError("切块结果为空,无可入库内容")
+
+        # ── 表格提取（best-effort，不影响正文入库） ──
+        table_blocks = await _extract_and_summarize_tables(
+            data,
+            doc["content_type"],
+            llm=ctx.get("llm"),
+        )
+
+        # 将表格块追加到 chunk 列表（表格 chunk_index 紧跟正文之后）
+        table_start_index = len(chunks)
+        for tb in table_blocks:
+            chunks.append((tb.embed_text, tb.meta))
+
+        if table_blocks:
+            logger.info(
+                "文档 %s 附加 %d 个表格 chunk（chunk_index %d-%d）",
+                document_id,
+                len(table_blocks),
+                table_start_index,
+                table_start_index + len(table_blocks) - 1,
+            )
 
         embedded: list[tuple[int, str, list[float], dict[str, str]]] = []
         batch = settings.EMBEDDING_BATCH_SIZE

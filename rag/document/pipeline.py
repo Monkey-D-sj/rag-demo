@@ -22,6 +22,9 @@ from rag.models.embedding import EmbeddingModel
 
 logger = get_logger()
 
+# 法规知识库 UUID
+REGULATION_KB_ID = "00000000-0000-0000-0000-000000000003"
+
 
 class _IngestDeps(TypedDict, total=False):
     """`ingest_document` 所需依赖,由 arq worker ctx 注入。"""
@@ -91,8 +94,14 @@ async def _extract_and_summarize_tables(
     return blocks
 
 
-async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
-    """web 投递、worker 执行的入库编排。失败置 failed 并 re-raise 供重试。"""
+# 知识库 → 切分策略（硬编码，每个 KB 固定策略）
+_KB_STRATEGY: dict[str, SplitStrategy] = {
+    REGULATION_KB_ID: SplitStrategy.recursive_character,  # 法规
+}
+
+
+async def _ingest(ctx: _IngestDeps, document_id: str) -> None:
+    """入库编排核心逻辑。失败置 failed 并 re-raise 供重试。"""
     pool = ctx["pg"]
     minio = ctx["minio"]
     bucket = ctx["bucket"]
@@ -108,13 +117,18 @@ async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
         if doc is None:
             raise ValueError(f"document not found: {document_id}")
 
+        strategy = _KB_STRATEGY.get(
+            str(doc["knowledge_base_id"]), SplitStrategy.paragraph_semantic,
+        )
+
         data = await get_object(minio, bucket, doc["object_key"])
+
         # parse + chunk 是纯 CPU(GIL 活),合并到一次线程池调用,避免阻塞 event loop
         chunks = await asyncio.to_thread(
             _parse_and_chunk,
             data,
             doc["content_type"],
-            settings.SPLIT_STRATEGY,
+            strategy,
             settings.CHUNK_SIZE,
             settings.CHUNK_OVERLAP,
         )
@@ -172,3 +186,8 @@ async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
         logger.exception("文档入库失败: %s", document_id)
         await store.set_status(pool, document_id, "failed", error=str(e)[:500])
         raise
+
+
+async def ingest_document(ctx: _IngestDeps, document_id: str) -> None:
+    """入库入口：_ingest 内部按 KB 查 _KB_STRATEGY 决定切分策略。"""
+    await _ingest(ctx, document_id)

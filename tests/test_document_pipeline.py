@@ -17,7 +17,7 @@ class _FakeEmbedding:
 
 def _settings(batch=2):
     return SimpleNamespace(
-        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        CHUNK_SIZE=800, CHUNK_OVERLAP=100,
         EMBEDDING_BATCH_SIZE=batch, ENABLE_ENTITY_EXTRACTION=False,
     )
 
@@ -157,7 +157,7 @@ async def test_ingest_cancellation_marks_failed_and_reraises(monkeypatch):
     monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
 
     settings = SimpleNamespace(
-        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        CHUNK_SIZE=800, CHUNK_OVERLAP=100,
         EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=False,
     )
     ctx = {"pg": None, "minio": None, "bucket": "b",
@@ -201,7 +201,7 @@ async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
 
     from types import SimpleNamespace
     settings = SimpleNamespace(
-        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        CHUNK_SIZE=800, CHUNK_OVERLAP=100,
         EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=True,
     )
     ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),
@@ -243,7 +243,7 @@ async def test_ingest_marks_graph_skipped_when_disabled(monkeypatch):
 
     from types import SimpleNamespace
     settings = SimpleNamespace(
-        SPLIT_STRATEGY="fixed_size", CHUNK_SIZE=800, CHUNK_OVERLAP=100,
+        CHUNK_SIZE=800, CHUNK_OVERLAP=100,
         EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=False,
     )
     ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),

@@ -1,6 +1,6 @@
 import asyncio
 
-from rag.config import get_settings
+from rag.config import SplitStrategy, get_settings
 from rag.db.postgres import create_pg_pool, get_cursor
 from rag.document import store
 from rag.document.chunker import chunk
@@ -37,7 +37,7 @@ def _normalize_pieces(pieces) -> list[tuple[str, dict]]:
 async def seed() -> int:
     settings = get_settings()
     text = CORPUS_PATH.read_text(encoding="utf-8")
-    pieces = chunk(settings.SPLIT_STRATEGY, text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
+    pieces = chunk(SplitStrategy.paragraph_semantic, text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
     normalized = _normalize_pieces(pieces)
     if not normalized:
         raise SystemExit("corpus.txt 切块为空")

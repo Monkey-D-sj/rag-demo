@@ -1,10 +1,6 @@
 import hashlib
 
-from rag.api.modules.document.exceptions import (
-    DocumentNotFound,
-    FileTooLarge,
-    UnsupportedFileType,
-)
+from rag.api.modules.document.exceptions import DocumentNotFound
 from rag.api.modules.document.schemas import (
     DocumentListItem,
     DocumentListResponse,
@@ -38,10 +34,6 @@ async def ingest_upload(
     settings = get_settings()
     name = _safe_filename(filename)
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if ext not in ALLOWED_TYPES:
-        raise UnsupportedFileType(f"不支持的文件类型: {ext}")
-    if len(data) > settings.MAX_UPLOAD_MB * 1024 * 1024:
-        raise FileTooLarge("文件超过大小上限")
 
     content_hash = hashlib.sha256(data).hexdigest()
     object_key = f"{knowledge_base_id}/{content_hash[:16]}-{name}"

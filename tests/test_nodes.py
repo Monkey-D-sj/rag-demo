@@ -9,6 +9,7 @@ import rag.agent.nodes.recall.recall as kb_recall_mod
 import rag.agent.nodes.recall_memory.memory as recall_mod
 import rag.agent.nodes.rerank.rerank as rerank_mod
 import rag.agent.nodes.dynamic_topk.topk as topk_mod
+import rag.agent.nodes.parent_expand.expand as parent_expand_mod
 from rag.agent.type import ContextSchema, StreamEventType, stream_event
 
 
@@ -628,6 +629,119 @@ async def test_dynamic_topk_exception_passthrough(monkeypatch):
 
     # 透传原始结果，不抛异常
     assert out["recall_vec_results"] is chunks
+
+
+# ── parent_expand node integration tests ──
+
+
+async def test_parent_expand_enabled_expands(monkeypatch):
+    """启用时同文档多 chunk 应去重并替换 text 为 document_content。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": True}
+    )())
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    chunks = [
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A",
+         "document_content": "全文内容A"},
+        {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B",
+         "document_content": "全文内容A"},
+        {"document_id": "doc-2", "rerank_score": 7.0, "text": "chunk C",
+         "document_content": "全文内容C"},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 2  # doc-1 去重，doc-2 独立
+    # doc-1 取最高 scorerank 的 chunk，text 替换为全文
+    doc1 = next(r for r in results if r["document_id"] == "doc-1")
+    assert doc1["text"] == "全文内容A"
+    assert doc1["rerank_score"] == 9.0
+    # doc-2 不变
+    doc2 = next(r for r in results if r["document_id"] == "doc-2")
+    assert doc2["text"] == "全文内容C"
+
+
+async def test_parent_expand_disabled_passthrough(monkeypatch):
+    """禁用时节点应透传原始结果不做任何修改。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": False}
+    )())
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    chunks = [
+        {"document_id": "doc-1", "text": "chunk A", "document_content": "全文A"},
+        {"document_id": "doc-1", "text": "chunk B", "document_content": "全文A"},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    assert out["recall_vec_results"] is chunks  # 引用不变
+
+
+async def test_parent_expand_no_content_passthrough(monkeypatch):
+    """无 document_content 的 chunk 按文档去重但保留原始 text。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": True}
+    )())
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    chunks = [
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "chunk A"},
+        {"document_id": "doc-1", "rerank_score": 8.0, "text": "chunk B"},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 1  # 按文档去重
+    assert results[0]["text"] == "chunk A"  # 保留原始 text（无 document_content 可展开）
+
+
+async def test_parent_expand_different_docs_kept(monkeypatch):
+    """不同文档各自保留，去重仅在文档内生效。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": True}
+    )())
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    chunks = [
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "A",
+         "document_content": "全文A"},
+        {"document_id": "doc-2", "rerank_score": 8.0, "text": "B",
+         "document_content": "全文B"},
+        {"document_id": "doc-3", "rerank_score": 7.0, "text": "C",
+         "document_content": "全文C"},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 3
+    doc_ids = {r["document_id"] for r in results}
+    assert doc_ids == {"doc-1", "doc-2", "doc-3"}
+
+
+async def test_parent_expand_orphan_chunks_kept(monkeypatch):
+    """无 document_id 的孤立 chunk 应原样保留在末尾。"""
+    monkeypatch.setattr(parent_expand_mod, "get_settings", lambda: type(
+        "S", (), {"PARENT_CHILD_ENABLED": True}
+    )())
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    chunks = [
+        {"document_id": "doc-1", "rerank_score": 9.0, "text": "A",
+         "document_content": "全文A"},
+        {"rerank_score": 5.0, "text": "orphan"},
+    ]
+    state = {"recall_vec_results": chunks, "raw_query": "q"}
+
+    out = await parent_expand_mod.parent_expand(state, runtime)
+
+    results = out["recall_vec_results"]
+    assert len(results) == 2
+    assert results[-1]["text"] == "orphan"  # orphan 在末尾
+    assert "document_id" not in results[-1] or not results[-1]["document_id"]
 
 
 # ── updated route tests ──

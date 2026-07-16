@@ -9,6 +9,7 @@ from rag.agent.nodes.recall.recall import recall
 from rag.agent.nodes.recall_memory.memory import recall_memory
 from rag.agent.nodes.rerank.rerank import rerank
 from rag.agent.nodes.dynamic_topk.topk import dynamic_topk
+from rag.agent.nodes.parent_expand.expand import parent_expand
 from rag.agent.type import ContextSchema, MyState
 
 
@@ -39,6 +40,8 @@ builder.add_node("recall", recall)
 builder.add_node("rerank", rerank)
 # 动态 top-k 截断
 builder.add_node("dynamic_topk", dynamic_topk)
+# Parent-Child Retrieval：chunk → 完整父文档展开
+builder.add_node("parent_expand", parent_expand)
 # 基于知识库生成
 builder.add_node("generate", generate)
 # 范围外直接大模型回答
@@ -50,8 +53,8 @@ builder.add_node("no_results", no_results)
 
 #                                       ┌─ out-of-scope -> direct_answer ──────────────────────────────────────────┐
 # START -> recall_memory -> handle_query ┤                                                                        END
-#                                       └─ in-scope -> recall -> rerank -> dynamic_topk ┬─ generate -> add_memory ─┘
-#                                                                                       └─ no_results ─────────────┘
+#                                       └─ in-scope -> recall -> rerank -> dynamic_topk -> parent_expand ┬─ generate -> add_memory ─┘
+#                                                                                                        └─ no_results ─────────────┘
 builder.add_edge(START, "recall_memory")
 builder.add_edge("recall_memory", "handle_query")
 builder.add_conditional_edges(
@@ -61,8 +64,9 @@ builder.add_conditional_edges(
 )
 builder.add_edge("recall", "rerank")
 builder.add_edge("rerank", "dynamic_topk")
+builder.add_edge("dynamic_topk", "parent_expand")
 builder.add_conditional_edges(
-    "dynamic_topk",
+    "parent_expand",
     _route_after_topk,
     {"generate": "generate", "no_results": "no_results"},
 )

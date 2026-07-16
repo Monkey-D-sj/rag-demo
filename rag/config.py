@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     RERANK_BASE_URL: str = ""
     RERANK_MODEL: str = "qwen3-rerank"
 
+    # ── Parent-Child Retrieval（rerank + dynamic_topk 之后）──
+    PARENT_CHILD_ENABLED: bool = True
+
     # ── 动态 Top-K 截断（rerank 之后）──
     RERANK_DYNAMIC_TOPK_ENABLED: bool = True
     RERANK_DYNAMIC_TOPK_DEFAULT: int = 5

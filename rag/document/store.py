@@ -64,7 +64,8 @@ async def search_chunks(
             f"""
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    1 - (dc.embedding <=> %(emb)s) AS similarity,
-                   d.filename
+                   d.filename,
+                   d.content AS document_content
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE 1=1 {kb_filter}
@@ -97,7 +98,8 @@ async def search_chunks_bm25(
             f"""
             SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
                    paradedb.score(dc.id) AS score,
-                   d.filename
+                   d.filename,
+                   d.content AS document_content
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE dc.text @@@ paradedb.match('text', %(q)s)
@@ -292,6 +294,17 @@ async def force_retry(pool: AsyncConnectionPool, document_id: str) -> None:
             WHERE id = %(id)s
             """,
             {"id": document_id},
+        )
+
+
+async def set_document_content(
+    pool: AsyncConnectionPool, document_id: str, content: str,
+) -> None:
+    """存储解析后的全文，供 parent-child retrieval 使用。"""
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            "UPDATE documents SET content = %(c)s WHERE id = %(id)s",
+            {"c": content, "id": document_id},
         )
 
 

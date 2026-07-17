@@ -69,6 +69,47 @@ class LLMRateLimitError(LLMNonRetryableError):
     pass
 
 
+class LLMTimeoutError(LLMRetryableError):
+    """请求超时 — 可重试,计入熔断"""
+    pass
+
+
+# ── 治理层拒绝（本地产生，非供应商响应） ──────────────────
+
+class GovernanceRejectedError(LLMNonRetryableError):
+    """治理层拒绝基类:限流/熔断在本地拦截,未打到供应商"""
+    pass
+
+
+class RateLimitExceededError(GovernanceRejectedError):
+    """本地限流:RPM/并发等待超限或 429 冷却中"""
+    pass
+
+
+class CircuitOpenError(GovernanceRejectedError):
+    """熔断打开,快速失败"""
+    pass
+
+
+# ── 用户可见的友好文案（chat SSE error 事件用） ────────────
+
+_FRIENDLY_MESSAGES: list[tuple[type[BaseException], str]] = [
+    (RateLimitExceededError, "当前咨询人数较多,请稍后重试"),
+    (CircuitOpenError, "AI 服务暂时不可用,请稍后重试"),
+    (LLMTimeoutError, "回答生成超时,请重试"),
+]
+
+_DEFAULT_FRIENDLY = "服务开小差了,请稍后重试"
+
+
+def friendly_message(exc: BaseException) -> str:
+    """异常 → 用户可见文案。原始异常信息绝不外泄,只进日志。"""
+    for exc_type, msg in _FRIENDLY_MESSAGES:
+        if isinstance(exc, exc_type):
+            return msg
+    return _DEFAULT_FRIENDLY
+
+
 # ── 错误码映射 ──────────────────────────────────────────────
 
 # 可重试：服务端故障

@@ -210,6 +210,51 @@ async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
     assert ("extract_document_entities", ("d1",)) in enqueued
 
 
+async def test_ingest_clears_semantic_cache_on_success(monkeypatch):
+    """入库成功后必须调用 clear_semantic_cache(best-effort)。"""
+    calls = []
+
+    async def _fake_clear(pool):
+        calls.append(pool)
+
+    async def fake_claim(pool, doc_id):
+        return True
+
+    async def fake_get_document(pool, doc_id):
+        return {"object_key": "k1", "content_type": "txt", "knowledge_base_id": "kb1", "filename": "test.pdf"}
+
+    async def fake_store_complete(pool, doc_id, kb, embedded):
+        pass
+
+    async def fake_set_graph_status(pool, doc_id, status, error=None):
+        pass
+
+    async def fake_get_object(client, bucket, key):
+        return b"ignored-by-fake-parse"
+
+    async def fake_set_doc_content(pool, doc_id, full_text):
+        pass
+
+    monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
+    monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
+    monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
+    monkeypatch.setattr(pipe.store, "set_graph_status", fake_set_graph_status)
+    monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
+    monkeypatch.setattr(pipe, "get_object", fake_get_object)
+    monkeypatch.setattr(pipe, "parse", lambda data, ct: "full text")
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: [("a", {})])
+    monkeypatch.setattr(pipe, "clear_semantic_cache", _fake_clear)
+
+    ctx = {
+        "pg": "fake-pool", "minio": None, "bucket": "b",
+        "embedding": _FakeEmbedding(), "settings": _settings(batch=2), "redis": None,
+    }
+
+    await pipe.ingest_document(ctx, "d1")
+
+    assert calls == ["fake-pool"]
+
+
 async def test_ingest_marks_graph_skipped_when_disabled(monkeypatch):
     skipped = []
 

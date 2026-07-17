@@ -39,9 +39,8 @@ def test_worker_registers_ingest_function():
 
 
 def test_worker_registers_dlq_cron_job():
-    assert len(WorkerSettings.cron_jobs) == 1
-    cron = WorkerSettings.cron_jobs[0]
-    assert cron.coroutine is retry_failed_documents
+    assert len(WorkerSettings.cron_jobs) == 2
+    cron = next(c for c in WorkerSettings.cron_jobs if c.coroutine is retry_failed_documents)
     # cron.minute is a set, e.g. {0, 5, 10, ..., 55}
     assert 0 in cron.minute
     assert 55 in cron.minute
@@ -64,3 +63,27 @@ def test_worker_registers_extract_function():
 def test_extract_document_entities_timeout():
     fx = next(f for f in WorkerSettings.functions if f.name == "extract_document_entities")
     assert fx.timeout_s == 900
+
+
+def test_worker_registers_semantic_cache_cron():
+    """purge_semantic_cache 必须在 cron_jobs 中注册,结构断言而非源码字符串匹配。"""
+    cron = next(
+        (c for c in WorkerSettings.cron_jobs if c.coroutine is wm.purge_semantic_cache),
+        None,
+    )
+    assert cron is not None
+    assert 0 in cron.minute
+
+
+async def test_purge_semantic_cache_calls_purge_expired(monkeypatch):
+    calls = []
+
+    async def _fake_purge(pool, ttl_hours):
+        calls.append((pool, ttl_hours))
+
+    monkeypatch.setattr(wm, "purge_expired", _fake_purge)
+    ctx = {"pg": object()}
+    await wm.purge_semantic_cache(ctx)
+
+    assert len(calls) == 1
+    assert calls[0][1] == 168

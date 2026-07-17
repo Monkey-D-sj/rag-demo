@@ -6,6 +6,7 @@ from neo4j import AsyncDriver
 from psycopg_pool import AsyncConnectionPool
 from typing import TypedDict
 
+from rag.agent.cache import purge_expired
 from rag.common.logging import get_logger, setup_logging
 from rag.common.minio_client import create_minio_client
 from rag.config import Settings, get_settings
@@ -84,6 +85,15 @@ async def retry_failed_documents(ctx: dict) -> None:
             logger.exception("自愈重试失败: %s", doc_id)
 
 
+async def purge_semantic_cache(ctx: dict) -> None:
+    """每小时物理删除过期语义缓存行(lookup 已按 TTL 过滤,此处仅回收空间)。"""
+    settings = get_settings()
+    try:
+        await purge_expired(ctx["pg"], settings.SEMANTIC_CACHE_TTL_HOURS)
+    except Exception:  # noqa: BLE001 - 清理失败等下一轮
+        logger.warning("语义缓存过期清理失败", exc_info=True)
+
+
 async def _extract_wrapper(ctx: dict, document_id: str) -> None:
     """neo4j 未启用时跳过实体抽取，避免运行时连接错误。"""
     if ctx.get("neo4j") is None:
@@ -102,7 +112,8 @@ class WorkerSettings:
     on_startup = on_startup
     on_shutdown = on_shutdown
     cron_jobs = [
-        cron(retry_failed_documents, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55})
+        cron(retry_failed_documents, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(purge_semantic_cache, minute={0}),
     ]
     max_tries = 3
     job_timeout = 300

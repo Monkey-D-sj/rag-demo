@@ -7,6 +7,7 @@ from typing import TypedDict
 from minio import Minio
 from psycopg_pool import AsyncConnectionPool
 
+from rag.agent.cache import clear_semantic_cache
 from rag.common.logging import get_logger
 from rag.common.minio_client import get_object, get_object_to_file
 from rag.config import Settings
@@ -190,6 +191,12 @@ async def _ingest(ctx: _IngestDeps, document_id: str) -> None:
         await store.store_chunks_and_complete(
             pool, document_id, doc["knowledge_base_id"], embedded
         )
+
+        # 入库成功,历史缓存答案可能已过时,整表失效(best-effort)
+        try:
+            await clear_semantic_cache(pool)
+        except Exception:  # noqa: BLE001 - 缓存失效失败不影响入库结果
+            logger.warning("清空语义缓存失败", exc_info=True)
 
         # 向量入库已完成;实体图抽取为 best-effort 增强,投递独立任务(阶段一)。
         if settings.ENABLE_ENTITY_EXTRACTION:

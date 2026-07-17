@@ -79,9 +79,9 @@ START → recall_memory → handle_query ┤                                    
 | Node | Module | Role |
 |------|--------|------|
 | `recall_memory` | `nodes/recall_memory/` | Short-term (Redis) + Long-term (pgvector) memory recall via `MemoryManagerProtocol` |
-| `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全). Outputs `is_out_of_scope` and `rewrite_query` |
+| `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全) + entity extraction for the graph recall leg. Outputs `is_out_of_scope`, `rewrite_query`, and `query_entities` |
 | `cache_lookup` | `nodes/cache_lookup/` | Semantic cache lookup (pgvector similarity, global scope); on hit, streams the cached answer/citations and sets `cache_hit=True` to skip retrieval and generation (gated by `SEMANTIC_CACHE_ENABLED`; pass-through if disabled or not injected) |
-| `recall` | `nodes/recall/` | Hybrid retrieval: vector (pgvector cosine) + BM25 (ParadeDB jieba) concurrent recall, vec-first dedup merge |
+| `recall` | `nodes/recall/` | Hybrid retrieval: vector (pgvector cosine) + BM25 (ParadeDB jieba) + graph (Neo4j 1-hop over `query_entities`, conditional on `GRAPH_RECALL_ENABLED`) concurrent recall, RRF fusion merge |
 | `neighbor_expand` | `nodes/neighbor_expand/` | Sentence Window: fetch ±N adjacent chunks from the same document (gated by `SENTENCE_WINDOW_ENABLED`; pass-through when disabled or pool missing) |
 | `rerank` | `nodes/rerank/` | Semantic re-ranking via Qwen3-Rerank (optional; pass-through if no reranker injected) |
 | `dynamic_topk` | `nodes/dynamic_topk/` | Adjacent-score-gap dynamic truncation of reranked results (with plateau protection) |
@@ -109,6 +109,7 @@ START → recall_memory → handle_query ┤                                    
 - `session_id`, `raw_query`, `context` — input fields
 - `is_out_of_scope` — set by `handle_query`; determines routing to `direct_answer` vs `cache_lookup`
 - `rewrite_query` — rewritten query from `handle_query`; falls back to `raw_query` on structured-output failure
+- `query_entities` — entities extracted by `handle_query` (empty list on out-of-scope or structured-output failure); passed to `recall` as the graph leg's seed entities
 - `cache_hit` — set by `cache_lookup` on a semantic cache hit; `_route_after_cache` checks it to route straight to `add_memory`, skipping retrieval and generation
 - `recall_bm25_results`, `recall_vec_results` — populated by `recall`; `recall_vec_results` is then transformed in place by `neighbor_expand` → `rerank` → `dynamic_topk` → `parent_expand` and used by `generate`; `_route_after_topk` checks `recall_vec_results` emptiness
 - `generated` — final LLM response, persisted by `add_memory`
@@ -127,11 +128,11 @@ Structured output uses `json_mode` (not function calling) with explicit JSON Sch
 
 Streaming (`astream`) does NOT retry — retry semantics for mid-stream failures are intentionally deferred.
 
-### Hybrid retrieval: vector + BM25 with vec-first dedup merge
+### Hybrid retrieval: vector + BM25 + graph with RRF fusion
 
-`KnowledgeRetriever.search(query, knowledge_base_id, top_k)` fires vector recall (pgvector cosine distance) and BM25 recall (ParadeDB `pg_search` with jieba tokenizer) concurrently via `asyncio.gather`. BM25 failures are caught and degraded to empty results — vector is the critical path. Both legs fetch `top_k * candidate_multiplier` candidates, then `_merge_dedup()` merges: vec-first deduplication, marking `sources` on each row (`["vec"]`, `["bm25"]`, or `["vec", "bm25"]`). Final ranking is delegated to the reranker node.
+`KnowledgeRetriever.search(query, knowledge_base_ids, top_k, query_emb=None, entities=None)` fires three concurrent legs via `asyncio.gather`: vector recall (pgvector cosine distance), BM25 recall (ParadeDB `pg_search` with jieba tokenizer), and graph recall (1-hop expansion over `entities` via `GraphRetriever`, only when a graph retriever is injected and `entities` is non-empty). BM25 and graph failures are both caught and degraded to empty results — vector is the critical path, and the graph leg gets the same degrade-to-empty treatment as BM25. Each leg fetches `top_k * candidate_multiplier` candidates, then `_merge_dedup()` fuses them via Reciprocal Rank Fusion (RRF, constant `RETRIEVER_RRF_K`): per-leg RRF scores are summed for chunks hit by multiple legs, marking `sources` on each row (`["vec"]`, `["bm25"]`, `["graph"]`, or any combination). Final ranking is delegated to the reranker node.
 
-Lexical queries are sanitized (punctuation stripped) before BM25 to avoid noise. Vector results below `RETRIEVER_VEC_SIMILARITY_THRESHOLD` are filtered before merging.
+Lexical queries are sanitized (punctuation stripped) before BM25 to avoid noise. Vector results below `RETRIEVER_VEC_SIMILARITY_THRESHOLD` are filtered before merging. `KnowledgeRetriever.has_graph` reports whether a graph retriever is injected (used by eval's `graph_fused` leg to decide whether to run).
 
 ### Embedding: batch size limit
 
@@ -159,11 +160,11 @@ Entity extraction (graph pipeline) is a separate ARQ task (`extract_document_ent
 
 All DB access goes through `get_cursor(pool)` — an async context manager yielding dict-row cursors. Each connection auto-registers pgvector via `_configure`. Transactions auto-commit on clean exit and rollback on exception. There is no ORM; all queries are raw SQL. Alembic migrations live in `alembic/versions/` and use the sync `PG_SYNC_URL` (note: migrations use `psycopg` sync driver, not the async pool).
 
-### Retrieval eval system: 7-leg breakdown + gate + history
+### Retrieval eval system: 8-leg breakdown + gate + history
 
 `rag/eval/` provides a retrieval quality regression suite:
-- **Golden dataset**: `rag/eval/datasets/retrieval_golden.jsonl` — hand-curated query → relevant doc_ids pairs (西游记 themed)
-- **7 evaluation legs**: `fused` (混合改写), `fused_reranked` (混合重排), `raw` (混合原文), `vec_only` (向量改写), `raw_vec` (向量原文), `bm25_only` (BM25改写), `raw_bm25` (BM25原文) — the `raw*` legs only run when golden items carry `rewrite_query`; `fused_reranked` only when a reranker is injected
+- **Golden dataset**: `rag/eval/datasets/retrieval_golden.jsonl` — hand-curated query → relevant doc_ids pairs (西游记 themed); items may also carry an optional `entities` annotation consumed by the `graph_fused` leg
+- **8 evaluation legs**: `fused` (混合改写), `fused_reranked` (混合重排), `raw` (混合原文), `vec_only` (向量改写), `raw_vec` (向量原文), `bm25_only` (BM25改写), `raw_bm25` (BM25原文), `graph_fused` (三路融合: 向量+BM25+图) — the `raw*` legs only run when golden items carry `rewrite_query`; `fused_reranked` only when a reranker is injected; `graph_fused` only when `retriever.has_graph` is true and the golden item carries `entities`
 - **Metrics**: hit@k, recall@k, ndcg@k, mrr — computed per-query, then aggregated
 - **History**: each run saves `history/YYYYMMDD-HHMMSS-{commit}.json` with per-leg aggregate + per-query breakdown
 - **Gate**: `gate()` compares aggregate metrics against `baseline.json` thresholds; fails on >3% relative drop in recall@5 or mrr. `rewrite_gate()` separately checks that query rewriting doesn't degrade retrieval

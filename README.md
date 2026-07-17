@@ -9,7 +9,7 @@
            ├─ recall_memory   → 短期(Redis) + 长期(pgvector)记忆召回
            ├─ handle_query    → 查询改写 + 范围判断(LLM 结构化输出)
            ├─ cache_lookup    → 语义缓存查询(命中跳过检索与生成)
-           ├─ recall          → 向量(pgvector) + BM25(ParadeDB/jieba) 并发检索
+           ├─ recall          → 向量(pgvector) + BM25(ParadeDB/jieba) + 图谱(Neo4j,可选) 三路并发检索,RRF 融合
            ├─ neighbor_expand → Sentence Window: 拉取同文档相邻 chunk 扩展上下文
            ├─ rerank          → Qwen3-Rerank 语义重排序
            ├─ dynamic_topk    → 相邻分差法动态 top-k 截断
@@ -35,7 +35,7 @@
 | **API 框架** | FastAPI + Uvicorn |
 | **Agent 编排** | LangGraph（13 节点状态图 + 条件分支） |
 | **向量 DB** | PostgreSQL + pgvector + ParadeDB（BM25 + jieba 分词） |
-| **图数据库** | Neo4j（实体关系抽取，可选） |
+| **图数据库** | Neo4j GraphRAG（实体抽取入图 + 查询实体 1 跳扩展第三路召回,可选） |
 | **重排序** | Qwen3-Rerank（DashScope API） |
 | **缓存/短期记忆** | Redis |
 | **对象存储** | MinIO |
@@ -46,7 +46,7 @@
 | **可观测性** | Langfuse（LLM 追踪）+ Loki + Grafana（日志聚合） |
 | **前端** | React 18 + TypeScript + TailwindCSS + Vite |
 | **容器化** | Docker Compose（9 个服务一体化部署） |
-| **评测** | 自建 golden 数据集 + 4 指标 + 7 路分轨 + 基线门禁 |
+| **评测** | 自建 golden 数据集 + 4 指标 + 8 路分轨 + 基线门禁 |
 
 ## 快速开始
 
@@ -171,9 +171,9 @@ START → recall_memory → handle_query ┤                                    
 | # | 节点 | 职责 |
 |---|---|---|
 | 1 | `recall_memory` | 短期记忆（Redis 最近 N 轮）+ 长期记忆（pgvector 语义搜索）并行召回 |
-| 2 | `handle_query` | LLM 结构化输出：范围判断（闲聊/编程→直接兜底）+ 指代消解改写 |
+| 2 | `handle_query` | LLM 结构化输出：范围判断（闲聊/编程→直接兜底）+ 指代消解改写 + 实体抽取(图召回用) |
 | 3 | `cache_lookup` | 语义缓存查询(pgvector 相似度命中,全局范围);命中直接下发缓存答案与引用,跳过检索与生成 |
-| 4 | `recall` | 向量（pgvector cosine）+ BM25（ParadeDB jieba）并发检索，去重合并 |
+| 4 | `recall` | 向量（pgvector cosine）+ BM25（ParadeDB jieba）+ 图谱(Neo4j 1 跳,条件启用) 三路并发检索,RRF 融合 |
 | 5 | `neighbor_expand` | Sentence Window:拉取同文档相邻 chunk 扩展上下文 |
 | 6 | `rerank` | Qwen3-Rerank 语义重排序（可选） |
 | 7 | `dynamic_topk` | 相邻分差法动态 top-k 截断 |
@@ -209,7 +209,7 @@ START → recall_memory → handle_query ┤                                    
 
 **评测指标**：hit@k / recall@k / NDCG@k / MRR
 
-**7 路分轨**：混合检索/纯向量/纯 BM25 各取改写前与改写后（6 路），注入 reranker 时追加混合重排（fused_reranked）完整链路，一次跑完输出对比表格，可精确定位回归来源。
+**8 路分轨**：混合检索/纯向量/纯 BM25 各取改写前与改写后（6 路），注入 reranker 时追加混合重排（fused_reranked）完整链路，一次跑完输出对比表格，可精确定位回归来源。图召回可用(Neo4j + GRAPH_RECALL_ENABLED)且条目带实体标注时,追加三路融合轨 graph_fused,为条件轨。
 
 **门禁机制**：核心指标（recall@5、MRR）相对基线下降超过 3% 即阻断；改写质量独立门禁（改写不得降低检索质量）。
 
@@ -269,11 +269,11 @@ rag-demo/
 │   │   ├── chunker.py          #   多策略切块
 │   │   ├── pipeline.py         #   入库流水线
 │   │   ├── store.py            #   数据库 CRUD
-│   │   ├── retriever.py        #   混合检索(向量+BM25→去重合并)
+│   │   ├── retriever.py        #   混合检索(向量+BM25+图→RRF 融合)
 │   │   └── entity_extraction.py#   实体抽取
 │   ├── eval/                   # 检索评测
 │   │   ├── run.py              #   CLI 入口 (rag-eval)
-│   │   ├── harness.py          #   评测编排 (7 路分轨)
+│   │   ├── harness.py          #   评测编排 (8 路分轨)
 │   │   ├── metrics.py          #   指标计算 + 门禁
 │   │   ├── datasets/           #   golden 集
 │   │   └── baseline.json       #   基线数据
@@ -329,6 +329,7 @@ rag-demo/
 | `SPLIT_STRATEGY` | 切分策略 | `paragraph_semantic` |
 | `ENABLE_ENTITY_EXTRACTION` | 开启实体抽取 | `false` |
 | `NEO4J_ENABLED` | 开启 Neo4j | `false` |
+| `GRAPH_RECALL_ENABLED` | 图召回第三路(需 Neo4j) | `false` |
 | `LANGFUSE_ENABLED` | 开启 Langfuse 追踪 | `false` |
 | `LOKI_ENABLED` | 推送日志到 Loki | `false` |
 | `LOG_LEVEL` | 日志级别 | `INFO` |

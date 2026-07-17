@@ -25,7 +25,9 @@ class _FakeLLM:
         from rag.agent.nodes.query.query import QueryRewriteOutput
 
         self.calls.append(messages)
-        return QueryRewriteOutput(rewrite_query="rewritten", is_out_of_scope=False)
+        return QueryRewriteOutput(
+            rewrite_query="rewritten", is_out_of_scope=False, entities=["孙悟空"]
+        )
 
 
 class _FakeMM:
@@ -114,6 +116,33 @@ async def test_handle_query_detects_out_of_scope(monkeypatch):
     assert out["rewrite_query"] == "你好啊"
     assert out["is_out_of_scope"] is True
     assert len(llm.calls) == 1
+
+
+async def test_handle_query_writes_entities(monkeypatch):
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+    llm = _FakeLLM()
+    runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
+    state = {"session_id": "s1", "raw_query": "他为什么大闹天宫", "context": ""}
+
+    out = await query_mod.handle_query(state, runtime)
+
+    assert out["query_entities"] == ["孙悟空"]
+
+
+async def test_handle_query_failure_degrades_entities_empty(monkeypatch):
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _BoomLLM:
+        async def ainvoke_structured(self, messages, schema):
+            raise RuntimeError("llm down")
+
+    runtime = SimpleNamespace(context=ContextSchema(llm=_BoomLLM(), memory_manager=None))
+    state = {"session_id": "s1", "raw_query": "q", "context": ""}
+
+    out = await query_mod.handle_query(state, runtime)
+
+    assert out["query_entities"] == []
+    assert out["rewrite_query"] == "q"
 
 
 async def test_direct_answer_uses_direct_prompt(monkeypatch):

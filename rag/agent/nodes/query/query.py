@@ -19,6 +19,10 @@ class QueryRewriteOutput(BaseModel):
     is_out_of_scope: bool = Field(
         description="查询是否与知识库无关（闲聊、编程、通用常识等可直接由大模型回答的问题）"
     )
+    entities: list[str] = Field(
+        default_factory=list,
+        description="查询中出现的专有名词实体(人名/地名/物名等);is_out_of_scope 为 true 或查询无实体时返回空数组",
+    )
 
 
 async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
@@ -43,6 +47,7 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
         )
         state["rewrite_query"] = result.rewrite_query
         state["is_out_of_scope"] = result.is_out_of_scope
+        state["query_entities"] = result.entities
 
         if result.is_out_of_scope:
             logger.info(
@@ -55,5 +60,6 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
         logger.warning("查询分析结构化输出失败，降级为透传原始查询", exc_info=True)
         state["rewrite_query"] = state["raw_query"]
         state["is_out_of_scope"] = False
+        state["query_entities"] = []
 
     return state

@@ -119,3 +119,42 @@ async def test_find_stalled_documents_covers_pending_and_processing():
         )
     finally:
         await pool.close()
+
+
+@pytest.mark.integration
+async def test_get_documents_content_batch_and_slim_search_rows():
+    """get_documents_content 按 doc_id 批量取全文；检索行不再携带 document_content。"""
+    pool = await create_pg_pool(get_settings())
+    try:
+        doc_id = await store.create_document(
+            pool,
+            knowledge_base_id=BOOK_KB_ID,
+            filename="content.txt",
+            content_type="txt",
+            size_bytes=1,
+            content_hash="hash-content",
+            object_key="kco",
+        )
+        await store.set_document_content(pool, doc_id, "父文档全文")
+        emb = [0.0] * get_settings().EMBEDDING_DIM
+        await store.store_chunks_and_complete(
+            pool, doc_id, BOOK_KB_ID, [(0, "c0", emb, {})]
+        )
+
+        # 批量补查：命中返回 {id: content}，未知 id 不出现在结果里
+        contents = await store.get_documents_content(pool, [doc_id])
+        assert contents == {doc_id: "父文档全文"}
+        assert await store.get_documents_content(
+            pool, ["00000000-0000-0000-0000-0000000000ff"]
+        ) == {}
+        assert await store.get_documents_content(pool, []) == {}
+
+        # 检索行瘦身：两路 SQL 都不再携带全文
+        vec_rows = await store.search_chunks(pool, emb, [BOOK_KB_ID], top_k=5)
+        assert vec_rows
+        assert all("document_content" not in r for r in vec_rows)
+
+        bm25_rows = await store.search_chunks_bm25(pool, "c0", [BOOK_KB_ID], top_k=5)
+        assert all("document_content" not in r for r in bm25_rows)
+    finally:
+        await pool.close()

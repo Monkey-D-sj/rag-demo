@@ -331,29 +331,6 @@ async def set_document_content(
         )
 
 
-async def get_documents_content(
-    pool: AsyncConnectionPool, document_ids: list[str]
-) -> dict[str, str]:
-    """按 doc_id 批量取父文档全文，供 parent-child retrieval 展开时补查。
-
-    检索 SQL 不携带 d.content（避免每次召回都拖全量文档文本），
-    仅对确定要展开的文档按需取回。content 为空的文档不出现在结果中。
-    """
-    if not document_ids:
-        return {}
-    async with get_cursor(pool) as cur:
-        await cur.execute(
-            """
-            SELECT id, content
-            FROM documents
-            WHERE id = ANY(%(ids)s::uuid[]) AND content IS NOT NULL
-            """,
-            {"ids": document_ids},
-        )
-        rows = await cur.fetchall()
-    return {str(row["id"]): row["content"] for row in rows}
-
-
 async def set_status(
     pool: AsyncConnectionPool, document_id: str, status: str, *, error: str | None = None
 ) -> None:

@@ -19,3 +19,4 @@ rag/eval/history/
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/tsconfig.tsbuildinfo

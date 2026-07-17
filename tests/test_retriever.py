@@ -194,3 +194,25 @@ async def test_rank_summary_preview_truncated_to_80(monkeypatch, caplog):
     rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
     assert len(rec.vec_hits[0]["text_preview"]) == 80
     assert len(rec.hits[0]["text_preview"]) == 80
+
+
+# ── fetch_parent_contents ──
+
+
+async def test_fetch_parent_contents_delegates_to_store(monkeypatch):
+    """按 doc_id 批量补查父文档全文：委托给 store.get_documents_content。"""
+    import rag.document.retriever as mod
+
+    called = {}
+
+    async def fake_get_contents(pool, document_ids):
+        called["ids"] = list(document_ids)
+        return {"doc-1": "全文A"}
+
+    monkeypatch.setattr(mod.store, "get_documents_content", fake_get_contents)
+    r = KnowledgeRetriever(None, _FakeEmbedding(), _settings())
+
+    out = await r.fetch_parent_contents(["doc-1", "doc-2"])
+
+    assert out == {"doc-1": "全文A"}
+    assert called["ids"] == ["doc-1", "doc-2"]

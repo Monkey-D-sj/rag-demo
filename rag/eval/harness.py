@@ -88,7 +88,8 @@ async def run_eval(
 
     fused / vec_only / bm25_only 使用改写后查询；
     当 golden 标注了 rewrite_query 时追加 raw / raw_vec / raw_bm25 原始查询对照；
-    当 reranker 注入时追加 fused_reranked 完整链路。
+    当 reranker 注入时追加 fused_reranked 完整链路;
+    当 retriever 带图召回且条目带 entities 标注时追加 graph_fused 三路融合。
     """
     print(phase("开始评测"))
 
@@ -137,9 +138,11 @@ async def run_eval(
 
         # ── graph_fused:三路(向量+BM25+图)融合,仅当图召回可用且条目带实体标注 ──
         if retriever.has_graph and item.entities:
-            graph_rows = await retriever.search(rw, None, top_k, entities=item.entities)
+            graph_rows = await retriever.search(
+                rw, None, top_k, query_emb=rw_emb, entities=item.entities,
+            )
             graph_pq.append({
-                "id": item.id, "query": rw,
+                "id": item.id, "query": item.query,
                 **evaluate_query([r["text"] for r in graph_rows], item.gold_snippets, ks),
                 "chunks": _chunk_preview(graph_rows),
             })

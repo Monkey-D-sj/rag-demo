@@ -82,8 +82,26 @@ async def lifespan(app: FastAPI):
         logger.info("初始化 LLM 模型")
         app.state.llm = NormalModel(settings, guard=app.state.guard)
         logger.info("LLM 模型初始化完成")
+        if settings.NEO4J_ENABLED:
+            logger.info("初始化 neo4j 图数据库")
+            app.state.neo4j = create_neo4j_driver(settings)
+            stack.push_async_callback(_close("neo4j 图数据库", app.state.neo4j.close))
+            logger.info("neo4j 图数据库初始化完成")
+        else:
+            logger.info("neo4j 未启用，跳过")
+            app.state.neo4j = None
         logger.info("初始化知识检索器")
-        app.state.retriever = KnowledgeRetriever(pool, embedding, settings)
+        graph_retriever = None
+        if app.state.neo4j is not None and settings.GRAPH_RECALL_ENABLED:
+            from rag.graph.retriever import GraphRetriever
+
+            graph_retriever = GraphRetriever(
+                app.state.neo4j, settings.NEO4J_DATABASE, pool
+            )
+            logger.info("图召回已启用(第三路)。")
+        app.state.retriever = KnowledgeRetriever(
+            pool, embedding, settings, graph_retriever=graph_retriever
+        )
         logger.info("知识检索器初始化完成")
         logger.info("初始化重排序器")
         if settings.RERANK_ENABLED and settings.RERANK_BASE_URL:
@@ -116,14 +134,6 @@ async def lifespan(app: FastAPI):
         # minio 为同步 SDK,内部 urllib3 连接池随对象回收,无需显式关闭
         app.state.minio = create_minio_client(settings)
         logger.info("minio 客户端初始化完成")
-        if settings.NEO4J_ENABLED:
-            logger.info("初始化 neo4j 图数据库")
-            app.state.neo4j = create_neo4j_driver(settings)
-            stack.push_async_callback(_close("neo4j 图数据库", app.state.neo4j.close))
-            logger.info("neo4j 图数据库初始化完成")
-        else:
-            logger.info("neo4j 未启用，跳过")
-            app.state.neo4j = None
         logger.info("初始化 arq 任务队列")
         app.state.arq_pool = await create_pool(
             RedisSettings(

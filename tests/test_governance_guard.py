@@ -137,3 +137,23 @@ async def test_create_guard_disabled_returns_none(monkeypatch):
         assert create_guard(object(), object(), source="api") is None
     finally:
         get_governance_settings.cache_clear()
+
+
+async def test_acquire_non_retryable_non_429_only_releases():
+    limiter, breaker = _FakeLimiter(), _FakeBreaker()
+    with pytest.raises(ValueError):
+        async with _guard(limiter, breaker).acquire("chat"):
+            raise ValueError("plain error")
+    assert breaker.failures == []       # 不可重试异常不计熔断
+    assert limiter.cooldowns == []      # 非 429 不触发冷却
+    assert limiter.released == [("chat", "member-1")]  # 坑位仍释放
+
+
+async def test_track_records_failed_status_on_generic_error():
+    recorder = _FakeRecorder()
+    with pytest.raises(RuntimeError):
+        async with _guard(recorder=recorder).track("chat", "m") as t:
+            t.attempts += 1
+            raise RuntimeError("boom")
+    rec = recorder.records[0]
+    assert (rec.status, rec.error_type) == ("failed", "RuntimeError")

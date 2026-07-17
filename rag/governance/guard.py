@@ -83,12 +83,21 @@ class LLMGuard:
         except BaseException as e:
             if is_retryable(e):
                 # 可重试集合(5xx/网络/超时)与熔断计数集合一致
-                await self._breaker.record_failure(quota, probe)
+                try:
+                    await self._breaker.record_failure(quota, probe)
+                except Exception:  # noqa: BLE001 - 上报失败不阻断原始异常
+                    logger.warning("记录熔断失败异常", exc_info=True)
             if _is_provider_429(e):
-                await self._limiter.start_cooldown(quota, _retry_after_seconds(e))
+                try:
+                    await self._limiter.start_cooldown(quota, _retry_after_seconds(e))
+                except Exception:  # noqa: BLE001 - 上报失败不阻断原始异常
+                    logger.warning("记录 429 冷却异常", exc_info=True)
             raise
         else:
-            await self._breaker.record_success(quota, probe)
+            try:
+                await self._breaker.record_success(quota, probe)
+            except Exception:  # noqa: BLE001 - 上报失败不阻断正常返回
+                logger.warning("记录熔断成功异常", exc_info=True)
         finally:
             await self._limiter.release(quota, member)
 
@@ -106,14 +115,17 @@ class LLMGuard:
             error_type = type(e).__name__
             raise
         finally:
-            self._recorder.record(CallRecord(
-                call_type=call_type,
-                model=model,
-                status=status,
-                attempts=tracker.attempts,
-                latency_ms=int((time.perf_counter() - t0) * 1000),
-                session_id=current_session_id(),
-                error_type=error_type,
-                input_tokens=tracker.input_tokens,
-                output_tokens=tracker.output_tokens,
-            ))
+            try:
+                self._recorder.record(CallRecord(
+                    call_type=call_type,
+                    model=model,
+                    status=status,
+                    attempts=tracker.attempts,
+                    latency_ms=int((time.perf_counter() - t0) * 1000),
+                    session_id=current_session_id(),
+                    error_type=error_type,
+                    input_tokens=tracker.input_tokens,
+                    output_tokens=tracker.output_tokens,
+                ))
+            except Exception:  # noqa: BLE001 - 统计写失败不阻断调用
+                logger.warning("llm_call_log 记录异常", exc_info=True)

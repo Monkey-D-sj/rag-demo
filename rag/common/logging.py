@@ -53,6 +53,11 @@ def reset_session(token: contextvars.Token) -> None:
     _session_id_var.reset(token)
 
 
+def current_session_id() -> str | None:
+    """读取当前异步上下文绑定的 session_id(无则 None)。供治理层统计记录使用。"""
+    return _session_id_var.get()
+
+
 class _SessionContextFilter(logging.Filter):
     """把 contextvar 中的 session_id 注入日志记录;显式 extra 优先。"""
 

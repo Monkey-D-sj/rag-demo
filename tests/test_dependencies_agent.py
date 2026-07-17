@@ -56,8 +56,9 @@ def test_lifespan_wires_graph_retriever_conditionally():
 
     import rag.api.main as api_main
 
-    src = inspect.getsource(api_main)
+    src = inspect.getsource(api_main.lifespan)
     assert "GRAPH_RECALL_ENABLED" in src
     assert "GraphRetriever(" in src
-    # neo4j 初始化必须在 retriever 构造之前
+    # neo4j 初始化必须在 retriever 构造之前(限定 lifespan 函数体源码,
+    # 避免模块顶层 import 行使断言恒真)
     assert src.index("create_neo4j_driver") < src.index("KnowledgeRetriever(")

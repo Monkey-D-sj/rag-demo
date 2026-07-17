@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 
 import httpx
-import pytest
 
 from rag.common.exception import CircuitOpenError
 from rag.config import Settings

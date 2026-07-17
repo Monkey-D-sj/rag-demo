@@ -20,6 +20,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from rag.agent.type import StreamEventType
+from rag.common.exception import friendly_message
 
 
 # ── 事件模型 ────────────────────────────────────────────
@@ -168,7 +169,7 @@ class ChatStream:
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: object
     ) -> None:
         if exc is not None:
-            await self.error(str(exc))
+            await self.error(friendly_message(exc))
         self.close()
 
     # ── Async Iterable（供 FastAPI StreamingResponse 消费）──

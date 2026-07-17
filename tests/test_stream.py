@@ -76,6 +76,8 @@ async def test_stream_error_then_done():
 @pytest.mark.asyncio
 async def test_stream_auto_error_on_exception():
     """__aexit__ 收到异常时自动发送 error + [DONE]。"""
+    from rag.common.exception import friendly_message
+
     stream = ChatStream()
     try:
         async with stream:
@@ -86,7 +88,7 @@ async def test_stream_auto_error_on_exception():
     output = "".join([chunk async for chunk in stream])
     events = _parse_sse(output)
 
-    assert events[0] == stream_event(StreamEventType.ERROR, "llm down")
+    assert events[0] == stream_event(StreamEventType.ERROR, friendly_message(RuntimeError("llm down")))
     assert events[-1] == "[DONE]"
 
 

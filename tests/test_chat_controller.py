@@ -7,6 +7,7 @@ import rag.api.modules.chat.controller as controller_mod
 import rag.api.modules.chat.service as service_mod
 from rag.agent.type import StreamEventType, stream_event
 from rag.api.dependencies.agent import get_llm, get_memory_manager, get_retriever
+from rag.common.exception import friendly_message
 
 
 async def _fake_invoke(session_id, query, context, config=None):
@@ -38,6 +39,7 @@ def _client(monkeypatch, fake_invoke):
     app.dependency_overrides[get_memory_manager] = lambda: object()
     app.dependency_overrides[get_llm] = lambda: object()
     app.dependency_overrides[get_retriever] = lambda: object()
+    app.state.pg = None  # controller 传 pool=request.app.state.pg
     return TestClient(app)
 
 
@@ -71,4 +73,4 @@ def test_chat_controller_emits_error_frame(monkeypatch):
     payloads = _parse_sse(resp.text)
     assert payloads[-1] == "[DONE]"
     events = [json.loads(p) for p in payloads if p != "[DONE]"]
-    assert events[-1] == stream_event(StreamEventType.ERROR, "llm down")
+    assert events[-1] == stream_event(StreamEventType.ERROR, friendly_message(RuntimeError("llm down")))

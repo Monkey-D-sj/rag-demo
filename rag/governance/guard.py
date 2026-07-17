@@ -93,11 +93,12 @@ class LLMGuard:
                 except Exception:  # noqa: BLE001 - 上报失败不阻断原始异常
                     logger.warning("记录 429 冷却异常", exc_info=True)
             raise
-        else:
-            try:
-                await self._breaker.record_success(quota, probe)
-            except Exception:  # noqa: BLE001 - 上报失败不阻断正常返回
-                logger.warning("记录熔断成功异常", exc_info=True)
+
+        # yield 成功(无异常)才走到这里
+        try:
+            await self._breaker.record_success(quota, probe)
+        except Exception:  # noqa: BLE001 - 上报失败不阻断正常返回
+            logger.warning("记录熔断成功异常", exc_info=True)
         finally:
             await self._limiter.release(quota, member)
 

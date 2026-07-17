@@ -36,6 +36,7 @@
 | **对象存储** | MinIO |
 | **任务队列** | ARQ（异步文档入库 + 自愈 cron） |
 | **数据库迁移** | Alembic |
+| **LLM 治理** | 滑动窗口 RPM + 并发 ZSET 信号量 + Redis 三态熔断 + 成本统计 |
 | **可观测性** | Langfuse（LLM 追踪）+ Loki + Grafana（日志聚合） |
 | **前端** | React 18 + TypeScript + TailwindCSS + Vite |
 | **容器化** | Docker Compose（9 个服务一体化部署） |
@@ -256,6 +257,12 @@ rag-demo/
 │   │   ├── metrics.py          #   指标计算 + 门禁
 │   │   ├── datasets/           #   golden 集
 │   │   └── baseline.json       #   基线数据
+│   ├── governance/             # LLM 调用治理(限流/熔断/超时/成本统计)
+│   │   ├── config.py           #   治理配置
+│   │   ├── guard.py            #   策略编排(熔断→限流→执行→上报)
+│   │   ├── limiter.py          #   RPM 滑动窗口 + 并发 ZSET 信号量
+│   │   ├── breaker.py          #   三态熔断器(closed/open/half-open)
+│   │   └── usage.py            #   成本统计与用量记录
 │   ├── graph/                  # 知识图谱 (可选)
 │   ├── models/                 # LLM 模型封装
 │   │   ├── base.py             #   抽象基类
@@ -306,6 +313,13 @@ rag-demo/
 | `LOKI_ENABLED` | 推送日志到 Loki | `false` |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 | `LOG_FORMAT` | 日志格式（text/json） | `text` |
+| `GOVERNANCE_ENABLED` | 开启 LLM 调用治理（限流+熔断+统计） | `false` |
+| `CHAT_RPM_LIMIT` | Chat RPM 上限 | `60` |
+| `CHAT_MAX_CONCURRENCY` | Chat 最大并发数 | `8` |
+| `BREAKER_FAILURE_THRESHOLD` | 熔断连续失败阈值 | `5` |
+| `BREAKER_COOLDOWN_SECONDS` | 熔断冷却时长（秒） | `30` |
+| `LLM_TIMEOUT_SECONDS` | LLM 调用超时（秒） | `60` |
+| `LLM_PRICING` | 模型价格表（JSON, 每百万 token 元） | `{}` |
 
 ## 运行测试
 

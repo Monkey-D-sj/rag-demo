@@ -122,3 +122,97 @@ async def test_schema_instruction_prepended_when_no_system_message():
     assert isinstance(msgs[0], SystemMessage)
     assert "JSON Schema" in msgs[0].content
     assert msgs[1].content == "hi"
+
+
+# ── 治理层织入 ──────────────────────────────────────────
+
+from contextlib import asynccontextmanager
+
+from rag.common.exception import LLMServerError
+from rag.governance.guard import CallTracker
+
+
+class _FakeGuard:
+    """记录 acquire/track 调用的假 guard。"""
+
+    def __init__(self):
+        self.acquired: list[str] = []
+        self.trackers: list[CallTracker] = []
+
+    @asynccontextmanager
+    async def acquire(self, quota):
+        self.acquired.append(quota)
+        yield
+
+    @asynccontextmanager
+    async def track(self, call_type, model):
+        t = CallTracker(call_type=call_type, model=model)
+        self.trackers.append(t)
+        yield t
+
+
+class _FakeMsgWithUsage:
+    def __init__(self, content):
+        self.content = content
+        self.usage_metadata = {"input_tokens": 100, "output_tokens": 50}
+
+
+class _FakeModelWithUsage:
+    async def ainvoke(self, messages):
+        return _FakeMsgWithUsage("answer")
+
+
+async def test_guard_weave_records_quota_and_tokens():
+    guard = _FakeGuard()
+    m = NormalModel(Settings(), guard=guard)
+    m._model = _FakeModelWithUsage()
+    assert await m.ainvoke(["hi"]) == "answer"
+    assert guard.acquired == ["chat"]
+    t = guard.trackers[0]
+    assert (t.call_type, t.attempts) == ("chat", 1)
+    assert (t.input_tokens, t.output_tokens) == (100, 50)
+
+
+async def test_guard_weave_retry_acquires_per_attempt(monkeypatch):
+    monkeypatch.setattr(normal, "wait_exponential_jitter", lambda **kw: wait_none())
+    guard = _FakeGuard()
+
+    class _FailOnceModel:
+        def __init__(self):
+            self.calls = 0
+
+        async def ainvoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                raise LLMServerError("500", status_code=500)
+            return _FakeMsgWithUsage("ok")
+
+    m = NormalModel(Settings(), guard=guard)
+    m._model = _FailOnceModel()
+    assert await m.ainvoke(["hi"]) == "ok"
+    assert guard.acquired == ["chat", "chat"]  # 每次尝试各过一次 guard
+    assert guard.trackers[0].attempts == 2
+
+
+async def test_guard_none_keeps_passthrough():
+    m = NormalModel(Settings())
+    m._model = _FakeModel()
+    assert await m.ainvoke(["hi"]) == "answer"  # 无 guard 完全直通
+
+
+async def test_astream_weave_uses_chat_stream_call_type():
+    guard = _FakeGuard()
+
+    class _StreamOnly:
+        def astream(self, messages):
+            async def _gen():
+                yield _FakeMsgWithUsage("tok")
+            return _gen()
+
+    m = NormalModel(Settings(), guard=guard)
+    m._model = _StreamOnly()
+    tokens = [c.content async for c in m.astream(["hi"])]
+    assert tokens == ["tok"]
+    t = guard.trackers[0]
+    assert t.call_type == "chat_stream"
+    assert (t.input_tokens, t.output_tokens) == (100, 50)

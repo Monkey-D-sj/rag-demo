@@ -1,6 +1,7 @@
+import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from typing import Any, Callable, TypeVar
 
 from langchain_core.exceptions import OutputParserException
@@ -16,7 +17,14 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from rag.common.exception import LLMException, from_http_error, is_retryable
+from rag.common.exception import (
+    LLMException,
+    LLMTimeoutError,
+    from_http_error,
+    is_retryable,
+)
+from rag.governance.config import get_governance_settings
+from rag.governance.guard import LLMGuard
 from rag.common.logging import get_logger
 from rag.config import Settings
 from rag.models.base import ChatModel
@@ -65,19 +73,42 @@ def _extract_status_code(exc: BaseException) -> int:
     return 0
 
 
+def _usage_from(msg) -> tuple[int | None, int | None]:
+    """从 LangChain 消息取 token 用量;无 usage_metadata 时返回 (None, None)。"""
+    usage = getattr(msg, "usage_metadata", None) or {}
+    return usage.get("input_tokens"), usage.get("output_tokens")
+
+
 class NormalModel(ChatModel):
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, guard: LLMGuard | None = None):
+        gov = get_governance_settings()
         self._model = ChatOpenAI(
             api_key=settings.MODEL_KEY,
             model=settings.MODEL_NAME,
             base_url=settings.MODEL_URL,
             temperature=0,
             seed=42,
+            timeout=gov.LLM_TIMEOUT_SECONDS,  # 显式超时:流式为逐 chunk 读超时
+            stream_usage=True,  # 流式末 chunk 携带 usage,供成本统计
         )
         self._model_name = settings.MODEL_NAME
+        self._guard = guard
+        self._timeout = gov.LLM_TIMEOUT_SECONDS
 
     def bind_tools(self, tools: list[BaseTool]) -> None:
         self._model = self._model.bind_tools(tools)
+
+    def _acquire(self, quota: str):
+        """guard 未注入时零开销直通(null-object 模式)。"""
+        if self._guard is None:
+            return nullcontext()
+        return self._guard.acquire(quota)
+
+    def _track(self, call_type: str):
+        """逻辑调用级统计;guard 未注入时 yield None。"""
+        if self._guard is None:
+            return nullcontext()
+        return self._guard.track(call_type, self._model_name)
 
     @asynccontextmanager
     async def _translate(self):
@@ -85,6 +116,9 @@ class NormalModel(ChatModel):
             yield
         except LLMException:
             raise
+        except TimeoutError as e:
+            # asyncio.timeout 兜底触发;可重试、计入熔断
+            raise LLMTimeoutError("LLM 调用超时", model=self._model_name) from e
         except Exception as e:
             code = _extract_status_code(e)
             if code:
@@ -92,19 +126,26 @@ class NormalModel(ChatModel):
             raise
 
     async def ainvoke(self, messages: list[BaseMessage | str]) -> str:
-        """带重试的异步调用。"""
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
-            retry=retry_if_exception(is_retryable),
-            before_sleep=before_sleep_log(logger, logging.WARNING),
-            reraise=True,
-        ):
-            with attempt:
-                async with self._translate():
-                    rsp = await self._model.ainvoke(messages)
-                    return rsp.content
-        raise AssertionError("unreachable")
+        """带重试的异步调用。track 逻辑调用级,acquire 每次尝试级。"""
+        async with self._track("chat") as tracker:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
+                retry=retry_if_exception(is_retryable),
+                before_sleep=before_sleep_log(logger, logging.WARNING),
+                reraise=True,
+            ):
+                with attempt:
+                    if tracker is not None:
+                        tracker.attempts += 1
+                    async with self._acquire("chat"):
+                        async with self._translate():
+                            async with asyncio.timeout(self._timeout):
+                                rsp = await self._model.ainvoke(messages)
+                            if tracker is not None:
+                                tracker.set_tokens(*_usage_from(rsp))
+                            return rsp.content
+            raise AssertionError("unreachable")
 
     async def ainvoke_structured(
         self, messages: list[BaseMessage | str], schema: type[T]
@@ -125,24 +166,38 @@ class NormalModel(ChatModel):
             msgs[0] = SystemMessage(content=f"{msgs[0].content}\n\n{instruction}")
         else:
             msgs.insert(0, SystemMessage(content=instruction))
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
-            retry=retry_if_exception(_is_retryable_structured),
-            before_sleep=before_sleep_log(logger, logging.WARNING),
-            reraise=True,
-        ):
-            with attempt:
-                async with self._translate():
-                    result = await structured.ainvoke(msgs)
-                    if result is None:
-                        raise OutputParserException("模型未返回结构化输出")
-                    return result
-        raise AssertionError("unreachable")
+        async with self._track("chat_structured") as tracker:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
+                retry=retry_if_exception(_is_retryable_structured),
+                before_sleep=before_sleep_log(logger, logging.WARNING),
+                reraise=True,
+            ):
+                with attempt:
+                    if tracker is not None:
+                        tracker.attempts += 1
+                    async with self._acquire("chat"):
+                        async with self._translate():
+                            async with asyncio.timeout(self._timeout):
+                                result = await structured.ainvoke(msgs)
+                            if result is None:
+                                raise OutputParserException("模型未返回结构化输出")
+                            return result
+            raise AssertionError("unreachable")
 
     async def astream(self, messages: list[BaseMessage | str]):
-        """单次异步流式（不重试，流式中途重试语义复杂，留待 C）。"""
-        async with self._translate():
-            async for chunk in self._model.astream(messages):
-                yield chunk
+        """单次异步流式(不重试,流式中途重试语义复杂,维持现状)。"""
+        async with self._track("chat_stream") as tracker:
+            if tracker is not None:
+                tracker.attempts = 1
+            async with self._acquire("chat"):
+                async with self._translate():
+                    async for chunk in self._model.astream(messages):
+                        usage = getattr(chunk, "usage_metadata", None)
+                        if tracker is not None and usage:
+                            tracker.set_tokens(
+                                usage.get("input_tokens"), usage.get("output_tokens")
+                            )
+                        yield chunk
 

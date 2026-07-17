@@ -86,12 +86,25 @@ class RedisRateLimiter:
             return False, "429 冷却中"
 
         now = self._now()
+
+        # 2. RPM 滑动窗口(Lua 原子判定+计数) — 先轻后重,RPM 超限直接拒
+        minute = int(now // 60)
+        allowed = await self._redis.eval(
+            _RPM_LUA,
+            2,
+            f"gov:rpm:{quota}:{minute}",
+            f"gov:rpm:{quota}:{minute - 1}",
+            rpm_limit,
+            now % 60,
+        )
+        if not int(allowed):
+            return False, "RPM 超限"
+
+        # 3. 并发坑位(Lua 原子:清理僵尸 → 占坑 → 判定 → 回滚)
         conc_key = f"gov:conc:{quota}"
         # 按配额超时动态推导僵尸阈值(至少 120s,避免短超时导致活跃流被误清)
         stale_after = max(_STALE_SLOT_SECONDS, self._settings.timeout_for(quota) * 3)
         member = uuid.uuid4().hex
-
-        # 2. 并发坑位(Lua 原子:清理僵尸 → 占坑 → 判定 → 回滚)
         ok, detail = await self._redis.eval(
             _CONC_LUA,
             1,
@@ -103,20 +116,6 @@ class RedisRateLimiter:
         )
         if not ok:
             return False, detail
-
-        # 3. RPM 滑动窗口(Lua 原子判定+计数)
-        minute = int(now // 60)
-        allowed = await self._redis.eval(
-            _RPM_LUA,
-            2,
-            f"gov:rpm:{quota}:{minute}",
-            f"gov:rpm:{quota}:{minute - 1}",
-            rpm_limit,
-            now % 60,
-        )
-        if not int(allowed):
-            await self._redis.zrem(conc_key, member)
-            return False, "RPM 超限"
         return True, member
 
     async def release(self, quota: str, member: str | None) -> None:

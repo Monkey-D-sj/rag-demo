@@ -30,6 +30,26 @@ return 1
 # 流式逐 chunk 读超时 60s 意味着活跃流的静默上限约为 timeout,3 倍余量足够。
 _STALE_SLOT_SECONDS = 120
 
+# 并发坑位原子获取:清理僵尸 → ZADD 占坑 → ZCARD 判定 → 超限回滚。
+# KEYS[1]=并发 ZSET 键
+# ARGV[1]=now(score) ARGV[2]=stale_before(zremrangebyscore max)
+# ARGV[3]=max_conc ARGV[4]=member
+# 返回 {1, member} 或 {0, "并发已满"}
+_CONC_LUA = """
+local now = tonumber(ARGV[1])
+local stale_before = tonumber(ARGV[2])
+local max_conc = tonumber(ARGV[3])
+local member = ARGV[4]
+
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, stale_before)
+redis.call('ZADD', KEYS[1], now, member)
+if redis.call('ZCARD', KEYS[1]) > max_conc then
+    redis.call('ZREM', KEYS[1], member)
+    return {0, '并发已满'}
+end
+return {1, member}
+"""
+
 
 class RedisRateLimiter:
     """RPM 滑动窗口 + 并发 ZSET 信号量 + 429 冷却,状态全在 Redis,多实例共享。
@@ -64,17 +84,26 @@ class RedisRateLimiter:
         # 1. 429 冷却检查
         if await self._redis.exists(f"gov:cooldown:{quota}"):
             return False, "429 冷却中"
-        # 2. 并发坑位:先清僵尸,ZADD 占坑后查总数,超了回滚自己
+
         now = self._now()
         conc_key = f"gov:conc:{quota}"
         # 按配额超时动态推导僵尸阈值(至少 120s,避免短超时导致活跃流被误清)
         stale_after = max(_STALE_SLOT_SECONDS, self._settings.timeout_for(quota) * 3)
         member = uuid.uuid4().hex
-        await self._redis.zremrangebyscore(conc_key, 0, now - stale_after)
-        await self._redis.zadd(conc_key, {member: now})
-        if await self._redis.zcard(conc_key) > max_conc:
-            await self._redis.zrem(conc_key, member)
-            return False, "并发已满"
+
+        # 2. 并发坑位(Lua 原子:清理僵尸 → 占坑 → 判定 → 回滚)
+        ok, detail = await self._redis.eval(
+            _CONC_LUA,
+            1,
+            conc_key,
+            now,
+            now - stale_after,
+            max_conc,
+            member,
+        )
+        if not ok:
+            return False, detail
+
         # 3. RPM 滑动窗口(Lua 原子判定+计数)
         minute = int(now // 60)
         allowed = await self._redis.eval(

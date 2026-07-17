@@ -41,6 +41,7 @@ rag-eval-answer = "rag.eval.answer_run:main"
 [dependency-groups]
 dev = [
     "fakeredis[lua]>=2.36.2",
+    "locust>=2.45.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]

@@ -2,10 +2,7 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
-from rag.common.logging import get_logger
 from rag.config import get_settings
-
-logger = get_logger()
 
 
 async def cache_lookup(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:

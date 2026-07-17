@@ -62,8 +62,10 @@ class SemanticCache:
         self._ttl_hours = ttl_hours
         self._recorder = recorder
 
-    async def _nearest(self, cur, query: str) -> dict | None:
-        vec = Vector((await self._embedding.embed([query]))[0])
+    async def _embed_query(self, query: str) -> Vector:
+        return Vector((await self._embedding.embed([query]))[0])
+
+    async def _nearest_by_vec(self, cur, vec: Vector) -> dict | None:
         await cur.execute(_LOOKUP_SQL, {"vec": vec, "ttl": self._ttl_hours})
         return await cur.fetchone()
 
@@ -71,7 +73,8 @@ class SemanticCache:
         start = time.monotonic()
         try:
             async with get_cursor(self._pool) as cur:
-                row = await self._nearest(cur, query)
+                vec = await self._embed_query(query)
+                row = await self._nearest_by_vec(cur, vec)
                 if row is None or row["similarity"] < self._threshold:
                     return None
                 await cur.execute(
@@ -98,10 +101,11 @@ class SemanticCache:
     async def store(self, query: str, answer: str, citations: list) -> None:
         try:
             async with get_cursor(self._pool) as cur:
-                row = await self._nearest(cur, query)
+                vec = await self._embed_query(query)
+                row = await self._nearest_by_vec(cur, vec)
                 if row is not None and row["similarity"] >= self._threshold:
                     return  # 已有近重复条目,跳过插入防膨胀
-                vec = Vector((await self._embedding.embed([query]))[0])
+                # 并发未命中可能同时通过查重并各插一行,属已知可容忍竞态:lookup 取最近邻,TTL/清空兜底增长
                 await cur.execute(_INSERT_SQL, {
                     "question": query,
                     "answer": answer,

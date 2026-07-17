@@ -348,7 +348,7 @@ rag-demo/
 
 ```bash
 # 单元测试（无需外部服务）
-uv run pytest tests/ -v --ignore=tests/test_db.py --ignore=tests/test_db_neo4j.py
+uv run pytest tests/ -v
 
 # 集成测试（需要 Docker Compose 基础设施）
 uv run pytest tests/ -v -m integration

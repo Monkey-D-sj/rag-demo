@@ -25,7 +25,6 @@ class GovernanceSettings(BaseSettings):
     EMBEDDING_MAX_CONCURRENCY: int = 10
     RERANK_RPM_LIMIT: int = 120
     RERANK_MAX_CONCURRENCY: int = 8
-    ACQUIRE_MAX_WAIT_SECONDS: float = 10.0
     COOLDOWN_DEFAULT_SECONDS: float = 10.0
 
     # ── 熔断 ──

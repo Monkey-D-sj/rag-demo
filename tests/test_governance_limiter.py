@@ -8,8 +8,8 @@ from rag.governance.limiter import RedisRateLimiter
 
 def _limiter(redis, **kw) -> RedisRateLimiter:
     settings = GovernanceSettings(
-        _env_file=None, ACQUIRE_MAX_WAIT_SECONDS=0, **kw
-    )  # 等待窗口 0:超限立即拒绝,测试不耗时
+        _env_file=None, **kw
+    )
     return RedisRateLimiter(redis, settings)
 
 

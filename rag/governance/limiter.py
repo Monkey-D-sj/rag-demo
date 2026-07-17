@@ -1,5 +1,3 @@
-import asyncio
-import random
 import time
 import uuid
 
@@ -47,22 +45,17 @@ class RedisRateLimiter:
     async def acquire(self, quota: str) -> str | None:
         """获取配额,返回并发坑位 member(release 时传回)。
 
-        超限时有界等待(带抖动轮询),到 ACQUIRE_MAX_WAIT_SECONDS 仍拿不到
-        则抛 RateLimitExceededError。
+        超限直接拒绝,由上层重试循环(指数退避)等待。
         """
         rpm_limit, max_conc = self._settings.limits_for(quota)
-        deadline = time.monotonic() + self._settings.ACQUIRE_MAX_WAIT_SECONDS
-        while True:
-            try:
-                ok, detail = await self._try_acquire(quota, rpm_limit, max_conc)
-            except Exception:  # noqa: BLE001 - fail-open:限流器故障不阻断业务
-                logger.warning("限流器 Redis 异常,fail-open 放行: %s", quota, exc_info=True)
-                return None
-            if ok:
-                return detail
-            if time.monotonic() >= deadline:
-                raise RateLimitExceededError(f"本地限流({quota}): {detail}", status_code=429)
-            await asyncio.sleep(0.2 + random.random() * 0.3)
+        try:
+            ok, detail = await self._try_acquire(quota, rpm_limit, max_conc)
+        except Exception:  # noqa: BLE001 - fail-open:限流器故障不阻断业务
+            logger.warning("限流器 Redis 异常,fail-open 放行: %s", quota, exc_info=True)
+            return None
+        if ok:
+            return detail
+        raise RateLimitExceededError(f"本地限流({quota}): {detail}", status_code=429)
 
     async def _try_acquire(
         self, quota: str, rpm_limit: int, max_conc: int

@@ -21,5 +21,7 @@ async def recall(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
     # 改写后的查询更适合检索,缺失时回退原始查询
     query = state.get("rewrite_query") or state["raw_query"]
     # kb_ids 不传 → 搜全部知识库
-    state["recall_vec_results"] = await retriever.search(query)
+    state["recall_vec_results"] = await retriever.search(
+        query, entities=state.get("query_entities") or None
+    )
     return state

@@ -28,7 +28,7 @@ class _FakeRetriever:
     def __init__(self):
         self.calls = []
 
-    async def search(self, query, knowledge_base_ids=None, top_k=5):
+    async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
         self.calls.append((query, knowledge_base_ids))
         return [{"text": "KB1"}]
 

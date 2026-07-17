@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     ENABLE_ENTITY_EXTRACTION: bool = False
     # 单篇文档内并发抽取的 chunk 数上限;调高提速但更易触发 LLM 限流。
     GRAPH_EXTRACT_CONCURRENCY: int = 4
+    GRAPH_RECALL_ENABLED: bool = False  # 图召回第三路,需配合 NEO4J_ENABLED=true
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "neo4j_pass"

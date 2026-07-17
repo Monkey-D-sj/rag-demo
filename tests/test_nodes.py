@@ -232,7 +232,7 @@ async def test_recall_searches_kb_with_rewrite_query(monkeypatch):
         def __init__(self):
             self.calls = []
 
-        async def search(self, query, knowledge_base_ids=None, top_k=5):
+        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
             self.calls.append((query, knowledge_base_ids))
             return [{"text": "KB1"}]
 
@@ -246,6 +246,27 @@ async def test_recall_searches_kb_with_rewrite_query(monkeypatch):
 
     assert out["recall_vec_results"] == [{"text": "KB1"}]
     assert retriever.calls[0][0] == "rw"
+
+
+async def test_recall_passes_entities_to_retriever(monkeypatch):
+    monkeypatch.setattr(kb_recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _Ret:
+        def __init__(self):
+            self.calls = []
+
+        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+            self.calls.append((query, entities))
+            return []
+
+    ret = _Ret()
+    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=ret))
+    state = {"session_id": "s1", "raw_query": "q", "rewrite_query": "rq",
+             "query_entities": ["孙悟空"]}
+
+    await kb_recall_mod.recall(state, runtime)
+
+    assert ret.calls == [("rq", ["孙悟空"])]
 
 
 async def test_recall_no_retriever_yields_empty(monkeypatch):

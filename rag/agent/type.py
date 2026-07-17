@@ -10,7 +10,8 @@ class RetrieverProtocol(Protocol):
 	"""agent 层所需的检索器接口。具体实现(如 KnowledgeRetriever)只需满足此协议即可。"""
 
 	async def search(
-		self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5
+		self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5,
+		entities: list[str] | None = None,
 	) -> list[dict]: ...
 
 	async def fetch_parent_contents(

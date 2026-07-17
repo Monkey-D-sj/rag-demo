@@ -161,6 +161,101 @@ async def test_fused_overlap_preserves_both_raw_scores(monkeypatch):
 # ── fetch_parent_contents ──
 
 
+# ── 三路 RRF 融合 (graph 路) ──
+
+
+def test_merge_dedup_three_way_rrf():
+    vec = [_row("a", similarity=0.9)]
+    bm25 = [_row("b", text="B", score=5.0)]
+    graph = [_row("a", text="A"), _row("c", text="C", chunk_index=2)]
+    fused = _merge_dedup(vec, bm25, top_k=10, rrf_k=60, graph_rows=graph)
+
+    by_id = {r["id"]: r for r in fused}
+    assert by_id["a"]["sources"] == ["vec", "graph"]
+    assert by_id["c"]["sources"] == ["graph"]
+    # a 双路命中,RRF 分 = 1/61 + 1/61,必高于单路的 b/c
+    assert fused[0]["id"] == "a"
+
+
+def test_merge_dedup_two_way_backward_compat():
+    vec = [_row("a", similarity=0.9)]
+    fused = _merge_dedup(vec, [], top_k=5)
+    assert [r["id"] for r in fused] == ["a"]
+
+
+def test_merge_dedup_graph_only():
+    graph = [_row("g", text="G")]
+    fused = _merge_dedup([], [], top_k=5, graph_rows=graph)
+    assert [r["id"] for r in fused] == ["g"]
+    assert fused[0]["sources"] == ["graph"]
+
+
+class _FakeGraphRetriever:
+    """带 calls 记录的假图检索器,照抄本文件 store/embedding monkeypatch 风格。"""
+
+    def __init__(self, rows=None, exc=None):
+        self.calls = []
+        self._rows = rows or []
+        self._exc = exc
+
+    async def search(self, entities, limit):
+        self.calls.append((entities, limit))
+        if self._exc is not None:
+            raise self._exc
+        return self._rows
+
+
+async def test_search_runs_graph_leg_when_entities(monkeypatch):
+    vec = [_row("a", similarity=0.9)]
+    r = _retriever(monkeypatch, vec, [])
+    graph_retriever = _FakeGraphRetriever(rows=[_row("g", text="G")])
+    r._graph_retriever = graph_retriever
+
+    result = await r.search("孙悟空", ["kb-1"], entities=["孙悟空"])
+
+    assert len(graph_retriever.calls) == 1
+    called_entities, called_limit = graph_retriever.calls[0]
+    assert called_entities == ["孙悟空"]
+    by_id = {x["id"]: x for x in result}
+    assert by_id["g"]["sources"] == ["graph"]
+
+
+async def test_search_graph_leg_failure_degrades(monkeypatch):
+    vec = [_row("a", similarity=0.9)]
+    bm25 = [_row("b", text="B", score=5.0)]
+    r = _retriever(monkeypatch, vec, bm25)
+    graph_retriever = _FakeGraphRetriever(exc=RuntimeError("graph down"))
+    r._graph_retriever = graph_retriever
+
+    result = await r.search("孙悟空", ["kb-1"], entities=["孙悟空"])
+
+    assert [x["id"] for x in result] == ["a", "b"]
+
+
+async def test_search_no_entities_skips_graph(monkeypatch):
+    vec = [_row("a", similarity=0.9)]
+    r = _retriever(monkeypatch, vec, [])
+    graph_retriever = _FakeGraphRetriever(rows=[_row("g", text="G")])
+    r._graph_retriever = graph_retriever
+
+    result = await r.search("孙悟空", ["kb-1"])
+
+    assert graph_retriever.calls == []
+    assert [x["id"] for x in result] == ["a"]
+
+
+async def test_search_dedupes_duplicate_entities_before_graph_call(monkeypatch):
+    """重复实体名在传给 graph_retriever 前去重,避免种子权重被重复计入。"""
+    vec = [_row("a", similarity=0.9)]
+    r = _retriever(monkeypatch, vec, [])
+    graph_retriever = _FakeGraphRetriever(rows=[])
+    r._graph_retriever = graph_retriever
+
+    await r.search("孙悟空", ["kb-1"], entities=["孙悟空", "孙悟空"])
+
+    assert graph_retriever.calls[0][0] == ["孙悟空"]
+
+
 async def test_fetch_parent_contents_delegates_to_store(monkeypatch):
     """按 doc_id 批量补查父文档全文：委托给 store.get_documents_content。"""
     import rag.document.retriever as mod

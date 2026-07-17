@@ -17,14 +17,15 @@ def _lexical_query(query: str) -> str:
 
 
 def _merge_dedup(
-    vec_rows: list[dict], bm25_rows: list[dict], top_k: int, rrf_k: int = 60
+    vec_rows: list[dict], bm25_rows: list[dict], top_k: int, rrf_k: int = 60,
+    graph_rows: list[dict] | None = None,
 ) -> list[dict]:
-    """RRF (Reciprocal Rank Fusion) 融合两路召回结果。
+    """RRF (Reciprocal Rank Fusion) 融合两路(或三路)召回结果。
 
-    对每路按排名计算 RRF 分: 1/(k + rank)，两路分数加和，
-    按总分降序排列取 top_k。同一 chunk 在两路均命中时累加 RRF 分。
+    对每路按排名计算 RRF 分: 1/(k + rank)，各路分数加和，
+    按总分降序排列取 top_k。同一 chunk 在多路均命中时累加 RRF 分。
     """
-    if not vec_rows and not bm25_rows:
+    if not vec_rows and not bm25_rows and not graph_rows:
         return []
 
     chunk_map: dict[str, dict] = {}
@@ -58,6 +59,21 @@ def _merge_dedup(
             r["similarity"] = None
             chunk_map[rid] = r
 
+    # graph 路：rank 1 = 图评分最高
+    for rank, row in enumerate(graph_rows or [], 1):
+        rid = str(row["id"])
+        rrf = 1.0 / (rrf_k + rank)
+        if rid in chunk_map:
+            chunk_map[rid]["sources"].append("graph")
+            chunk_map[rid]["rrf_score"] = chunk_map[rid]["rrf_score"] + rrf
+        else:
+            r = dict(row)
+            r["sources"] = ["graph"]
+            r["rrf_score"] = rrf
+            r["similarity"] = None
+            r["score"] = None
+            chunk_map[rid] = r
+
     # 按 RRF 分降序，同分时保持插入顺序（vec 先插入的优先）
     sorted_chunks = sorted(
         chunk_map.values(),
@@ -84,17 +100,25 @@ def _rank_summary(rows: list[dict], score_key: str) -> list[dict]:
 class KnowledgeRetriever:
     """知识库检索：向量(pgvector)+BM25(pg_search/jieba)并发召回，去重合并后由 reranker 重排。"""
 
-    def __init__(self, pool, embedding: EmbeddingModel, settings: Settings) -> None:
+    def __init__(
+        self, pool, embedding: EmbeddingModel, settings: Settings, graph_retriever=None,
+    ) -> None:
         self._pool = pool
         self._embedding = embedding
         self._candidate_multiplier = settings.RETRIEVER_CANDIDATE_MULTIPLIER
         self._vec_threshold = settings.RETRIEVER_VEC_SIMILARITY_THRESHOLD
         self._rrf_k = settings.RETRIEVER_RRF_K
+        self._graph_retriever = graph_retriever
+
+    @property
+    def has_graph(self) -> bool:
+        """图召回是否可用(eval 分轨判断用)。"""
+        return self._graph_retriever is not None
 
     @observe_if_enabled(name="knowledge_retrieve")
     async def search(
         self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5,
-        query_emb: list[float] | None = None,
+        query_emb: list[float] | None = None, entities: list[str] | None = None,
     ) -> list[dict]:
         candidates = top_k * self._candidate_multiplier
         timings: dict[str, float] = {}
@@ -154,9 +178,31 @@ class KnowledgeRetriever:
                     span.update(output=_rank_summary(rows, "score"))
                 return rows
 
-        # 两路并发，各自内部兜底；单路失败降级不影响另一路，双路皆败返回空。
-        vec_rows, bm25_rows = await asyncio.gather(_vec_leg(), _bm25_leg())
-        results = _merge_dedup(vec_rows, bm25_rows, top_k, self._rrf_k)
+        async def _graph_leg() -> list[dict]:
+            if self._graph_retriever is None or not entities:
+                return []
+            # 去重：UNWIND 按名字逐行发射，重复实体名会让种子权重被重复计入
+            dedup_entities = list(dict.fromkeys(entities))
+            with span_scope("graph_recall", input={**span_input, "entities": dedup_entities}) as span:
+                t0 = time.perf_counter()
+                try:
+                    rows = await self._graph_retriever.search(dedup_entities, candidates)
+                except Exception:  # noqa: BLE001 - 图路失败降级，与 BM25 路对等容错
+                    logger.warning("图召回失败，降级两路", exc_info=True)
+                    rows = []
+                timings["graph_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+                if span is not None:
+                    span.update(output=[
+                        {"chunk_id": str(r["id"]), "chunk_index": r["chunk_index"], "text": r["text"]}
+                        for r in rows
+                    ])
+                return rows
+
+        # 三路并发，各自内部兜底；单路失败降级不影响另两路，全败返回空。
+        vec_rows, bm25_rows, graph_rows = await asyncio.gather(
+            _vec_leg(), _bm25_leg(), _graph_leg()
+        )
+        results = _merge_dedup(vec_rows, bm25_rows, top_k, self._rrf_k, graph_rows=graph_rows)
 
         return results
 

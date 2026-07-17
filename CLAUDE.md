@@ -64,21 +64,23 @@ The worker has its own independent startup (`on_startup`) that creates separate 
 
 `ChatStream` (`rag/api/common/stream.py`) is an `asyncio.Queue`-backed async iterable. A background `asyncio.Task` feeds LangGraph custom events (status/message/error) into the queue; the main coroutine yields SSE-formatted lines to FastAPI's `StreamingResponse`. `close()` enqueues `[DONE]` + a sentinel (`None`) to terminate iteration. The async context manager (`async with`) auto-closes on exit and emits errors.
 
-### Agent workflow: 11-node pipeline with conditional routing
+### Agent workflow: 13-node pipeline with conditional routing
 
-The state graph (`rag/agent/workflow.py`) is an 11-node pipeline with conditional branching:
+The state graph (`rag/agent/workflow.py`) is a 13-node pipeline with conditional branching:
 
 ```
-                         ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────────────┐
-START → recall_memory → handle_query ┤                                                                                  END
-                         └─ in-scope → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → add_memory ┘
-                                                                                                         └─ no_results ──────────┘
+                         ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────┐
+START → recall_memory → handle_query ┤                                                                       END
+                         └─ in-scope → cache_lookup ┬─ hit → add_memory ────────────────────────────────────────┘
+                                                     └─ miss → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory
+                                                                                                                                └─ no_results ──────────
 ```
 
 | Node | Module | Role |
 |------|--------|------|
 | `recall_memory` | `nodes/recall_memory/` | Short-term (Redis) + Long-term (pgvector) memory recall via `MemoryManagerProtocol` |
 | `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全). Outputs `is_out_of_scope` and `rewrite_query` |
+| `cache_lookup` | `nodes/cache_lookup/` | Semantic cache lookup (pgvector similarity, global scope); on hit, streams the cached answer/citations and sets `cache_hit=True` to skip retrieval and generation (gated by `SEMANTIC_CACHE_ENABLED`; pass-through if disabled or not injected) |
 | `recall` | `nodes/recall/` | Hybrid retrieval: vector (pgvector cosine) + BM25 (ParadeDB jieba) concurrent recall, vec-first dedup merge |
 | `neighbor_expand` | `nodes/neighbor_expand/` | Sentence Window: fetch ±N adjacent chunks from the same document (gated by `SENTENCE_WINDOW_ENABLED`; pass-through when disabled or pool missing) |
 | `rerank` | `nodes/rerank/` | Semantic re-ranking via Qwen3-Rerank (optional; pass-through if no reranker injected) |
@@ -87,12 +89,14 @@ START → recall_memory → handle_query ┤                                    
 | `generate` | `nodes/generate/` | RAG generation with retrieved context, SSE token streaming |
 | `direct_answer` | `nodes/generate/` | Out-of-scope direct LLM answer (no retrieval, no memory write-back) |
 | `no_results` | `nodes/generate/` | Static fallback message when recall is empty (no LLM call) |
+| `cache_store` | `nodes/cache_store/` | Best-effort write-back of the generated answer + citations to the semantic cache (gated by `SEMANTIC_CACHE_ENABLED`; pass-through if disabled or not injected) |
 | `add_memory` | `nodes/add_memory/` | Persists turn to short-term + long-term memory (best-effort, failures silently ignored) |
 
 **Conditional routing:**
-- `_route_after_query`: `is_out_of_scope=True` → `direct_answer`; otherwise → `recall`
+- `_route_after_query`: `is_out_of_scope=True` → `direct_answer`; otherwise → `cache_lookup`
+- `_route_after_cache`: `cache_hit=True` → `add_memory`; otherwise → `recall`
 - `_route_after_topk` (evaluated after `parent_expand`): `recall_vec_results` non-empty → `generate`; empty → `no_results`
-- Only the `generate` path writes memory (`generate → add_memory → END`); `direct_answer` and `no_results` go straight to `END`
+- The `generate` path writes memory via `generate → cache_store → add_memory`; a cache hit writes memory directly via `cache_lookup → add_memory`; `direct_answer` and `no_results` go straight to `END`
 
 **Key design patterns:**
 - **Graceful degradation**: Memory recall failure → empty context. Retriever failure → empty results. Structured output failure → raw query passthrough. Reranker missing → pass-through.
@@ -103,8 +107,9 @@ START → recall_memory → handle_query ┤                                    
 
 `MyState` (`rag/agent/type.py`) is a plain `TypedDict` — no Annotated reducers. Key fields:
 - `session_id`, `raw_query`, `context` — input fields
-- `is_out_of_scope` — set by `handle_query`; determines routing to `direct_answer` vs `recall`
+- `is_out_of_scope` — set by `handle_query`; determines routing to `direct_answer` vs `cache_lookup`
 - `rewrite_query` — rewritten query from `handle_query`; falls back to `raw_query` on structured-output failure
+- `cache_hit` — set by `cache_lookup` on a semantic cache hit; `_route_after_cache` checks it to route straight to `add_memory`, skipping retrieval and generation
 - `recall_bm25_results`, `recall_vec_results` — populated by `recall`; `recall_vec_results` is then transformed in place by `neighbor_expand` → `rerank` → `dynamic_topk` → `parent_expand` and used by `generate`; `_route_after_topk` checks `recall_vec_results` emptiness
 - `generated` — final LLM response, persisted by `add_memory`
 

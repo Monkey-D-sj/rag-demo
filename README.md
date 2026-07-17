@@ -5,9 +5,10 @@
 ## 架构概览
 
 ```
-用户提问 → LangGraph Agent 流水线 (11 节点 + 条件路由)
+用户提问 → LangGraph Agent 流水线 (13 节点 + 条件路由)
            ├─ recall_memory   → 短期(Redis) + 长期(pgvector)记忆召回
            ├─ handle_query    → 查询改写 + 范围判断(LLM 结构化输出)
+           ├─ cache_lookup    → 语义缓存查询(命中跳过检索与生成)
            ├─ recall          → 向量(pgvector) + BM25(ParadeDB/jieba) 并发检索
            ├─ neighbor_expand → Sentence Window: 拉取同文档相邻 chunk 扩展上下文
            ├─ rerank          → Qwen3-Rerank 语义重排序
@@ -17,6 +18,7 @@
            │   ├─ in-scope    → 基于检索上下文回答
            │   ├─ out-of-scope→ 直接大模型知识兜底
            │   └─ no_results  → 空召回兜底话术
+           ├─ cache_store     → 答案回写语义缓存
            └─ add_memory      → 本轮问答持久化(短期+长期记忆)
 
 文档入库：上传 → MinIO → ARQ Worker 异步
@@ -31,7 +33,7 @@
 | 层 | 技术 |
 |---|---|
 | **API 框架** | FastAPI + Uvicorn |
-| **Agent 编排** | LangGraph（11 节点状态图 + 条件分支） |
+| **Agent 编排** | LangGraph（13 节点状态图 + 条件分支） |
 | **向量 DB** | PostgreSQL + pgvector + ParadeDB（BM25 + jieba 分词） |
 | **图数据库** | Neo4j（实体关系抽取，可选） |
 | **重排序** | Qwen3-Rerank（DashScope API） |
@@ -39,6 +41,7 @@
 | **对象存储** | MinIO |
 | **任务队列** | ARQ（异步文档入库 + 自愈 cron） |
 | **数据库迁移** | Alembic |
+| **语义缓存** | pgvector 相似度命中 + 入库失效 + TTL(SEMANTIC_CACHE_*) |
 | **LLM 治理** | 滑动窗口 RPM + 并发 ZSET 信号量 + Redis 三态熔断 + 成本统计 |
 | **可观测性** | Langfuse（LLM 追踪）+ Loki + Grafana（日志聚合） |
 | **前端** | React 18 + TypeScript + TailwindCSS + Vite |
@@ -226,18 +229,20 @@ rag-demo/
 │   ├── __main__.py             # API 启动入口 (rag-api)
 │   ├── config.py               # 配置管理 (pydantic-settings)
 │   ├── agent/                  # LangGraph Agent
-│   │   ├── workflow.py         # 状态图定义 (11 节点 + 条件路由)
+│   │   ├── workflow.py         # 状态图定义 (13 节点 + 条件路由)
 │   │   ├── type.py             # 状态类型 & 协议定义
 │   │   ├── memory/             # MemoryManager: 短期+长期记忆
 │   │   └── nodes/
 │   │       ├── recall_memory/  #   记忆召回
 │   │       ├── query/          #   查询改写 + 范围判断
+│   │       ├── cache_lookup/   #   语义缓存查询
 │   │       ├── recall/         #   知识库检索
 │   │       ├── neighbor_expand/#   Sentence Window 相邻 chunk 扩展
 │   │       ├── rerank/         #   语义重排序
 │   │       ├── dynamic_topk/   #   动态 top-k 截断
 │   │       ├── parent_expand/  #   父文档全文展开
 │   │       ├── generate/       #   LLM 生成 (3 节点: generate/direct/no_results)
+│   │       ├── cache_store/    #   语义缓存回写
 │   │       └── add_memory/     #   记忆持久化
 │   ├── prompts/                # 统一提示词管理
 │   │   ├── generate.py         #   RAG 生成 + 兜底回答
@@ -328,6 +333,9 @@ rag-demo/
 | `BREAKER_COOLDOWN_SECONDS` | 熔断冷却时长（秒） | `30` |
 | `LLM_TIMEOUT_SECONDS` | LLM 调用超时（秒） | `60` |
 | `LLM_PRICING` | 模型价格表（JSON, 每百万 token 元） | `{}` |
+| `SEMANTIC_CACHE_ENABLED` | 开启语义缓存 | `false` |
+| `SEMANTIC_CACHE_SIM_THRESHOLD` | 语义缓存命中相似度阈值 | `0.95` |
+| `SEMANTIC_CACHE_TTL_HOURS` | 语义缓存有效期(小时) | `168` |
 
 ## 运行测试
 

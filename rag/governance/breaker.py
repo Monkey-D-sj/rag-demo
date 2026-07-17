@@ -51,6 +51,12 @@ class RedisCircuitBreaker:
         raise CircuitOpenError(f"熔断半开({quota}),探针已被占用", status_code=503)
 
     async def record_success(self, quota: str, probe: str | None) -> None:
+        """记录成功调用。
+
+        probe=None 时仅清零连续失败计数;若熔断已 open,不改变 state/opened_at,
+        熔断仍按冷却期恢复。open 期间的普通成功只可能来自 fail-open 放行的调用,
+        清零计数是可接受的。
+        """
         try:
             if probe:
                 # 探针成功 → 闭合:删状态与探针键
@@ -59,7 +65,7 @@ class RedisCircuitBreaker:
                 # 普通成功 → 连续失败清零
                 await self._redis.hset(self._key(quota), "failures", 0)
         except Exception:  # noqa: BLE001
-            logger.warning("熔断器记录成功失败: %s", quota, exc_info=True)
+            logger.warning("熔断器记录成功异常: %s", quota, exc_info=True)
 
     async def record_failure(self, quota: str, probe: str | None) -> None:
         try:

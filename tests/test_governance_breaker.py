@@ -68,6 +68,18 @@ async def test_probe_failure_reopens(redis):
         await b.check("chat")
 
 
+async def test_release_probe_allows_next_probe(redis):
+    b = _breaker(redis)
+    t = 1000.0
+    b._now = lambda: t
+    for _ in range(3):
+        await b.record_failure("chat", probe=None)
+    t += 31
+    assert await b.check("chat") == "probe"
+    await b.release_probe("chat")  # 归还探针
+    assert await b.check("chat") == "probe"  # 下一个请求可再探
+
+
 async def test_redis_failure_fails_open():
     class _BrokenRedis:
         def __getattr__(self, name):

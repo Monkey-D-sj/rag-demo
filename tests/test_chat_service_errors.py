@@ -9,6 +9,7 @@ class _MockRewriteResult:
     """使 handle_query 成功返回 is_out_of_scope=True,路由到 direct_answer 触发 LLM 错误。"""
     rewrite_query = "你好"
     is_out_of_scope = True
+    entities = []
 
 
 class _ExplodingLLM:

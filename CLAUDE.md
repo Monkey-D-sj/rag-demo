@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 代码规范
+
+- 禁止重复声明已有的变量
+
 ## Common Commands
 
 ```bash

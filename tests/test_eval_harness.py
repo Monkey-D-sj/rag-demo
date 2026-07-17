@@ -56,6 +56,8 @@ class _FakeEmbedding:
 
 
 class _FakeRetriever:
+    has_graph = False  # 无图召回,graph_fused 轨不参与
+
     def __init__(self, mapping):
         self._mapping = mapping  # query -> list[chunk text]
 
@@ -100,3 +102,68 @@ async def test_run_eval_returns_six_legs_with_raw(monkeypatch):
     assert out["raw"]["aggregate"]["hit@1"] == 0.5
     assert out["fused"]["aggregate"]["hit@1"] == 1.0
     assert len(out["fused"]["per_query"]) == 2
+
+
+def test_golden_item_entities_optional(tmp_path):
+    from rag.eval.harness import load_golden
+
+    p = tmp_path / "g.jsonl"
+    p.write_text(
+        '{"id": "1", "query": "q1", "gold_snippets": ["s"], "entities": ["孙悟空"]}\n'
+        '{"id": "2", "query": "q2", "gold_snippets": ["s"]}\n',
+        encoding="utf-8",
+    )
+    items = load_golden(p)
+    assert items[0].entities == ["孙悟空"]
+    assert items[1].entities == []
+
+
+async def test_run_eval_graph_leg_gated_by_has_graph(monkeypatch):
+    import rag.eval.harness as mod
+
+    embedding = _FakeEmbedding()
+    items = [
+        GoldenItem(
+            "q1", "大师兄是谁?", ["孙悟空是大师兄"],
+            rewrite_query="孙悟空 大师兄", entities=["孙悟空"],
+        ),
+        GoldenItem("q2", "金箍棒多重?", ["一万三千五百斤"], rewrite_query="如意金箍棒重量"),
+    ]
+    mapping = {
+        "孙悟空 大师兄": ["孙悟空是大师兄"],
+        "如意金箍棒重量": ["重一万三千五百斤"],
+    }
+
+    class _FakeGraphRetriever:
+        def __init__(self, mapping, has_graph):
+            self._mapping = mapping
+            self.has_graph = has_graph
+            self.entities_calls: list[tuple[str, list[str]]] = []
+
+        async def search(self, query, knowledge_base_ids=None, top_k=5,
+                          query_emb=None, entities=None):
+            if entities is not None:
+                self.entities_calls.append((query, entities))
+            return [{"id": f"c{i}", "chunk_index": i, "text": t}
+                    for i, t in enumerate(self._mapping.get(query, [])[:top_k])]
+
+    async def _empty(*a, **kw): return []
+    monkeypatch.setattr(mod.store, "search_chunks", _empty)
+    monkeypatch.setattr(mod.store, "search_chunks_bm25", _empty)
+    monkeypatch.setattr(mod, "load_cache", lambda: {})
+    monkeypatch.setattr(mod, "save_cache", lambda cache: None)
+
+    # 1) has_graph=False → result 不含 graph_fused
+    retriever_no_graph = _FakeGraphRetriever(mapping, has_graph=False)
+    out_no_graph = await run_eval(items, _FakePool(), embedding, retriever_no_graph, ks=(1,), top_k=5)
+    assert "graph_fused" not in out_no_graph
+    assert retriever_no_graph.entities_calls == []
+
+    # 2) has_graph=True 且条目带 entities → result 含 graph_fused,且该轨调用 search 时传了 entities
+    retriever_with_graph = _FakeGraphRetriever(mapping, has_graph=True)
+    out_with_graph = await run_eval(items, _FakePool(), embedding, retriever_with_graph, ks=(1,), top_k=5)
+    assert "graph_fused" in out_with_graph
+    # 只有 q1 带 entities,q2 无 entities 不进 graph 轨
+    assert len(out_with_graph["graph_fused"]["per_query"]) == 1
+    assert out_with_graph["graph_fused"]["per_query"][0]["id"] == "q1"
+    assert retriever_with_graph.entities_calls == [("孙悟空 大师兄", ["孙悟空"])]

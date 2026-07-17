@@ -36,13 +36,14 @@ KS = (3, 5)
 _LEG_LABEL = {
     "fused": "混合(改)",
     "fused_reranked": "混合重排",
+    "graph_fused": "图谱融合",
     "raw": "混合(原)",
     "vec_only": "向量(改)",
     "raw_vec": "向量(原)",
     "bm25_only": "BM25(改)",
     "raw_bm25": "BM25(原)",
 }
-_LEG_ORDER = ("fused", "fused_reranked", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
+_LEG_ORDER = ("fused", "fused_reranked", "graph_fused", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
 _CAT_LABEL = {
     "basic": "基础召回",
     "chunk_boundary": "Chunk边界",

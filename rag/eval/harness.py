@@ -22,12 +22,14 @@ class GoldenItem:
     rewrite_query: str | None = None
     out_of_scope: bool = False
     category: str = ""
+    entities: list[str] = field(default_factory=list)
 
 
 def load_golden(path) -> list[GoldenItem]:
     """读取 jsonl golden 集；跳过空行；校验必填字段，缺失即报错。
 
-    可选字段：rewrite_query（改写后查询）、out_of_scope（范围外，默认 false）。
+    可选字段: rewrite_query(改写后查询)、out_of_scope(范围外,默认 false)、
+    entities(图召回轨用的实体标注,默认空列表)。
     范围外条目允许 gold_snippets 为空。
     """
     items: list[GoldenItem] = []
@@ -50,16 +52,27 @@ def load_golden(path) -> list[GoldenItem]:
                     rewrite_query=obj.get("rewrite_query"),
                     out_of_scope=out_of_scope,
                     category=obj.get("category", ""),
+                    entities=list(obj.get("entities", [])),
                 )
             )
     return items
 
 
 async def build_retriever(settings: Settings) -> tuple[AsyncConnectionPool, KnowledgeRetriever]:
-    """构造 pool + 复用生产 KnowledgeRetriever；调用方负责 pool.close()。"""
+    """构造 pool + 复用生产 KnowledgeRetriever;调用方负责 pool.close()。
+
+    NEO4J_ENABLED 且 GRAPH_RECALL_ENABLED 时携带图召回(driver 随进程退出释放)。
+    """
     pool = await create_pg_pool(settings)
     embedding = EmbeddingModel(settings)
-    return pool, KnowledgeRetriever(pool, embedding, settings)
+    graph_retriever = None
+    if settings.NEO4J_ENABLED and settings.GRAPH_RECALL_ENABLED:
+        from rag.db.neo4j import create_neo4j_driver
+        from rag.graph.retriever import GraphRetriever
+
+        driver = create_neo4j_driver(settings)
+        graph_retriever = GraphRetriever(driver, settings.NEO4J_DATABASE, pool)
+    return pool, KnowledgeRetriever(pool, embedding, settings, graph_retriever=graph_retriever)
 
 
 async def run_eval(
@@ -104,6 +117,7 @@ async def run_eval(
     raw_vec_pq: list[dict] = []
     bm25_pq: list[dict] = []
     raw_bm25_pq: list[dict] = []
+    graph_pq: list[dict] = []
 
     print(f"\n评测中: {len(items)} 条 ({total} in-scope), 每条含 3+ 路检索…\n", flush=True)
 
@@ -120,6 +134,15 @@ async def run_eval(
             "chunks": _chunk_preview(rows),
         })
         fused_rows_store.append(rows)
+
+        # ── graph_fused:三路(向量+BM25+图)融合,仅当图召回可用且条目带实体标注 ──
+        if retriever.has_graph and item.entities:
+            graph_rows = await retriever.search(rw, None, top_k, entities=item.entities)
+            graph_pq.append({
+                "id": item.id, "query": rw,
+                **evaluate_query([r["text"] for r in graph_rows], item.gold_snippets, ks),
+                "chunks": _chunk_preview(graph_rows),
+            })
 
         # ── raw fused：原始 query 走完整管线 ──
         if has_rewrite:
@@ -191,6 +214,8 @@ async def run_eval(
         result["raw"] = {"aggregate": aggregate(raw_pq), "per_query": raw_pq}
         result["raw_vec"] = {"aggregate": aggregate(raw_vec_pq), "per_query": raw_vec_pq}
         result["raw_bm25"] = {"aggregate": aggregate(raw_bm25_pq), "per_query": raw_bm25_pq}
+    if graph_pq:
+        result["graph_fused"] = {"aggregate": aggregate(graph_pq), "per_query": graph_pq}
 
     # ── fused_reranked：fused 结果经过 reranker 重排序 ──
     if reranker is not None:

@@ -9,8 +9,9 @@ from typing import TypedDict
 from rag.common.logging import get_logger, setup_logging
 from rag.common.minio_client import create_minio_client
 from rag.config import Settings, get_settings
-from rag.db import create_pg_pool
+from rag.db import create_pg_pool, create_redis_client
 from rag.db.neo4j import create_neo4j_driver, ensure_graph_constraints
+from rag.governance import create_guard
 from rag.document import store
 from rag.document.pipeline import ingest_document
 from rag.graph.pipeline import extract_document_entities
@@ -29,6 +30,8 @@ class WorkerCtx(TypedDict):
     embedding: EmbeddingModel
     neo4j: AsyncDriver | None
     llm: ChatModel
+    redis: object
+    guard: object | None
 
 async def on_startup(ctx: dict) -> None:
     setup_logging()
@@ -37,19 +40,23 @@ async def on_startup(ctx: dict) -> None:
     ctx["pg"] = await create_pg_pool(settings)
     ctx["minio"] = create_minio_client(settings)
     ctx["bucket"] = settings.MINIO_BUCKET
-    ctx["embedding"] = EmbeddingModel(settings)
+    ctx["redis"] = create_redis_client(settings)
+    ctx["guard"] = create_guard(ctx["redis"], ctx["pg"], source="worker")
+    ctx["embedding"] = EmbeddingModel(settings, guard=ctx["guard"])
     if settings.NEO4J_ENABLED:
         ctx["neo4j"] = create_neo4j_driver(settings)
         await ensure_graph_constraints(ctx["neo4j"], settings.NEO4J_DATABASE)
     else:
         ctx["neo4j"] = None
-    ctx["llm"] = NormalModel(settings)
+    ctx["llm"] = NormalModel(settings, guard=ctx["guard"])
 
 
 async def on_shutdown(ctx: dict) -> None:
     await ctx["pg"].close()
     if ctx.get("neo4j"):
         await ctx["neo4j"].close()
+    if ctx.get("redis") is not None:
+        await ctx["redis"].aclose()
 
 
 async def retry_failed_documents(ctx: dict) -> None:

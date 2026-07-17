@@ -20,6 +20,7 @@ from rag.db import create_pg_pool, create_redis_client
 from rag.db.neo4j import create_neo4j_driver
 from rag.document.retriever import KnowledgeRetriever
 from rag.agent.memory import MemoryManager
+from rag.governance import create_guard
 from rag.models.embedding import EmbeddingModel
 from rag.models.normal import NormalModel
 from rag.models.rerank import QwenReranker
@@ -63,23 +64,30 @@ async def lifespan(app: FastAPI):
         stack.push_async_callback(_close("redis 连接池", app.state.redis.aclose))
         logger.info("redis 连接池初始化完成")
 
+        # ------ 初始化 LLM 治理层 -------
+        logger.info("初始化 LLM 治理层")
+        app.state.guard = create_guard(app.state.redis, pool, source="api")
+        logger.info(
+            "LLM 治理层%s", "已启用" if app.state.guard else "未启用(GOVERNANCE_ENABLED=false)"
+        )
+
         # ------ 初始化 agent 依赖单例 -------
         logger.info("初始化 agent 依赖单例")
         logger.info("初始化嵌入模型")
-        embedding = EmbeddingModel(settings)
+        embedding = EmbeddingModel(settings, guard=app.state.guard)
         logger.info("嵌入模型初始化完成")
         logger.info("初始化记忆管理器")
         app.state.memory_manager = MemoryManager(pool, embedding, app.state.redis)
         logger.info("记忆管理器初始化完成")
         logger.info("初始化 LLM 模型")
-        app.state.llm = NormalModel(settings)
+        app.state.llm = NormalModel(settings, guard=app.state.guard)
         logger.info("LLM 模型初始化完成")
         logger.info("初始化知识检索器")
         app.state.retriever = KnowledgeRetriever(pool, embedding, settings)
         logger.info("知识检索器初始化完成")
         logger.info("初始化重排序器")
         if settings.RERANK_ENABLED and settings.RERANK_BASE_URL:
-            app.state.reranker = QwenReranker(settings)
+            app.state.reranker = QwenReranker(settings, guard=app.state.guard)
             logger.info("重排序器初始化完成（qwen3-rerank API）")
         else:
             app.state.reranker = None

@@ -10,6 +10,7 @@ from rag.common.logging import bind_session, get_logger, reset_session
 from rag.document.retriever import KnowledgeRetriever
 from rag.agent.memory import MemoryManager
 from rag.models.base import ChatModel
+from rag.common.exception import friendly_message
 from rag.observability.langfuse import get_callback_handler, observe_root, session_scope
 from rag.models.rerank import QwenReranker
 
@@ -66,7 +67,7 @@ async def stream_chat(
                 await _run_traced()
             except Exception as e:  # noqa: BLE001
                 logger.exception("chat stream failed")
-                await stream.error(str(e))
+                await stream.error(friendly_message(e))
             finally:
                 stream.close()
 

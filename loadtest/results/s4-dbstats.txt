@@ -1,0 +1,6 @@
+    call_type    |  status  |    error_type    | count | avg_ms 
+-----------------+----------+------------------+-------+--------
+ chat_structured | rejected | CircuitOpenError |     4 | 108398
+ embedding       | rejected | CircuitOpenError |     9 |  31920
+(2 rows)
+

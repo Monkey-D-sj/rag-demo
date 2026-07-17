@@ -1,0 +1,9 @@
+    call_type    |  status  |    error_type    | count 
+-----------------+----------+------------------+-------
+ chat_stream     | rejected | CircuitOpenError |   303
+ chat_structured | rejected | CircuitOpenError |   303
+ embedding       | rejected | CircuitOpenError |   606
+ rerank          | failed   | LLMServerError   |     7
+ rerank          | rejected | CircuitOpenError |   296
+(5 rows)
+

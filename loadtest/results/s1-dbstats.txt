@@ -1,0 +1,10 @@
+    call_type    |  status  | count | avg_ms | p95_ms 
+-----------------+----------+-------+--------+--------
+ chat_stream     | rejected |     3 |  10200 |  10313
+ chat_stream     | success  |    74 |   1847 |   6638
+ chat_structured | rejected |     2 |  10117 |  10212
+ chat_structured | success  |    76 |   1857 |   5459
+ embedding       | success  |   305 |    218 |    244
+ rerank          | success  |    78 |    217 |    240
+(6 rows)
+

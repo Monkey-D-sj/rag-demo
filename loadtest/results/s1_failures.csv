@@ -1,0 +1,2 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+POST,/chat/ (SSE),CatchResponseError('degraded: SSE error event'),3,2026-07-17T05:48:15Z,2026-07-17T05:48:35Z

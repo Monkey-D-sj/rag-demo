@@ -1,0 +1,11 @@
+    call_type    |  status  |       error_type       | count | avg_ms 
+-----------------+----------+------------------------+-------+--------
+ chat_stream     | rejected | RateLimitExceededError |   208 |  10187
+ chat_stream     | success  |                        |    72 |   4348
+ chat_structured | rejected | RateLimitExceededError |   219 |  10196
+ chat_structured | success  |                        |    98 |   3626
+ embedding       | success  |                        |   791 |    311
+ rerank          | rejected | RateLimitExceededError |    32 |  10227
+ rerank          | success  |                        |   266 |   2147
+(7 rows)
+

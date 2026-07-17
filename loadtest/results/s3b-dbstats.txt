@@ -1,0 +1,14 @@
+    call_type    |  status  |       error_type       | count 
+-----------------+----------+------------------------+-------
+ chat_stream     | rejected | RateLimitExceededError |    18
+ chat_stream     | rejected | CircuitOpenError       |     2
+ chat_stream     | success  |                        |    58
+ chat_structured | rejected | RateLimitExceededError |    21
+ chat_structured | rejected | CircuitOpenError       |     3
+ chat_structured | success  |                        |    54
+ embedding       | rejected | CircuitOpenError       |     7
+ embedding       | success  |                        |   265
+ rerank          | rejected | CircuitOpenError       |     2
+ rerank          | success  |                        |    76
+(10 rows)
+

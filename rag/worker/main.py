@@ -93,7 +93,12 @@ async def _extract_wrapper(ctx: dict, document_id: str) -> None:
 
 
 class WorkerSettings:
-    functions = [func(ingest_document), func(_extract_wrapper, timeout=900)]
+    # name 必须与 enqueue_job("extract_document_entities") 一致,
+    # 否则 arq 按 __qualname__ 注册为 _extract_wrapper,投递的任务无函数可执行。
+    functions = [
+        func(ingest_document),
+        func(_extract_wrapper, name="extract_document_entities", timeout=900),
+    ]
     on_startup = on_startup
     on_shutdown = on_shutdown
     cron_jobs = [

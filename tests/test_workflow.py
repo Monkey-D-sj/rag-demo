@@ -133,3 +133,33 @@ async def test_invoke_config_defaults_none(monkeypatch):
     async for _ in wf.invoke("s-1", "q", context=None):
         pass
     assert captured["config"] is None
+
+
+def test_route_after_cache_hit_goes_to_add_memory():
+    from rag.agent.workflow import _route_after_cache
+
+    assert _route_after_cache({"cache_hit": True}) == "add_memory"
+
+
+def test_route_after_cache_miss_goes_to_recall():
+    from rag.agent.workflow import _route_after_cache
+
+    assert _route_after_cache({}) == "recall"
+
+
+def test_graph_contains_cache_nodes():
+    from rag.agent.workflow import graph
+
+    nodes = set(graph.get_graph().nodes)
+    assert "cache_lookup" in nodes
+    assert "cache_store" in nodes
+
+
+def test_graph_edges_generate_via_cache_store():
+    from rag.agent.workflow import graph
+
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    assert ("generate", "cache_store") in edges
+    assert ("cache_store", "add_memory") in edges
+    # 旧的 generate -> add_memory 直连必须移除
+    assert ("generate", "add_memory") not in edges

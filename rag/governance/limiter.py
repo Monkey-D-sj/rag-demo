@@ -27,7 +27,9 @@ end
 return 1
 """
 
-# 并发坑位超过此秒数视为僵尸(实例崩溃未释放),计数前清除
+# 并发坑位僵尸阈值下限:超过此秒数视为僵尸(实例崩溃未释放)。
+# 实际阈值每个配额桶动态推导为 max(120, quota_timeout * 3)。
+# 流式逐 chunk 读超时 60s 意味着活跃流的静默上限约为 timeout,3 倍余量足够。
 _STALE_SLOT_SECONDS = 120
 
 
@@ -72,8 +74,10 @@ class RedisRateLimiter:
         # 2. 并发坑位:先清僵尸,ZADD 占坑后查总数,超了回滚自己
         now = self._now()
         conc_key = f"gov:conc:{quota}"
+        # 按配额超时动态推导僵尸阈值(至少 120s,避免短超时导致活跃流被误清)
+        stale_after = max(_STALE_SLOT_SECONDS, self._settings.timeout_for(quota) * 3)
         member = uuid.uuid4().hex
-        await self._redis.zremrangebyscore(conc_key, 0, now - _STALE_SLOT_SECONDS)
+        await self._redis.zremrangebyscore(conc_key, 0, now - stale_after)
         await self._redis.zadd(conc_key, {member: now})
         if await self._redis.zcard(conc_key) > max_conc:
             await self._redis.zrem(conc_key, member)

@@ -40,6 +40,14 @@ class GovernanceSettings(BaseSettings):
     # ── 价格表:JSON,{"模型名": {"input": 每百万token价, "output": ...}} ──
     LLM_PRICING: str = "{}"
 
+    def timeout_for(self, quota: str) -> float:
+        """配额桶 → 超时秒数。"""
+        return {
+            "chat": self.LLM_TIMEOUT_SECONDS,
+            "embedding": self.EMBEDDING_TIMEOUT_SECONDS,
+            "rerank": self.RERANK_TIMEOUT_SECONDS,
+        }[quota]
+
     def limits_for(self, quota: str) -> tuple[int, int]:
         """配额桶 → (rpm_limit, max_concurrency)。"""
         return {

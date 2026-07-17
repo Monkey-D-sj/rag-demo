@@ -28,6 +28,7 @@ class EmbeddingModel:
             api_key=settings.EMBEDDING_KEY,
             base_url=settings.EMBEDDING_URL,
             timeout=gov.EMBEDDING_TIMEOUT_SECONDS,
+            max_retries=0,  # SDK 内部重试关闭:重试统一由外层 tenacity+guard 管理,保证限流/熔断按真实请求计数
         )
         self._model = settings.EMBEDDING_MODEL
         self._dim = settings.EMBEDDING_DIM

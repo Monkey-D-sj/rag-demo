@@ -90,6 +90,7 @@ class NormalModel(ChatModel):
             seed=42,
             timeout=gov.LLM_TIMEOUT_SECONDS,  # 显式超时:流式为逐 chunk 读超时
             stream_usage=True,  # 流式末 chunk 携带 usage,供成本统计
+            max_retries=0,  # SDK 内部重试关闭:重试统一由外层 tenacity+guard 管理,保证限流/熔断按真实请求计数
         )
         self._model_name = settings.MODEL_NAME
         self._guard = guard
@@ -120,6 +121,9 @@ class NormalModel(ChatModel):
             # asyncio.timeout 兜底触发;可重试、计入熔断
             raise LLMTimeoutError("LLM 调用超时", model=self._model_name) from e
         except Exception as e:
+            # SDK 超时也翻译为 LLMTimeoutError(按类名判断,保持 is_retryable 按名判断风格)
+            if type(e).__qualname__ == "APITimeoutError":
+                raise LLMTimeoutError("LLM 调用超时", model=self._model_name) from e
             code = _extract_status_code(e)
             if code:
                 raise from_http_error(code, str(e), model=self._model_name) from e

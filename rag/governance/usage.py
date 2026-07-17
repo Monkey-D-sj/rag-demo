@@ -39,10 +39,13 @@ class UsageRecorder:
         self._pool = pool
         self._source = source  # api | worker | eval
         self._pricing = pricing
+        self._tasks: set = set()  # 事件循环仅持任务弱引用,不留强引用会被 GC 掉,丢统计行
 
     def record(self, rec: CallRecord) -> None:
         try:
-            asyncio.get_running_loop().create_task(self._write(rec))
+            task = asyncio.get_running_loop().create_task(self._write(rec))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
         except Exception:  # noqa: BLE001 - 无事件循环等边界情况,只丢这一条记录
             logger.warning("llm_call_log 记录跳过", exc_info=True)
 

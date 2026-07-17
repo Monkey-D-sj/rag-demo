@@ -39,9 +39,20 @@ async def test_stale_concurrency_slots_are_evicted(redis):
     t = 1000.0
     lim._now = lambda: t
     await lim.acquire("chat")  # 占坑但不释放(模拟实例崩溃)
-    t += 121  # 超过 120s 僵尸阈值
+    t += 181  # 超过 3×LLM_TIMEOUT_SECONDS=180 的僵尸阈值
     member = await lim.acquire("chat")  # 僵尸被清,坑位可复用
     assert member is not None
+
+
+async def test_live_slot_survives_old_stale_window(redis):
+    """活跃流式调用在旧的 120s 窗口内不被清除(3×timeout 保护)。"""
+    lim = _limiter(redis, CHAT_MAX_CONCURRENCY=1)
+    t = 1000.0
+    lim._now = lambda: t
+    await lim.acquire("chat")  # 活跃长流式调用
+    t += 121  # 旧的 120s 窗口已过,但 < 3×LLM_TIMEOUT_SECONDS=180
+    with pytest.raises(RateLimitExceededError):
+        await lim.acquire("chat")  # 坑位仍被占用,不得清除
 
 
 async def test_rpm_limit_rejects(redis):

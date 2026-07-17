@@ -156,26 +156,33 @@ curl -X POST http://localhost:8000/chat/stream \
 - `status` — 节点状态推送（"检索知识库中…"）
 - `message` — LLM 生成的 token 片段
 - `error` — 错误信息
+- `citations` — 引用元数据(生成完成后下发)
 
 ## Agent 流水线
 
 ```
-                    ┌─ out-of-scope ─→ direct_answer ─────────────────────┐
-START → recall_memory → handle_query ┤                                      END
-                    └─ in-scope ─→ recall → rerank ┬─ generate → add_memory ┘
-                                                     └─ no_results ─────────┘
+                    ┌─ out-of-scope → direct_answer ──────────────────────────────────────────────────┐
+START → recall_memory → handle_query ┤                                                                END
+                    └─ in-scope → cache_lookup ┬─ 命中 → add_memory ─────────────────────────────────────┘
+                                                └─ 未命中 → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory
+                                                                                                                            └─ no_results
 ```
 
 | # | 节点 | 职责 |
 |---|---|---|
 | 1 | `recall_memory` | 短期记忆（Redis 最近 N 轮）+ 长期记忆（pgvector 语义搜索）并行召回 |
 | 2 | `handle_query` | LLM 结构化输出：范围判断（闲聊/编程→直接兜底）+ 指代消解改写 |
-| 3 | `recall` | 向量（pgvector cosine）+ BM25（ParadeDB jieba）并发检索，去重合并 |
-| 4 | `rerank` | Qwen3-Rerank 语义重排序（可选） |
-| 5a | `generate` | 基于检索上下文 + LLM 流式生成，token 级 SSE 推送 |
-| 5b | `direct_answer` | 范围外直接大模型知识回答 |
-| 5c | `no_results` | 召回为空时返回兜底话术，不调用 LLM |
-| 6 | `add_memory` | 本轮问答持久化写入短期（Redis）+ 长期（pgvector）记忆 |
+| 3 | `cache_lookup` | 语义缓存查询(pgvector 相似度命中,全局范围);命中直接下发缓存答案与引用,跳过检索与生成 |
+| 4 | `recall` | 向量（pgvector cosine）+ BM25（ParadeDB jieba）并发检索，去重合并 |
+| 5 | `neighbor_expand` | Sentence Window:拉取同文档相邻 chunk 扩展上下文 |
+| 6 | `rerank` | Qwen3-Rerank 语义重排序（可选） |
+| 7 | `dynamic_topk` | 相邻分差法动态 top-k 截断 |
+| 8 | `parent_expand` | Parent-Child:chunk 按 doc_id 展开为父文档全文 |
+| 9a | `generate` | 基于检索上下文 + LLM 流式生成，token 级 SSE 推送 |
+| 9b | `direct_answer` | 范围外直接大模型知识回答 |
+| 9c | `no_results` | 召回为空时返回兜底话术，不调用 LLM |
+| 10 | `cache_store` | 生成完成后将答案与引用回写语义缓存,best-effort |
+| 11 | `add_memory` | 本轮问答持久化写入短期（Redis）+ 长期（pgvector）记忆 |
 
 ## 记忆系统
 

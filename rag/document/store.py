@@ -438,6 +438,35 @@ async def get_neighbor_chunks(
         return await cur.fetchall()
 
 
+async def get_chunks_by_uids(
+    pool: AsyncConnectionPool,
+    uids: list[tuple[str, int]],
+) -> list[dict]:
+    """按 (document_id,chunk_index) 批量取 chunk,行结构与 search_chunks 对齐(无 similarity)。
+
+    图召回回 pg 取正文用;返回顺序不保证,调用方按自身评分排序。
+    """
+    if not uids:
+        return []
+    doc_ids = [d for d, _ in uids]
+    idxs = [i for _, i in uids]
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT dc.id, dc.document_id, dc.chunk_index, dc.text,
+                   d.filename,
+                   d.knowledge_base_id,
+                   dc.metadata
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            JOIN unnest(%(docs)s::uuid[], %(idxs)s::int[]) AS u(doc_id, idx)
+              ON dc.document_id = u.doc_id AND dc.chunk_index = u.idx
+            """,
+            {"docs": doc_ids, "idxs": idxs},
+        )
+        return await cur.fetchall()
+
+
 async def claim_graph_processing(
     pool: AsyncConnectionPool, document_id: str
 ) -> bool:

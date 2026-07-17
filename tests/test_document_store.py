@@ -158,3 +158,46 @@ async def test_get_documents_content_batch_and_slim_search_rows():
         assert all("document_content" not in r for r in bm25_rows)
     finally:
         await pool.close()
+
+
+async def test_get_chunks_by_uids_empty_short_circuit(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        "rag.document.store.get_cursor",
+        lambda p: (_ for _ in ()).throw(AssertionError("不应建立游标")),
+    )
+    from rag.document.store import get_chunks_by_uids
+
+    assert await get_chunks_by_uids(object(), []) == []
+    assert called == []
+
+
+async def test_get_chunks_by_uids_builds_unnest_join(monkeypatch):
+    class _Cur:
+        def __init__(self):
+            self.sql = ""
+            self.params = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params or {}
+
+        async def fetchall(self):
+            return [{"id": "c1", "document_id": "d1", "chunk_index": 3, "text": "t"}]
+
+    cur = _Cur()
+    monkeypatch.setattr("rag.document.store.get_cursor", lambda p: cur)
+    from rag.document.store import get_chunks_by_uids
+
+    rows = await get_chunks_by_uids(object(), [("d1", 3), ("d2", 0)])
+
+    assert rows[0]["id"] == "c1"
+    assert "unnest" in cur.sql
+    assert cur.params["docs"] == ["d1", "d2"]
+    assert cur.params["idxs"] == [3, 0]

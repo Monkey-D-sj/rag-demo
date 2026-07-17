@@ -1,16 +1,21 @@
 import io
+import os
+from pathlib import Path
 
 from docx import Document
 from pypdf import PdfReader
 
 
-def parse(data: bytes, content_type: str) -> str:
-    """按类型把文件字节解析为纯文本。"""
+def parse(data: str | bytes, content_type: str) -> str:
+    """按类型把文件字节或路径解析为纯文本。PDF 传路径利用 pypdf 延迟加载,大文件不占内存。"""
     if content_type in ("txt", "md"):
-        text = data.decode("utf-8", errors="replace")
+        if isinstance(data, str):
+            text = Path(data).read_text(encoding="utf-8", errors="replace")
+        else:
+            text = data.decode("utf-8", errors="replace")
 
     elif content_type == "pdf":
-        reader = PdfReader(io.BytesIO(data))
+        reader = PdfReader(data)  # pypdf 支持 str 路径延迟加载
         parts: list[str] = []
         for page in reader.pages:
             page_text = page.extract_text() or ""
@@ -21,7 +26,7 @@ def parse(data: bytes, content_type: str) -> str:
             raise ValueError("PDF 无可提取文本(可能是扫描件)")
 
     elif content_type == "docx":
-        doc = Document(io.BytesIO(data))
+        doc = Document(data) if isinstance(data, str) else Document(io.BytesIO(data))
         parts = [p.text for p in doc.paragraphs if p.text.strip()]
         text = "\n".join(parts)
         if not text.strip():

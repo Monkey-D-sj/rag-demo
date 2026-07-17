@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import TypedDict
 
 from minio import Minio
 from psycopg_pool import AsyncConnectionPool
 
 from rag.common.logging import get_logger
-from rag.common.minio_client import get_object
+from rag.common.minio_client import get_object, get_object_to_file
 from rag.config import Settings
 from rag.document.chunker import SplitStrategy, chunk
 from rag.document import store
@@ -37,7 +38,7 @@ class _IngestDeps(TypedDict, total=False):
 
 
 def _parse_and_chunk(
-    data: bytes,
+    data: str | bytes,
     content_type: str,
     strategy: SplitStrategy,
     chunk_size: int,
@@ -120,30 +121,47 @@ async def _ingest(ctx: _IngestDeps, document_id: str) -> None:
             str(doc["knowledge_base_id"]), SplitStrategy.paragraph_semantic,
         )
 
-        data = await get_object(minio, bucket, doc["object_key"])
+        content_type = doc["content_type"]
+        src: str | bytes
+        tmp_path: str | None = None
 
-        # parse + chunk 是纯 CPU(GIL 活),合并到一次线程池调用,避免阻塞 event loop
-        full_text, chunks = await asyncio.to_thread(
-            _parse_and_chunk,
-            data,
-            doc["content_type"],
-            strategy,
-            settings.CHUNK_SIZE,
-            settings.CHUNK_OVERLAP,
-            doc["filename"],
-        )
-        if not chunks:
-            raise ValueError("切块结果为空,无可入库内容")
+        if content_type in ("pdf", "docx"):
+            # PDF/DOCX:流式下载到临时文件,解析库延迟加载,大文件不占内存
+            tmp_path = await get_object_to_file(minio, bucket, doc["object_key"])
+            src = tmp_path
+        else:
+            # TXT/MD:文件小,内存加载即可
+            src = await get_object(minio, bucket, doc["object_key"])
 
-        # 存储解析后的全文，供 parent-child retrieval 使用
-        await store.set_document_content(pool, document_id, full_text)
+        try:
+            # parse + chunk 是纯 CPU(GIL 活),合并到一次线程池调用,避免阻塞 event loop
+            full_text, chunks = await asyncio.to_thread(
+                _parse_and_chunk,
+                src,
+                content_type,
+                strategy,
+                settings.CHUNK_SIZE,
+                settings.CHUNK_OVERLAP,
+                doc["filename"],
+            )
+            if not chunks:
+                raise ValueError("切块结果为空,无可入库内容")
 
-        # ── 表格提取（best-effort，不影响正文入库） ──
-        table_blocks = await _extract_and_summarize_tables(
-            data,
-            doc["content_type"],
-            llm=ctx.get("llm"),
-        )
+            # 存储解析后的全文，供 parent-child retrieval 使用
+            await store.set_document_content(pool, document_id, full_text)
+
+            # ── 表格提取（best-effort，不影响正文入库） ──
+            table_blocks = await _extract_and_summarize_tables(
+                src,
+                content_type,
+                llm=ctx.get("llm"),
+            )
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    logger.warning("删除临时文件失败: %s", tmp_path)
 
         # 将表格块追加到 chunk 列表（表格 chunk_index 紧跟正文之后）
         table_start_index = len(chunks)

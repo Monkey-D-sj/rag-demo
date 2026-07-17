@@ -44,6 +44,27 @@ async def get_object(client: Minio, bucket: str, key: str) -> bytes:
     return await asyncio.to_thread(_get)
 
 
+async def get_object_to_file(client: Minio, bucket: str, key: str) -> str:
+    """流式下载 MinIO 对象到临时文件,返回文件路径。调用方负责用完后删除。"""
+
+    def _download() -> str:
+        import tempfile
+
+        resp = client.get_object(bucket, key)
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
+                for chunk in resp.stream(amt=64 * 1024):
+                    f.write(chunk)
+                return f.name
+        finally:
+            try:
+                resp.close()
+            finally:
+                resp.release_conn()
+
+    return await asyncio.to_thread(_download)
+
+
 async def list_objects(
     client: Minio, bucket: str, prefix: str = ""
 ) -> list[dict]:

@@ -193,13 +193,14 @@ async def generate_table_summary(
 
 
 def extract_tables(
-    data: bytes,
+    data: str | bytes,
     content_type: str,
 ) -> list[TableBlock]:
-    """从文件字节中提取所有表格，统一为 TableBlock 列表。
+    """从文件字节或路径中提取所有表格，统一为 TableBlock 列表。
 
     支持 PDF 和 DOCX；TXT/MD 无表格返回空列表。
     单个表格解析失败时跳过（记 warning），不中断整体提取。
+    PDF 传路径利用 pdfplumber 延迟加载,大文件不占内存。
     """
     if content_type == "pdf":
         return _extract_pdf_tables(data)
@@ -213,8 +214,8 @@ def extract_tables(
 # ── PDF 表格提取（pdfplumber） ──
 
 
-def _extract_pdf_tables(data: bytes) -> list[TableBlock]:
-    """用 pdfplumber 逐页提取 PDF 表格。"""
+def _extract_pdf_tables(data: str | bytes) -> list[TableBlock]:
+    """用 pdfplumber 逐页提取 PDF 表格。传路径延迟加载,传 bytes 兼容旧调用。"""
     try:
         import pdfplumber
     except ImportError:
@@ -223,7 +224,8 @@ def _extract_pdf_tables(data: bytes) -> list[TableBlock]:
 
     tables: list[TableBlock] = []
     try:
-        with pdfplumber.open(io.BytesIO(data)) as pdf:
+        src = data if isinstance(data, str) else io.BytesIO(data)
+        with pdfplumber.open(src) as pdf:
             for page_num, page in enumerate(pdf.pages, 1):
                 page_tables = _extract_page_tables(page, page_num)
                 tables.extend(page_tables)
@@ -299,12 +301,12 @@ def _pdfplumber_table_to_block(
 # ── DOCX 表格提取（python-docx） ──
 
 
-def _extract_docx_tables(data: bytes) -> list[TableBlock]:
+def _extract_docx_tables(data: str | bytes) -> list[TableBlock]:
     """用 python-docx 提取 DOCX 中的所有表格。"""
     from docx import Document
 
     tables: list[TableBlock] = []
-    doc = Document(io.BytesIO(data))
+    doc = Document(data) if isinstance(data, str) else Document(io.BytesIO(data))
     if not doc.tables:
         return tables
 

@@ -22,7 +22,7 @@ def _merge_dedup(
 ) -> list[dict]:
     """RRF (Reciprocal Rank Fusion) 融合两路(或三路)召回结果。
 
-    对每路按排名计算 RRF 分: 1/(k + rank)，各路分数加和，
+    对每路按排名计算 RRF 分: 1/(k + rank),各路分数加和,
     按总分降序排列取 top_k。同一 chunk 在多路均命中时累加 RRF 分。
     """
     if not vec_rows and not bm25_rows and not graph_rows:
@@ -59,7 +59,7 @@ def _merge_dedup(
             r["similarity"] = None
             chunk_map[rid] = r
 
-    # graph 路：rank 1 = 图评分最高
+    # graph 路:rank 1 = 图评分最高
     for rank, row in enumerate(graph_rows or [], 1):
         rid = str(row["id"])
         rrf = 1.0 / (rrf_k + rank)
@@ -181,14 +181,14 @@ class KnowledgeRetriever:
         async def _graph_leg() -> list[dict]:
             if self._graph_retriever is None or not entities:
                 return []
-            # 去重：UNWIND 按名字逐行发射，重复实体名会让种子权重被重复计入
+            # 去重:UNWIND 按名字逐行发射,重复实体名会让种子权重被重复计入
             dedup_entities = list(dict.fromkeys(entities))
             with span_scope("graph_recall", input={**span_input, "entities": dedup_entities}) as span:
                 t0 = time.perf_counter()
                 try:
                     rows = await self._graph_retriever.search(dedup_entities, candidates)
-                except Exception:  # noqa: BLE001 - 图路失败降级，与 BM25 路对等容错
-                    logger.warning("图召回失败，降级两路", exc_info=True)
+                except Exception:  # noqa: BLE001 - 图路失败降级,与 BM25 路对等容错
+                    logger.warning("图召回失败,降级两路", exc_info=True)
                     rows = []
                 timings["graph_ms"] = round((time.perf_counter() - t0) * 1000, 1)
                 if span is not None:
@@ -198,7 +198,7 @@ class KnowledgeRetriever:
                     ])
                 return rows
 
-        # 三路并发，各自内部兜底；单路失败降级不影响另两路，全败返回空。
+        # 三路并发,各自内部兜底;单路失败降级不影响另两路,全败返回空。
         vec_rows, bm25_rows, graph_rows = await asyncio.gather(
             _vec_leg(), _bm25_leg(), _graph_leg()
         )

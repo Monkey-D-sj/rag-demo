@@ -69,11 +69,11 @@ The worker has its own independent startup (`on_startup`) that creates separate 
 The state graph (`rag/agent/workflow.py`) is a 13-node pipeline with conditional branching:
 
 ```
-                         ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────┐
-START → recall_memory → handle_query ┤                                                                       END
-                         └─ in-scope → cache_lookup ┬─ hit → add_memory ────────────────────────────────────────┘
-                                                     └─ miss → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory
-                                                                                                                                └─ no_results ──────────
+                                     ┌─ out-of-scope → direct_answer ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+START → recall_memory → handle_query ┤                                                                                                                                            END
+                                     └─ in-scope → cache_lookup ┬─ hit → add_memory ───────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                └─ miss → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory ─┘
+                                                                                                                                           └─ no_results ──────────────────────────┘
 ```
 
 | Node | Module | Role |

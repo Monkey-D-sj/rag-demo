@@ -156,16 +156,16 @@ curl -X POST http://localhost:8000/chat/stream \
 - `status` — 节点状态推送（"检索知识库中…"）
 - `message` — LLM 生成的 token 片段
 - `error` — 错误信息
-- `citations` — 引用元数据(生成完成后下发)
+- `citations` — 引用元数据(生成完成或缓存命中后下发)
 
 ## Agent 流水线
 
 ```
-                    ┌─ out-of-scope → direct_answer ──────────────────────────────────────────────────┐
-START → recall_memory → handle_query ┤                                                                END
-                    └─ in-scope → cache_lookup ┬─ 命中 → add_memory ─────────────────────────────────────┘
-                                                └─ 未命中 → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory
-                                                                                                                            └─ no_results
+                                     ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+START → recall_memory → handle_query ┤                                                                                                                                           END
+                                     └─ in-scope → cache_lookup ┬─ 命中 → add_memory ───────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                └─ 未命中 → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory ─┘
+                                                                                                                                          └─ no_results ──────────────────────────┘
 ```
 
 | # | 节点 | 职责 |

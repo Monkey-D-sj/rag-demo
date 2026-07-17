@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 
-from rag.common.exception import CircuitOpenError
+from rag.common.exception import CircuitOpenError, LLMServerError
 from rag.config import Settings
 from rag.governance.guard import CallTracker
 from rag.models.rerank import QwenReranker
@@ -13,13 +13,19 @@ class _GuardSpy:
         self.open_ = open_
         self.acquired: list[str] = []
         self.trackers: list[CallTracker] = []
+        self.seen_exceptions: list[Exception] = []
 
     @asynccontextmanager
     async def acquire(self, quota):
         self.acquired.append(quota)
         if self.open_:
             raise CircuitOpenError("熔断")
-        yield
+        try:
+            yield
+        except Exception as e:
+            # 记录穿过 guard 作用域的异常,验证"翻译发生在 guard 内"(真 guard 靠它计熔断)
+            self.seen_exceptions.append(e)
+            raise
 
     @asynccontextmanager
     async def track(self, call_type, model):
@@ -86,3 +92,6 @@ async def test_rerank_5xx_translated_inside_guard(monkeypatch):
     monkeypatch.setattr(r._client, "post", _fake_post)
     chunks = [{"text": "a"}]
     assert await r.rerank("q", chunks) == chunks  # 降级
+    # 穿过 guard 的必须是翻译后的 LLMServerError,而非裸 httpx 异常,否则熔断记不到账
+    assert len(guard.seen_exceptions) == 1
+    assert isinstance(guard.seen_exceptions[0], LLMServerError)

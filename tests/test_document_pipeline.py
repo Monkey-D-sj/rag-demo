@@ -15,10 +15,10 @@ class _FakeEmbedding:
         return [[0.0, 0.0, 0.0, 0.0] for _ in texts]
 
 
-def _settings(batch=2):
+def _settings(batch=2, graph=False):
     return SimpleNamespace(
         CHUNK_SIZE=800, CHUNK_OVERLAP=100,
-        EMBEDDING_BATCH_SIZE=batch, ENABLE_ENTITY_EXTRACTION=False,
+        EMBEDDING_BATCH_SIZE=batch, ENABLE_ENTITY_EXTRACTION=graph,
     )
 
 
@@ -57,7 +57,10 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
     monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "full text")
-    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a", "b", "c"])
+    monkeypatch.setattr(
+        pipe, "chunk",
+        lambda strategy, text, size, overlap: [("a", {}), ("b", {}), ("c", {})],
+    )
 
     emb = _FakeEmbedding()
     ctx = {
@@ -71,10 +74,11 @@ async def test_ingest_happy_path_batches_and_completes(monkeypatch):
     assert statuses == []  # happy path 不写 set_status(只在失败时写)
     assert emb.batches == [["《test》a", "《test》b"], ["《test》c"]]
     assert completed["kb"] == "kb1"
+    # filename "test.pdf" 去扩展名后作为标题前缀写入 text 与 meta
     assert completed["embedded"] == [
-        (0, "《test》a", [0.0, 0.0, 0.0, 0.0], {}),
-        (1, "《test》b", [0.0, 0.0, 0.0, 0.0], {}),
-        (2, "《test》c", [0.0, 0.0, 0.0, 0.0], {}),
+        (0, "《test》a", [0.0, 0.0, 0.0, 0.0], {"document_title": "test"}),
+        (1, "《test》b", [0.0, 0.0, 0.0, 0.0], {"document_title": "test"}),
+        (2, "《test》c", [0.0, 0.0, 0.0, 0.0], {"document_title": "test"}),
     ]
 
 
@@ -159,14 +163,10 @@ async def test_ingest_cancellation_marks_failed_and_reraises(monkeypatch):
     monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
-    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: [("a", {})])
 
-    settings = SimpleNamespace(
-        CHUNK_SIZE=800, CHUNK_OVERLAP=100,
-        EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=False,
-    )
     ctx = {"pg": None, "minio": None, "bucket": "b",
-           "embedding": _CancelledEmbedding(), "settings": settings, "redis": None}
+           "embedding": _CancelledEmbedding(), "settings": _settings(batch=8), "redis": None}
 
     with pytest.raises(asyncio.CancelledError):
         await pipe.ingest_document(ctx, "d1")
@@ -201,19 +201,10 @@ async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
     monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
-    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: [("a", {})])
 
-    class _FakeEmbedding:
-        async def embed(self, texts):
-            return [[0.0, 0.0, 0.0, 0.0] for _ in texts]
-
-    from types import SimpleNamespace
-    settings = SimpleNamespace(
-        CHUNK_SIZE=800, CHUNK_OVERLAP=100,
-        EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=True,
-    )
     ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),
-           "settings": settings, "redis": _Redis()}
+           "settings": _settings(graph=True), "redis": _Redis()}
 
     await pipe.ingest_document(ctx, "d1")
     assert ("extract_document_entities", ("d1",)) in enqueued
@@ -246,19 +237,10 @@ async def test_ingest_marks_graph_skipped_when_disabled(monkeypatch):
     monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
     monkeypatch.setattr(pipe, "get_object", fake_get_object)
     monkeypatch.setattr(pipe, "parse", lambda data, ct: "text")
-    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: ["a"])
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: [("a", {})])
 
-    class _FakeEmbedding:
-        async def embed(self, texts):
-            return [[0.0, 0.0, 0.0, 0.0] for _ in texts]
-
-    from types import SimpleNamespace
-    settings = SimpleNamespace(
-        CHUNK_SIZE=800, CHUNK_OVERLAP=100,
-        EMBEDDING_BATCH_SIZE=8, ENABLE_ENTITY_EXTRACTION=False,
-    )
     ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),
-           "settings": settings, "redis": None}
+           "settings": _settings(), "redis": None}
 
     await pipe.ingest_document(ctx, "d1")
     assert ("d1", "skipped") in skipped

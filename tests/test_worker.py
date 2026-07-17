@@ -19,7 +19,7 @@ async def test_retry_cron_rescues_stalled_documents(monkeypatch):
         ingested.append(doc_id)
 
     monkeypatch.setattr(wm.store, "claim_failed_for_retry", fake_claim_failed)
-    monkeypatch.setattr(wm.store, "find_stalled_documents", fake_find_stalled, raising=False)
+    monkeypatch.setattr(wm.store, "find_stalled_documents", fake_find_stalled)
     monkeypatch.setattr(wm, "ingest_document", fake_ingest)
 
     ctx = {

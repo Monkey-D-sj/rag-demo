@@ -15,11 +15,14 @@ from rag.common.logging import (
 from rag.config import Settings
 
 
-def _record(level=logging.INFO, msg="hello", exc_info=None):
-    return logging.LogRecord(
+def _record(level=logging.INFO, msg="hello", exc_info=None, **extra):
+    record = logging.LogRecord(
         name="rag.test", level=level, pathname=__file__, lineno=1,
         msg=msg, args=(), exc_info=exc_info,
     )
+    for k, v in extra.items():
+        setattr(record, k, v)
+    return record
 
 
 def test_json_formatter_basic_fields():
@@ -56,12 +59,20 @@ def test_text_formatter_color_has_ansi():
 
 
 @pytest.fixture(autouse=True)
-def _clean_root_handlers():
+def _clean_root_handlers(monkeypatch):
+    import rag.common.logging as logging_mod
+
     root = logging.getLogger()
     saved = root.handlers[:]
     saved_level = root.level
     root.handlers.clear()
+    # setup_logging 是进程级一次性(_logging_initialized 置位后永久 no-op),
+    # 不重置 flag 的话下面的 setup 测试全在测空操作; monkeypatch 会在用例后还原。
+    monkeypatch.setattr(logging_mod, "_logging_initialized", False)
     yield
+    # 先关闭测试期间新加的 handler(RotatingFileHandler 在 Windows 上会锁文件)
+    for h in root.handlers:
+        h.close()
     root.handlers.clear()
     root.handlers.extend(saved)
     root.setLevel(saved_level)
@@ -128,29 +139,20 @@ def test_setup_logging_tames_uvicorn_loggers():
         assert lg.propagate is True
 
 
-def _make_record(msg: str = "hello", **extra) -> logging.LogRecord:
-    record = logging.LogRecord(
-        "rag.test", logging.INFO, __file__, 1, msg, (), None
-    )
-    for k, v in extra.items():
-        setattr(record, k, v)
-    return record
-
-
 def test_json_formatter_includes_extra_fields():
-    out = json.loads(JsonFormatter().format(_make_record(kb_id="kb1", top_k=5)))
+    out = json.loads(JsonFormatter().format(_record(kb_id="kb1", top_k=5)))
     assert out["kb_id"] == "kb1"
     assert out["top_k"] == 5
 
 
 def test_json_formatter_serializes_non_json_values_via_str():
-    rec = _make_record(when=datetime.datetime(2026, 7, 5, 12, 0, 0))
+    rec = _record(when=datetime.datetime(2026, 7, 5, 12, 0, 0))
     out = json.loads(JsonFormatter().format(rec))
     assert "2026-07-05" in out["when"]
 
 
 def test_json_formatter_does_not_leak_std_attrs():
-    out = json.loads(JsonFormatter().format(_make_record()))
+    out = json.loads(JsonFormatter().format(_record()))
     assert "args" not in out
     assert "lineno" not in out
     assert "levelno" not in out
@@ -160,12 +162,12 @@ def test_session_filter_injects_and_resets():
     f = _SessionContextFilter()
     token = bind_session("s-1")
     try:
-        record = _make_record()
+        record = _record()
         assert f.filter(record) is True
         assert record.session_id == "s-1"
     finally:
         reset_session(token)
-    record2 = _make_record()
+    record2 = _record()
     f.filter(record2)
     assert not hasattr(record2, "session_id")
 
@@ -174,7 +176,7 @@ def test_session_filter_keeps_explicit_extra():
     f = _SessionContextFilter()
     token = bind_session("ctx-session")
     try:
-        record = _make_record(session_id="explicit")
+        record = _record(session_id="explicit")
         f.filter(record)
         assert record.session_id == "explicit"
     finally:
@@ -183,14 +185,14 @@ def test_session_filter_keeps_explicit_extra():
 
 def test_text_formatter_appends_session_suffix():
     line = ColorTextFormatter(use_color=False).format(
-        _make_record(session_id="s-9")
+        _record(session_id="s-9")
     )
-    assert line.endswith("| session=s-9")
+    assert line.endswith("| session_id=s-9")
 
 
 def test_text_formatter_no_suffix_without_session():
-    line = ColorTextFormatter(use_color=False).format(_make_record())
-    assert "session=" not in line
+    line = ColorTextFormatter(use_color=False).format(_record())
+    assert "session_id=" not in line
 
 
 def test_get_logger_returns_caller_module_name():

@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import io
 
-import pytest
-
 
 # ── 纯函数测试 ──
 
@@ -318,7 +316,6 @@ class TestExtractTablesFromPdf:
 class TestTableSummaryFallback:
     """LLM 不可用或失败时降级为规则摘要。"""
 
-    @pytest.mark.asyncio
     async def test_extract_without_llm_returns_rule_summary(self):
         """_extract_and_summarize_tables 不传 llm 时仅用规则摘要。"""
         from docx import Document
@@ -348,7 +345,6 @@ class TestTableSummaryFallback:
         # 规则摘要不含 LLM 的流畅表述，但有关键词覆盖
         assert "A" in meta["table_summary"]
 
-    @pytest.mark.asyncio
     async def test_extract_no_tables_returns_empty(self):
         from rag.document.pipeline import _extract_and_summarize_tables
 

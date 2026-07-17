@@ -1,14 +1,8 @@
 import pytest
 
 from rag.common.platform import setup_windows_loop
-from rag.config import Settings
 
 setup_windows_loop()
-
-
-@pytest.fixture
-def settings() -> Settings:
-    return Settings()
 
 
 @pytest.fixture(autouse=True)

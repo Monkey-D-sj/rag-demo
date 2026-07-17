@@ -22,20 +22,16 @@ def test_load_golden_parses_and_skips_blank_lines(tmp_path: Path):
     assert items[1].out_of_scope is False
 
 
-def test_load_golden_parses_out_of_scope():
-    import tempfile, os
-    p = Path(tempfile.mktemp(suffix=".jsonl"))
+def test_load_golden_parses_out_of_scope(tmp_path: Path):
+    p = tmp_path / "oos.jsonl"
     p.write_text(
         '{"id":"q1","query":"你好啊","gold_snippets":[],"out_of_scope":true}\n',
         encoding="utf-8",
     )
-    try:
-        items = load_golden(p)
-        assert len(items) == 1
-        assert items[0].out_of_scope is True
-        assert items[0].gold_snippets == []
-    finally:
-        os.unlink(p)
+    items = load_golden(p)
+    assert len(items) == 1
+    assert items[0].out_of_scope is True
+    assert items[0].gold_snippets == []
 
 
 def test_load_golden_rejects_missing_fields(tmp_path: Path):
@@ -63,7 +59,7 @@ class _FakeRetriever:
     def __init__(self, mapping):
         self._mapping = mapping  # query -> list[chunk text]
 
-    async def search(self, query, knowledge_base_id=None, top_k=5, query_emb=None):
+    async def search(self, query, knowledge_base_ids=None, top_k=5, query_emb=None):
         return [{"id": f"c{i}", "chunk_index": i, "text": t}
                 for i, t in enumerate(self._mapping.get(query, [])[:top_k])]
 
@@ -90,6 +86,9 @@ async def test_run_eval_returns_six_legs_with_raw(monkeypatch):
     async def _empty(*a, **kw): return []
     monkeypatch.setattr(mod.store, "search_chunks", _empty)
     monkeypatch.setattr(mod.store, "search_chunks_bm25", _empty)
+    # 隔离 embedding 缓存:不然 fake 向量会写进 git 跟踪的 query_embeddings.json
+    monkeypatch.setattr(mod, "load_cache", lambda: {})
+    monkeypatch.setattr(mod, "save_cache", lambda cache: None)
 
     out = await run_eval(items, _FakePool(), embedding, retriever, ks=(1,), top_k=5)
 

@@ -14,9 +14,6 @@ class _FakeMM:
 
 
 class _FakeLLM:
-    async def ainvoke(self, messages):
-        return "rw"
-
     async def ainvoke_structured(self, messages, schema):
         from rag.agent.nodes.query.query import QueryRewriteOutput
 
@@ -63,8 +60,6 @@ async def test_invoke_runs_full_graph_with_context():
 
 
 async def test_invoke_passes_config_to_astream(monkeypatch):
-    import rag.agent.workflow as wf
-
     captured = {}
 
     async def fake_astream(input, *, context, stream_mode, config=None):
@@ -80,7 +75,6 @@ async def test_invoke_passes_config_to_astream(monkeypatch):
 
 async def test_invoke_out_of_scope_skips_recall(monkeypatch):
     """is_out_of_scope=True 时 graph 应跳过 recall，直接走 direct_answer。"""
-    import rag.agent.workflow as wf
     from rag.agent.nodes.query.query import QueryRewriteOutput
 
     class _OutOfScopeLLM:
@@ -120,8 +114,6 @@ async def test_invoke_out_of_scope_skips_recall(monkeypatch):
 
 
 async def test_invoke_config_defaults_none(monkeypatch):
-    import rag.agent.workflow as wf
-
     captured = {}
 
     async def fake_astream(input, *, context, stream_mode, config=None):

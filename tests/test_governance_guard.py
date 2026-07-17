@@ -7,7 +7,7 @@ from rag.common.exception import (
     RateLimitExceededError,
 )
 from rag.governance.config import GovernanceSettings
-from rag.governance.guard import CallTracker, LLMGuard
+from rag.governance.guard import LLMGuard
 from rag.governance.usage import CallRecord
 
 

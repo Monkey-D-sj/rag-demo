@@ -12,10 +12,7 @@ class _MockRewriteResult:
 
 
 class _ExplodingLLM:
-    """任何调用都抛熔断异常的假 LLM(满足 ChatModel 用到的接口)。"""
-
-    async def ainvoke(self, messages):
-        raise CircuitOpenError("gov:cb:chat open")
+    """astream 抛熔断异常的假 LLM; ainvoke_structured 正常返回以便路由到 direct_answer。"""
 
     async def ainvoke_structured(self, messages, schema):
         return _MockRewriteResult()

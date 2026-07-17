@@ -25,7 +25,7 @@ uv run rag-worker
 
 # Run tests (unit only, no external services)
 # pytest addopts in pyproject.toml already skips integration+eval markers by default
-uv run pytest tests/ -v --ignore=tests/test_db.py --ignore=tests/test_db_neo4j.py
+uv run pytest tests/ -v
 
 # Run a single test file/function
 uv run pytest tests/test_memory.py -v

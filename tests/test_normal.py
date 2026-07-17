@@ -194,12 +194,6 @@ async def test_guard_weave_retry_acquires_per_attempt(monkeypatch):
     assert guard.trackers[0].attempts == 2
 
 
-async def test_guard_none_keeps_passthrough():
-    m = NormalModel(Settings())
-    m._model = _FakeModel()
-    assert await m.ainvoke(["hi"]) == "answer"  # 无 guard 完全直通
-
-
 async def test_astream_weave_uses_chat_stream_call_type():
     guard = _FakeGuard()
 

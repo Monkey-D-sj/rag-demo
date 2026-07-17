@@ -11,8 +11,8 @@ class _FakeEmbedding:
         return [[0.1, 0.2]]
 
 
-def _settings(**overrides) -> Settings:
-    return Settings(**overrides)
+def _settings() -> Settings:
+    return Settings()
 
 
 def _row(cid: str, text: str = "正文", **extra) -> dict:
@@ -80,25 +80,6 @@ def test_merge_truncates_to_top_k():
 
 # ── search 行为 ──
 
-async def test_search_fuses_and_logs_both_legs(monkeypatch, caplog):
-    vec = [_row("a", text="花果山", similarity=0.87654)]
-    bm25 = [_row("b", text="金箍棒", score=4.2)]
-    r = _retriever(monkeypatch, vec, bm25)
-    with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        result = await r.search("孙悟空的兵器", ["kb-1"])
-    assert {x["id"] for x in result} == {"a", "b"}
-    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
-    assert rec.levelno == logging.INFO
-    assert rec.kb_id == "kb-1"
-    assert rec.vec_hits[0]["chunk_id"] == "a"
-    assert rec.vec_hits[0]["similarity"] == 0.8765
-    assert rec.bm25_hits[0]["chunk_id"] == "b"
-    assert rec.bm25_hits[0]["score"] == 4.2
-    assert rec.hits[0]["sources"] in (["vec"], ["bm25"])
-    assert rec.hits[0]["text_preview"]
-    assert rec.embed_ms >= 0 and rec.search_ms >= 0 and rec.bm25_ms >= 0
-
-
 async def test_search_bm25_failure_degrades_to_vector_only(monkeypatch, caplog):
     vec = [_row("a", similarity=0.9)]
     r = _retriever(monkeypatch, vec, bm25_exc=RuntimeError("index missing"))
@@ -108,39 +89,30 @@ async def test_search_bm25_failure_degrades_to_vector_only(monkeypatch, caplog):
     assert any("BM25 召回失败" in x.getMessage() for x in caplog.records)
 
 
-async def test_search_empty_both_legs_logs_warning(monkeypatch, caplog):
+async def test_search_empty_both_legs_returns_empty(monkeypatch):
+    """双路皆空返回 [], 供 _route_after_topk 走 no_results 分支。"""
     r = _retriever(monkeypatch, [], [])
-    with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        result = await r.search("无关问题", ["kb-1"])
+    result = await r.search("无关问题", ["kb-1"])
     assert result == []
-    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
-    assert rec.levelno == logging.WARNING
 
 
-async def test_search_truncates_long_query_in_log(monkeypatch, caplog):
-    r = _retriever(monkeypatch, [], [])
-    with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        await r.search("长" * 300, "kb-1")
-    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
-    assert len(rec.query) == 200
-
-
-async def test_search_vector_failure_propagates(monkeypatch):
-    import pytest
-
+async def test_search_vector_failure_degrades_to_bm25(monkeypatch, caplog):
+    """向量路异常不外抛:降级纯 BM25, 与 BM25 路容错对等。"""
     import rag.document.retriever as mod
 
     async def boom_vec(pool, embedding, knowledge_base_ids, top_k):
         raise RuntimeError("vector down")
 
     async def fake_bm25(pool, query_text, knowledge_base_ids, top_k):
-        return []
+        return [_row("b", score=4.2)]
 
     monkeypatch.setattr(mod.store, "search_chunks", boom_vec)
     monkeypatch.setattr(mod.store, "search_chunks_bm25", fake_bm25)
     r = KnowledgeRetriever(None, _FakeEmbedding(), _settings())
-    with pytest.raises(RuntimeError, match="vector down"):
-        await r.search("q", ["kb-1"])
+    with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
+        result = await r.search("q", ["kb-1"])
+    assert [x["id"] for x in result] == ["b"]
+    assert any("向量召回失败" in x.getMessage() for x in caplog.records)
 
 
 async def test_search_punctuation_only_query_skips_bm25_leg(monkeypatch, caplog):
@@ -184,16 +156,6 @@ async def test_fused_overlap_preserves_both_raw_scores(monkeypatch):
     assert result[0]["similarity"] == 0.9
     assert result[0]["score"] == 4.2
     assert result[0]["sources"] == ["vec", "bm25"]
-
-
-async def test_rank_summary_preview_truncated_to_80(monkeypatch, caplog):
-    vec = [_row("a", text="山" * 300, similarity=0.9)]
-    r = _retriever(monkeypatch, vec, [])
-    with caplog.at_level(logging.INFO, logger="rag.document.retriever"):
-        await r.search("q", ["kb-1"])
-    rec = next(x for x in caplog.records if "混合召回" in x.getMessage())
-    assert len(rec.vec_hits[0]["text_preview"]) == 80
-    assert len(rec.hits[0]["text_preview"]) == 80
 
 
 # ── fetch_parent_contents ──

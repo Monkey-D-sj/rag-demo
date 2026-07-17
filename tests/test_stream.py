@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from rag.agent.type import StreamEventType, stream_event
 from rag.api.common.stream import ChatStream, ChatStatus, ChatMessage, ChatError
 
@@ -46,7 +44,6 @@ def test_chat_error_model():
 
 # ── ChatStream 正常流程 ─────────────────────────────────
 
-@pytest.mark.asyncio
 async def test_stream_status_and_message():
     async with ChatStream() as stream:
         await stream.status("检索中...")
@@ -61,7 +58,6 @@ async def test_stream_status_and_message():
     assert events[2] == "[DONE]"
 
 
-@pytest.mark.asyncio
 async def test_stream_error_then_done():
     async with ChatStream() as stream:
         await stream.error("出错了")
@@ -73,7 +69,6 @@ async def test_stream_error_then_done():
     assert events[1] == "[DONE]"
 
 
-@pytest.mark.asyncio
 async def test_stream_auto_error_on_exception():
     """__aexit__ 收到异常时自动发送 error + [DONE]。"""
     from rag.common.exception import friendly_message
@@ -92,7 +87,6 @@ async def test_stream_auto_error_on_exception():
     assert events[-1] == "[DONE]"
 
 
-@pytest.mark.asyncio
 async def test_stream_empty():
     """空流只有 [DONE]。"""
     stream = ChatStream()
@@ -106,7 +100,6 @@ async def test_stream_empty():
 
 # ── send_event 适配层 ────────────────────────────────────
 
-@pytest.mark.asyncio
 async def test_send_event_known_types():
     async with ChatStream() as stream:
         await stream.send_event(stream_event(StreamEventType.STATUS, "s1"))
@@ -122,7 +115,6 @@ async def test_send_event_known_types():
     assert events[3] == "[DONE]"
 
 
-@pytest.mark.asyncio
 async def test_send_event_skips_unknown():
     """未知事件类型（如旧的 'update'）被静默跳过。"""
     async with ChatStream() as stream:
@@ -137,7 +129,6 @@ async def test_send_event_skips_unknown():
     assert events[1] == "[DONE]"
 
 
-@pytest.mark.asyncio
 async def test_send_event_missing_type():
     """无 type 字段的事件被跳过。"""
     async with ChatStream() as stream:
@@ -152,7 +143,6 @@ async def test_send_event_missing_type():
 
 # ── done 不重复 ────────────────────────────────────────────
 
-@pytest.mark.asyncio
 async def test_done_not_duplicated():
     """多次调用 error/status 后再正常退出，[DONE] 只发一次。"""
     async with ChatStream() as stream:

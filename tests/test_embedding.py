@@ -1,5 +1,3 @@
-import pytest
-
 from rag.config import Settings
 from rag.models.embedding import EmbeddingModel
 
@@ -81,9 +79,6 @@ class _FakeEmbeddingsClient:
 
 
 async def test_embed_guard_weave_records_usage():
-    from rag.config import Settings
-    from rag.models.embedding import EmbeddingModel
-
     guard = _GuardSpy()
     m = EmbeddingModel(Settings(), guard=guard)
     m._client = _FakeEmbeddingsClient()

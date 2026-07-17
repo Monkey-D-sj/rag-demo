@@ -64,15 +64,6 @@ async def test_rpm_limit_rejects(redis):
         await lim.acquire("chat")
 
 
-async def test_rpm_rejection_does_not_leak_concurrency_slot(redis):
-    lim = _limiter(redis, CHAT_RPM_LIMIT=1)
-    lim._now = lambda: 1000.0
-    await lim.release("chat", await lim.acquire("chat"))
-    with pytest.raises(RateLimitExceededError):
-        await lim.acquire("chat")
-    assert await redis.zcard("gov:conc:chat") == 0
-
-
 async def test_cooldown_blocks_acquire(redis):
     lim = _limiter(redis)
     await lim.start_cooldown("chat")

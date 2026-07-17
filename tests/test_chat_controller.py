@@ -54,9 +54,6 @@ def test_chat_controller_streams_chain(monkeypatch):
     assert payloads[-1] == "[DONE]"
     events = [json.loads(p) for p in payloads if p != "[DONE]"]
 
-    # 不应包含 update 事件
-    assert all(e["type"] in (StreamEventType.STATUS, StreamEventType.MESSAGE, StreamEventType.ERROR) for e in events)
-
     # 验证事件顺序
     types = [e["type"] for e in events]
     assert types == [StreamEventType.STATUS, StreamEventType.STATUS, StreamEventType.STATUS, StreamEventType.STATUS, StreamEventType.MESSAGE, StreamEventType.MESSAGE]

@@ -1,18 +1,7 @@
 import sys
 import types
 
-import pytest
-
 import rag.observability.langfuse as ob
-
-
-@pytest.fixture(autouse=True)
-def _reset_settings_cache():
-    ob.get_langfuse_settings.cache_clear()
-    ob._init_client.cache_clear()
-    yield
-    ob.get_langfuse_settings.cache_clear()
-    ob._init_client.cache_clear()
 
 
 def test_handler_none_when_disabled(monkeypatch):
@@ -40,7 +29,6 @@ def test_observe_passthrough_when_enabled_without_keys(monkeypatch):
     monkeypatch.setenv("LANGFUSE_ENABLED", "true")
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
-    ob.get_langfuse_settings.cache_clear()
 
     async def fn(x):
         return x

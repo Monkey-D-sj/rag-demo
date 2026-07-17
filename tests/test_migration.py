@@ -7,7 +7,7 @@ from rag.config import get_settings
 @pytest.mark.integration
 def test_table_and_extensions_exist():
     s = get_settings()
-    with psycopg.connect(s.pg_async_dsn) as conn:
+    with psycopg.connect(s.PG_ASYNC_DSN) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT to_regclass('public.long_term_memories')"
@@ -20,20 +20,21 @@ def test_table_and_extensions_exist():
 @pytest.mark.integration
 def test_document_tables_exist_with_novel_regulation_kbs():
     s = get_settings()
-    with psycopg.connect(s.pg_async_dsn) as conn:
+    with psycopg.connect(s.PG_ASYNC_DSN) as conn:
         with conn.cursor() as cur:
             for table in ("knowledge_bases", "documents", "document_chunks"):
                 cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                 assert cur.fetchone()[0] == table
-            cur.execute("SELECT name FROM knowledge_bases ORDER BY name")
+            # 不比较顺序:中文 name 的排序依赖 DB collation,各环境不一致
+            cur.execute("SELECT name FROM knowledge_bases")
             rows = cur.fetchall()
-            assert rows == [("法规",), ("小说",)]
+            assert {r[0] for r in rows} == {"书籍文献", "法规"}
 
 
 @pytest.mark.integration
 def test_semantic_cache_table_exists():
     s = get_settings()
-    with psycopg.connect(s.pg_async_dsn) as conn:
+    with psycopg.connect(s.PG_ASYNC_DSN) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT to_regclass('public.semantic_cache')")
             assert cur.fetchone()[0] == "semantic_cache"

@@ -2,10 +2,9 @@ import os
 
 import pytest
 
-pytestmark = pytest.mark.integration
+from rag.graph.store import purge_document, write_graph
 
-neo4j = pytest.importorskip("neo4j")
-from rag.graph.store import purge_document, write_graph  # noqa: E402
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture

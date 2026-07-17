@@ -308,9 +308,8 @@ async def test_no_results_emits_canned_message(monkeypatch):
     assert stream_event(StreamEventType.MESSAGE, no_results_mod._NO_RESULT_MSG) in emitted
 
 
-async def test_rerank_passthrough_when_no_reranker(monkeypatch):
+async def test_rerank_passthrough_when_no_reranker():
     """未注入 reranker 时节点应透传原始结果。"""
-    monkeypatch.setattr(rerank_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
     runtime = SimpleNamespace(
         context=ContextSchema(llm=None, memory_manager=None, reranker=None)
     )
@@ -346,9 +345,8 @@ async def test_rerank_reorders_chunks(monkeypatch):
     assert out["recall_vec_results"][0]["rerank_score"] == 9.0
 
 
-async def test_rerank_empty_chunks_skips(monkeypatch):
+async def test_rerank_empty_chunks_skips():
     """空 recall 结果直接跳过，不调 reranker。"""
-    monkeypatch.setattr(rerank_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
 
     class _NoCallReranker:
         async def rerank(self, query, chunks, top_k=None):
@@ -541,7 +539,6 @@ async def test_dynamic_topk_enabled_filters(monkeypatch):
 
 async def test_dynamic_topk_disabled_passthrough(monkeypatch):
     """禁用时节点应透传原始结果不做任何修改。"""
-    monkeypatch.setattr(topk_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
         "S", (), {"RERANK_DYNAMIC_TOPK_ENABLED": False}
     )())
@@ -556,7 +553,6 @@ async def test_dynamic_topk_disabled_passthrough(monkeypatch):
 
 async def test_dynamic_topk_empty_passthrough(monkeypatch):
     """空结果直接透传，不调 _dynamic_truncate。"""
-    monkeypatch.setattr(topk_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
         "S", (), {
             "RERANK_DYNAMIC_TOPK_ENABLED": True,
@@ -574,7 +570,6 @@ async def test_dynamic_topk_empty_passthrough(monkeypatch):
 
 async def test_dynamic_topk_non_list_passthrough(monkeypatch):
     """recall_vec_results 不是 list 时透传，不抛异常。"""
-    monkeypatch.setattr(topk_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
         "S", (), {
             "RERANK_DYNAMIC_TOPK_ENABLED": True,

@@ -65,11 +65,22 @@ async def chat_completions(request: Request):
             yield "data: [DONE]\n\n"
         return StreamingResponse(_sse(), media_type="text/event-stream")
 
+    # json_mode(结构化输出)请求返回合法 JSON,否则调用方 Pydantic 校验失败
+    # 会触发 3 次重试,放大 chat 配额消耗,压测信号失真(S1 实测发现)。
+    # 字段对齐 rag/agent/nodes/query/query.py 的 QueryRewriteOutput。
+    if body.get("response_format", {}).get("type") == "json_object":
+        content = json.dumps(
+            {"rewrite_query": "孙悟空的金箍棒来历", "is_out_of_scope": False},
+            ensure_ascii=False,
+        )
+    else:
+        content = "".join(_ANSWER_TOKENS)
+
     return {
         "id": "mock", "object": "chat.completion", "created": created, "model": model,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": "".join(_ANSWER_TOKENS)},
+            "message": {"role": "assistant", "content": content},
             "finish_reason": "stop",
         }],
         "usage": {"prompt_tokens": 100, "completion_tokens": 9, "total_tokens": 109},

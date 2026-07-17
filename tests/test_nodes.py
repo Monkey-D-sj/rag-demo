@@ -11,6 +11,8 @@ import rag.agent.nodes.rerank.rerank as rerank_mod
 import rag.agent.nodes.dynamic_topk.topk as topk_mod
 import rag.agent.nodes.neighbor_expand.expand as neighbor_expand_mod
 import rag.agent.nodes.parent_expand.expand as parent_expand_mod
+import rag.agent.nodes.cache_lookup.lookup as cache_lookup_mod
+import rag.agent.nodes.cache_store.store as cache_store_mod
 from rag.agent.type import ContextSchema, StreamEventType, stream_event
 from rag.document import REGULATION_KB_ID
 
@@ -963,3 +965,124 @@ async def test_route_after_topk_has_results():
     import rag.agent.workflow as wf
 
     assert wf._route_after_topk({"recall_vec_results": [{"text": "KB1"}]}) == "generate"
+
+
+class _FakeCache:
+    def __init__(self, hit=None):
+        self.hit = hit
+        self.lookup_calls = []
+        self.store_calls = []
+
+    async def lookup(self, query, session_id=None):
+        self.lookup_calls.append((query, session_id))
+        return self.hit
+
+    async def store(self, query, answer, citations):
+        self.store_calls.append((query, answer, citations))
+
+
+def _cache_settings(monkeypatch, mod, enabled=True):
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        mod, "get_settings",
+        lambda: SimpleNamespace(SEMANTIC_CACHE_ENABLED=enabled),
+    )
+
+
+async def test_cache_lookup_disabled_passthrough(monkeypatch):
+    _cache_settings(monkeypatch, cache_lookup_mod, enabled=False)
+    cache = _FakeCache(hit={"answer": "A", "citations": []})
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+    state = {"session_id": "s1", "raw_query": "q", "rewrite_query": "q2"}
+
+    out = await cache_lookup_mod.cache_lookup(state, runtime)
+
+    assert cache.lookup_calls == []
+    assert "cache_hit" not in out
+
+
+async def test_cache_lookup_no_cache_injected_passthrough(monkeypatch):
+    _cache_settings(monkeypatch, cache_lookup_mod, enabled=True)
+    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None))
+    state = {"session_id": "s1", "raw_query": "q"}
+
+    out = await cache_lookup_mod.cache_lookup(state, runtime)
+
+    assert "cache_hit" not in out
+
+
+async def test_cache_lookup_hit_sets_state_and_streams(monkeypatch):
+    _cache_settings(monkeypatch, cache_lookup_mod, enabled=True)
+    events = []
+    monkeypatch.setattr(
+        cache_lookup_mod, "get_stream_writer", lambda: events.append
+    )
+    cache = _FakeCache(hit={"answer": "缓存答案", "citations": [{"index": 1}]})
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+    state = {"session_id": "s1", "raw_query": "q", "rewrite_query": "改写q"}
+
+    out = await cache_lookup_mod.cache_lookup(state, runtime)
+
+    assert cache.lookup_calls == [("改写q", "s1")]
+    assert out["cache_hit"] is True
+    assert out["generated"] == "缓存答案"
+    assert out["citations"] == [{"index": 1}]
+    types = [e.get("type") for e in events]
+    assert types == ["status", "message", "citations"]
+
+
+async def test_cache_lookup_miss_leaves_state(monkeypatch):
+    _cache_settings(monkeypatch, cache_lookup_mod, enabled=True)
+    monkeypatch.setattr(
+        cache_lookup_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+    )
+    cache = _FakeCache(hit=None)
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+    state = {"session_id": "s1", "raw_query": "q"}
+
+    out = await cache_lookup_mod.cache_lookup(state, runtime)
+
+    assert "cache_hit" not in out
+    assert "generated" not in out
+
+
+async def test_cache_store_writes_generated(monkeypatch):
+    _cache_settings(monkeypatch, cache_store_mod, enabled=True)
+    cache = _FakeCache()
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+    state = {
+        "session_id": "s1", "raw_query": "q", "rewrite_query": "改写q",
+        "generated": "新答案", "citations": [{"index": 2}],
+    }
+
+    await cache_store_mod.cache_store(state, runtime)
+
+    assert cache.store_calls == [("改写q", "新答案", [{"index": 2}])]
+
+
+async def test_cache_store_skips_empty_answer(monkeypatch):
+    _cache_settings(monkeypatch, cache_store_mod, enabled=True)
+    cache = _FakeCache()
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+    state = {"session_id": "s1", "raw_query": "q", "generated": ""}
+
+    await cache_store_mod.cache_store(state, runtime)
+
+    assert cache.store_calls == []
+
+
+async def test_cache_store_disabled_passthrough(monkeypatch):
+    _cache_settings(monkeypatch, cache_store_mod, enabled=False)
+    cache = _FakeCache()
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+    state = {"session_id": "s1", "raw_query": "q", "generated": "a"}
+
+    await cache_store_mod.cache_store(state, runtime)
+
+    assert cache.store_calls == []

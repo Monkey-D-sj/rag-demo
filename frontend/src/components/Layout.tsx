@@ -1,11 +1,12 @@
 import { type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
-import { MessageSquare, FileText, HeartPulse } from "lucide-react";
+import { BarChart3, FileText, HeartPulse, MessageSquare } from "lucide-react";
 
 const NAV = [
   { to: "/", label: "Chat", icon: MessageSquare },
   { to: "/documents", label: "Documents", icon: FileText },
   { to: "/health", label: "Health", icon: HeartPulse },
+  { to: "/stats", label: "Stats", icon: BarChart3 },
 ] as const;
 
 export default function Layout({ children }: { children: ReactNode }) {

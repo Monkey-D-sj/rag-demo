@@ -54,3 +54,22 @@ export type ChatEvent =
   | { type: "error";     data: string }
   | { type: "citations"; data: Citation[] }
   | { type: "done";      data: null };
+
+// ── LLM 调用统计 ────────────────────────────────────
+export interface LlmSummaryRow {
+  bucket: string;
+  calls: number;
+  success: number;
+  failed: number;
+  rejected: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number | null;
+}
+
+export interface LlmSummaryResponse {
+  group_by: "day" | "model" | "source";
+  rows: LlmSummaryRow[];
+}

@@ -3,6 +3,7 @@ import type {
   DocumentListResponse,
   DocumentStatus,
   GraphRetryResult,
+  LlmSummaryResponse,
   RetryResult,
 } from "@/types";
 
@@ -91,5 +92,18 @@ export async function getHealth(): Promise<{
   checks: Record<string, string>;
 }> {
   const res = await fetch(`${BASE}/health`);
+  return res.json();
+}
+
+// ── LLM Stats ───────────────────────────────────────
+
+export async function getLlmSummary(
+  groupBy: "day" | "model" | "source",
+): Promise<LlmSummaryResponse> {
+  const res = await fetch(`${BASE}/stats/llm/summary?group_by=${groupBy}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "fetch llm summary failed");
+  }
   return res.json();
 }

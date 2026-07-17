@@ -92,6 +92,7 @@ class MyState(TypedDict):
 	# ----------- 生成 -----------
 	generated: str
 	citations: list[dict]  # 引用元数据 [{index, text, document_title}, ...]
+	cache_hit: bool  # cache_lookup 命中时置 True,路由直达 add_memory
 
 @runtime_checkable
 class RerankerProtocol(Protocol):
@@ -102,6 +103,19 @@ class RerankerProtocol(Protocol):
     ) -> list[dict]: ...
 
 
+@runtime_checkable
+class SemanticCacheProtocol(Protocol):
+    """agent 层所需的语义缓存接口。具体实现(如 SemanticCache)只需满足此协议即可。"""
+
+    async def lookup(
+        self, query: str, session_id: str | None = None
+    ) -> dict | None: ...
+
+    async def store(
+        self, query: str, answer: str, citations: list
+    ) -> None: ...
+
+
 @dataclass
 class ContextSchema:
 	llm: ChatModel
@@ -109,5 +123,6 @@ class ContextSchema:
 	retriever: RetrieverProtocol | None = None
 	reranker: RerankerProtocol | None = None
 	pool: object | None = None  # AsyncConnectionPool，供节点直接查 DB
+	semantic_cache: "SemanticCacheProtocol | None" = None
 
 	

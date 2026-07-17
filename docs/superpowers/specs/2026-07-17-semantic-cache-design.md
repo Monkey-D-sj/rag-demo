@@ -12,8 +12,8 @@
 
 | 决策点 | 结论 |
 |---|---|
-| 共享范围 | 同 knowledge_base 内跨会话全局共享 |
-| 失效策略 | KB 文档变更(入库成功/删除)即刻整库失效 + TTL 兜底 |
+| 共享范围 | 全局跨会话共享。实现时修正:聊天链路 `recall` 不带 KB 维度(全库检索),故缓存无 KB 作用域,直接全局 |
+| 失效策略 | 任何文档入库成功即刻清空全部缓存 + TTL 兜底。实现时修正:项目当前无文档删除 API,失效钩子只挂 worker 入库完成处;答案可能引用多个 KB 的内容,按 KB 局部失效不正确,必须整表清空 |
 | 缓存层级 | 答案级,挂在 `handle_query` 之后(方案 A) |
 | 缓存 key | `rewrite_query` 的 embedding(指代消解后,跨会话命中安全) |
 | 存储 | pgvector 新表,不引入新基础设施 |
@@ -28,9 +28,10 @@
 
 接口(`rag/agent/type.py` 定义 `SemanticCacheProtocol`,`@runtime_checkable`):
 
-- `async lookup(kb_id, query) -> CacheHit | None` — embedding + 相似度查询,返回命中条目(answer + citations)
-- `async store(kb_id, query, answer, citations) -> None` — 回写,写前查重防近重复堆积
-- `async invalidate(kb_id) -> None` — 整 KB 清空
+- `async lookup(query, session_id=None) -> dict | None` — embedding + 相似度查询,返回命中条目(answer + citations);内部吞掉一切异常,失败返回 None(降级为未命中)
+- `async store(query, answer, citations) -> None` — 回写,写前查重防近重复堆积;内部吞掉一切异常
+- 模块级 `async clear_semantic_cache(pool)` — 整表清空(worker 侧失效钩子直接调用,无需构造完整实例)
+- 模块级 `async purge_expired(pool, ttl_hours)` — 物理删除过期行(worker cron 用)
 
 `ContextSchema` 增加字段 `semantic_cache: SemanticCacheProtocol | None = None`。
 
@@ -59,8 +60,7 @@ handle_query ─ in-scope → cache_lookup ┬─ 命中 → add_memory → END
 
 | 列 | 类型 | 说明 |
 |---|---|---|
-| `id` | uuid PK | |
-| `knowledge_base_id` | uuid | 失效与查询过滤维度 |
+| `id` | BIGSERIAL PK | 与 `llm_call_log` 风格一致 |
 | `question` | text | rewrite_query 原文,调试/审计用 |
 | `answer` | text | 缓存的完整回答 |
 | `citations` | jsonb | 原次回答引用数据,命中时复放 |
@@ -68,25 +68,28 @@ handle_query ─ in-scope → cache_lookup ┬─ 命中 → add_memory → END
 | `hit_count` | int default 0 | 命中计数 |
 | `created_at` | timestamptz default now() | TTL 判断依据 |
 
-索引:`embedding` HNSW(`vector_cosine_ops`)+ `knowledge_base_id` btree。
+索引:`embedding` HNSW(`vector_cosine_ops`)。
 
 ### 查询与写入
 
-- 命中查询:`WHERE knowledge_base_id = ? AND created_at > now() - TTL
-  ORDER BY embedding <=> ? LIMIT 1`,相似度 ≥ 阈值才算命中。
+- 命中查询:`WHERE created_at > now() - TTL ORDER BY embedding <=> ? LIMIT 1`,
+  余弦相似度(1 - 距离)≥ 阈值才算命中;命中时 `hit_count` 自增。
 - 防膨胀:`store` 前先做同样的相似度查询,已存在 ≥ 阈值条目则跳过插入。
 
 ## 失效
 
-1. **KB 变更即刻失效**:文档入库成功(pipeline 标记 done 处)与文档删除 API
-   调用 `invalidate(kb_id)`,`DELETE FROM semantic_cache WHERE knowledge_base_id = ?`。
+1. **入库即刻失效**:worker pipeline `store_chunks_and_complete` 成功后
+   调用 `clear_semantic_cache(pool)` 整表清空(best-effort,失败仅 warning)。
 2. **TTL 兜底**:lookup 按 `created_at` 过滤(默认 7 天)。
-3. **物理清理**:worker 既有 5 分钟 cron 顺带删除过期行。
+3. **物理清理**:worker 新增每小时 cron 调用 `purge_expired` 删除过期行。
 
 ## 可观测性
 
-- 命中时向 `llm_call_log` 写一条 `source='semantic_cache'`、`status='cache_hit'`、
-  cost=0 的记录(复用现有 usage 记录器),`hit_count` 自增。
+- 命中时向 `llm_call_log` 写一条记录(复用 `UsageRecorder`):
+  `call_type='semantic_cache'`、`model='semantic-cache'`、`status='cache_hit'`。
+  实现时修正:`source` 列是 UsageRecorder 构造参数(api/worker/eval),
+  不能按记录设置,故用 `call_type` 区分缓存命中;cost 为 None(价格表无此模型,
+  语义等同 0)。`hit_count` 同时自增。
 - 命中率与节省成本可直接用现有对账 SQL 计算:
   节省成本 ≈ 命中次数 × generate 平均单次成本。
 

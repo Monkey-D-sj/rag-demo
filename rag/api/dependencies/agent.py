@@ -20,3 +20,7 @@ def get_retriever(request: Request) -> KnowledgeRetriever:
 
 def get_reranker(request: Request) -> QwenReranker | None:
     return getattr(request.app.state, "reranker", None)
+
+
+def get_semantic_cache(request: Request):
+    return getattr(request.app.state, "semantic_cache", None)

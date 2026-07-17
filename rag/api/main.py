@@ -93,6 +93,23 @@ async def lifespan(app: FastAPI):
             app.state.reranker = None
             logger.info("重排序器未启用，跳过")
 
+        logger.info("初始化语义缓存")
+        if settings.SEMANTIC_CACHE_ENABLED:
+            from rag.agent.cache import SemanticCache
+            from rag.governance.usage import UsageRecorder
+
+            app.state.semantic_cache = SemanticCache(
+                pool,
+                embedding,
+                threshold=settings.SEMANTIC_CACHE_SIM_THRESHOLD,
+                ttl_hours=settings.SEMANTIC_CACHE_TTL_HOURS,
+                recorder=UsageRecorder(pool, "api", {}),
+            )
+            logger.info("语义缓存初始化完成")
+        else:
+            app.state.semantic_cache = None
+            logger.info("语义缓存未启用,跳过")
+
         # ------ 初始化对象存储与任务队列 -------
         logger.info("初始化对象存储与任务队列")
         logger.info("初始化 minio 客户端")

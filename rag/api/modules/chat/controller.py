@@ -2,7 +2,13 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from rag.api.dependencies.agent import get_llm, get_memory_manager, get_reranker, get_retriever
+from rag.api.dependencies.agent import (
+    get_llm,
+    get_memory_manager,
+    get_reranker,
+    get_retriever,
+    get_semantic_cache,
+)
 from rag.api.modules.chat import service
 from rag.document.retriever import KnowledgeRetriever
 from rag.agent.memory import MemoryManager
@@ -25,6 +31,7 @@ async def chat(
     llm: ChatModel = Depends(get_llm),
     retriever: KnowledgeRetriever = Depends(get_retriever),
     reranker: QwenReranker | None = Depends(get_reranker),
+    semantic_cache=Depends(get_semantic_cache),
 ):
     return StreamingResponse(
         service.stream_chat(
@@ -35,6 +42,7 @@ async def chat(
             retriever=retriever,
             reranker=reranker,
             pool=request.app.state.pg,
+            semantic_cache=semantic_cache,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

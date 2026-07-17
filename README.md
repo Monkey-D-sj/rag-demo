@@ -5,11 +5,14 @@
 ## 架构概览
 
 ```
-用户提问 → LangGraph Agent 流水线 (7 节点 + 条件路由)
+用户提问 → LangGraph Agent 流水线 (11 节点 + 条件路由)
            ├─ recall_memory   → 短期(Redis) + 长期(pgvector)记忆召回
            ├─ handle_query    → 查询改写 + 范围判断(LLM 结构化输出)
            ├─ recall          → 向量(pgvector) + BM25(ParadeDB/jieba) 并发检索
+           ├─ neighbor_expand → Sentence Window: 拉取同文档相邻 chunk 扩展上下文
            ├─ rerank          → Qwen3-Rerank 语义重排序
+           ├─ dynamic_topk    → 相邻分差法动态 top-k 截断
+           ├─ parent_expand   → Parent-Child: chunk 按 doc_id 展开为父文档全文
            ├─ generate        → LLM 流式生成(SSE)
            │   ├─ in-scope    → 基于检索上下文回答
            │   ├─ out-of-scope→ 直接大模型知识兜底
@@ -28,7 +31,7 @@
 | 层 | 技术 |
 |---|---|
 | **API 框架** | FastAPI + Uvicorn |
-| **Agent 编排** | LangGraph（7 节点状态图 + 条件分支） |
+| **Agent 编排** | LangGraph（11 节点状态图 + 条件分支） |
 | **向量 DB** | PostgreSQL + pgvector + ParadeDB（BM25 + jieba 分词） |
 | **图数据库** | Neo4j（实体关系抽取，可选） |
 | **重排序** | Qwen3-Rerank（DashScope API） |
@@ -40,7 +43,7 @@
 | **可观测性** | Langfuse（LLM 追踪）+ Loki + Grafana（日志聚合） |
 | **前端** | React 18 + TypeScript + TailwindCSS + Vite |
 | **容器化** | Docker Compose（9 个服务一体化部署） |
-| **评测** | 自建 golden 数据集 + 4 指标 + 6 路分轨 + 基线门禁 |
+| **评测** | 自建 golden 数据集 + 4 指标 + 7 路分轨 + 基线门禁 |
 
 ## 快速开始
 
@@ -196,9 +199,11 @@ START → recall_memory → handle_query ┤                                    
 
 **评测指标**：hit@k / recall@k / NDCG@k / MRR
 
-**6 路分轨**：混合检索/纯向量/纯 BM25 各取改写前与改写后，一次跑完输出对比表格，可精确定位回归来源。
+**7 路分轨**：混合检索/纯向量/纯 BM25 各取改写前与改写后（6 路），注入 reranker 时追加混合重排（fused_reranked）完整链路，一次跑完输出对比表格，可精确定位回归来源。
 
 **门禁机制**：核心指标（recall@5、MRR）相对基线下降超过 3% 即阻断；改写质量独立门禁（改写不得降低检索质量）。
+
+**CI 集成**：`.github/workflows/test.yml` 在 push/PR 时跑全量单测；`.github/workflows/eval.yml` 在检索相关代码变更时起 ParadeDB 容器、种子语料并执行评测门禁。
 
 **范围判断评测**：`--classify` 启用 LLM 分类 vs golden 标注，计算 Precision/Recall/F1。
 
@@ -221,14 +226,17 @@ rag-demo/
 │   ├── __main__.py             # API 启动入口 (rag-api)
 │   ├── config.py               # 配置管理 (pydantic-settings)
 │   ├── agent/                  # LangGraph Agent
-│   │   ├── workflow.py         # 状态图定义 (7 节点 + 条件路由)
+│   │   ├── workflow.py         # 状态图定义 (11 节点 + 条件路由)
 │   │   ├── type.py             # 状态类型 & 协议定义
 │   │   ├── memory/             # MemoryManager: 短期+长期记忆
 │   │   └── nodes/
 │   │       ├── recall_memory/  #   记忆召回
 │   │       ├── query/          #   查询改写 + 范围判断
 │   │       ├── recall/         #   知识库检索
+│   │       ├── neighbor_expand/#   Sentence Window 相邻 chunk 扩展
 │   │       ├── rerank/         #   语义重排序
+│   │       ├── dynamic_topk/   #   动态 top-k 截断
+│   │       ├── parent_expand/  #   父文档全文展开
 │   │       ├── generate/       #   LLM 生成 (3 节点: generate/direct/no_results)
 │   │       └── add_memory/     #   记忆持久化
 │   ├── prompts/                # 统一提示词管理
@@ -253,7 +261,7 @@ rag-demo/
 │   │   └── entity_extraction.py#   实体抽取
 │   ├── eval/                   # 检索评测
 │   │   ├── run.py              #   CLI 入口 (rag-eval)
-│   │   ├── harness.py          #   评测编排 (6 路分轨)
+│   │   ├── harness.py          #   评测编排 (7 路分轨)
 │   │   ├── metrics.py          #   指标计算 + 门禁
 │   │   ├── datasets/           #   golden 集
 │   │   └── baseline.json       #   基线数据

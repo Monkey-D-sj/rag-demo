@@ -50,13 +50,13 @@ cd frontend && pnpm install && pnpm dev
 `pyproject.toml` defines three console scripts:
 - `rag-api` (→ `rag.__main__:main`)
 - `rag-worker` (→ `rag.worker.main:run`)
-- `rag-eval` (→ `rag.eval.run:main`) — retrieval eval CLI with `--update-baseline` / `--breakdown` flags
+- `rag-eval` (→ `rag.eval.run:main`) — retrieval eval CLI with `--update-baseline` / `--classify` flags
 
 ## Architecture
 
 ### Dependency injection: lifespan → app.state → LangGraph Runtime
 
-Resources (pg pool, redis, embedding model, LLM, memory manager, retriever, minio, neo4j, arq) are created in FastAPI `lifespan` via `AsyncExitStack` (LIFO rollback on startup failure), stored on `app.state`, then injected into LangGraph nodes through `Runtime[ContextSchema]`. The `ContextSchema` dataclass carries `llm`, `memory_manager`, and `retriever` — each node accesses them via `runtime.context`. The `MemoryManagerProtocol` and `RetrieverProtocol` in `rag/agent/type.py` define the interfaces; concrete implementations (`MemoryManager`, `KnowledgeRetriever`) satisfy them structurally via `@runtime_checkable`.
+Resources (pg pool, redis, embedding model, LLM, memory manager, retriever, minio, neo4j, arq) are created in FastAPI `lifespan` via `AsyncExitStack` (LIFO rollback on startup failure), stored on `app.state`, then injected into LangGraph nodes through `Runtime[ContextSchema]`. The `ContextSchema` dataclass carries `llm`, `memory_manager`, `retriever`, and `reranker` — each node accesses them via `runtime.context`. The `MemoryManagerProtocol`, `RetrieverProtocol`, and `RerankerProtocol` in `rag/agent/type.py` define the interfaces; concrete implementations satisfy them structurally via `@runtime_checkable`.
 
 The worker has its own independent startup (`on_startup`) that creates separate pg/minio/embedding/neo4j/llm instances — worker and API do not share connections.
 
@@ -64,11 +64,55 @@ The worker has its own independent startup (`on_startup`) that creates separate 
 
 `ChatStream` (`rag/api/common/stream.py`) is an `asyncio.Queue`-backed async iterable. A background `asyncio.Task` feeds LangGraph custom events (status/message/error) into the queue; the main coroutine yields SSE-formatted lines to FastAPI's `StreamingResponse`. `close()` enqueues `[DONE]` + a sentinel (`None`) to terminate iteration. The async context manager (`async with`) auto-closes on exit and emits errors.
 
-### LangGraph workflow: custom events only
+### Agent workflow: 11-node pipeline with conditional routing
 
-The state graph (`rag/agent/workflow.py`) is a linear 4-node pipeline: `recall_memory → handle_query → recall → generate`. It uses `stream_mode=["custom"]` exclusively — the `updates` channel (state diffs) is disabled. Nodes communicate via `get_stream_writer()` emitting typed dicts: `{"type": "status"|"message"|"error", "data": "..."}`. The `handle_query` node (query rewrite) is defined but currently passes through unchanged.
+The state graph (`rag/agent/workflow.py`) is an 11-node pipeline with conditional branching:
 
-After generation, `generate` node calls `_persist_turn()` to write both user query and assistant answer into short-term (Redis list, capped + TTL) and long-term (pgvector, per-session) memory. Memory write failures are logged but never propagate to the user.
+```
+                         ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────────────┐
+START → recall_memory → handle_query ┤                                                                                  END
+                         └─ in-scope → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → add_memory ┘
+                                                                                                         └─ no_results ──────────┘
+```
+
+| Node | Module | Role |
+|------|--------|------|
+| `recall_memory` | `nodes/recall_memory/` | Short-term (Redis) + Long-term (pgvector) memory recall via `MemoryManagerProtocol` |
+| `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全). Outputs `is_out_of_scope` and `rewrite_query` |
+| `recall` | `nodes/recall/` | Hybrid retrieval: vector (pgvector cosine) + BM25 (ParadeDB jieba) concurrent recall, vec-first dedup merge |
+| `neighbor_expand` | `nodes/neighbor_expand/` | Sentence Window: fetch ±N adjacent chunks from the same document (gated by `SENTENCE_WINDOW_ENABLED`; pass-through when disabled or pool missing) |
+| `rerank` | `nodes/rerank/` | Semantic re-ranking via Qwen3-Rerank (optional; pass-through if no reranker injected) |
+| `dynamic_topk` | `nodes/dynamic_topk/` | Adjacent-score-gap dynamic truncation of reranked results (with plateau protection) |
+| `parent_expand` | `nodes/parent_expand/` | Parent-Child Retrieval: expand regulation-KB chunks to full parent document text by doc_id (gated by `PARENT_CHILD_ENABLED`; degrades to dedup-only on failure) |
+| `generate` | `nodes/generate/` | RAG generation with retrieved context, SSE token streaming |
+| `direct_answer` | `nodes/generate/` | Out-of-scope direct LLM answer (no retrieval, no memory write-back) |
+| `no_results` | `nodes/generate/` | Static fallback message when recall is empty (no LLM call) |
+| `add_memory` | `nodes/add_memory/` | Persists turn to short-term + long-term memory (best-effort, failures silently ignored) |
+
+**Conditional routing:**
+- `_route_after_query`: `is_out_of_scope=True` → `direct_answer`; otherwise → `recall`
+- `_route_after_topk` (evaluated after `parent_expand`): `recall_vec_results` non-empty → `generate`; empty → `no_results`
+- Only the `generate` path writes memory (`generate → add_memory → END`); `direct_answer` and `no_results` go straight to `END`
+
+**Key design patterns:**
+- **Graceful degradation**: Memory recall failure → empty context. Retriever failure → empty results. Structured output failure → raw query passthrough. Reranker missing → pass-through.
+- **Custom streaming only**: `stream_mode=["custom"]` — only `writer()` calls produce output events. State deltas are internal-only.
+- **Dependency injection**: Resources (pg pool, redis, embedding, LLM, memory manager, retriever, reranker) are created in FastAPI `lifespan`, stored on `app.state`, injected via `Runtime[ContextSchema]`.
+
+### State type: TypedDict with conditional routing fields
+
+`MyState` (`rag/agent/type.py`) is a plain `TypedDict` — no Annotated reducers. Key fields:
+- `session_id`, `raw_query`, `context` — input fields
+- `is_out_of_scope` — set by `handle_query`; determines routing to `direct_answer` vs `recall`
+- `rewrite_query` — rewritten query from `handle_query`; falls back to `raw_query` on structured-output failure
+- `recall_bm25_results`, `recall_vec_results` — populated by `recall`; `recall_vec_results` is then transformed in place by `neighbor_expand` → `rerank` → `dynamic_topk` → `parent_expand` and used by `generate`; `_route_after_topk` checks `recall_vec_results` emptiness
+- `generated` — final LLM response, persisted by `add_memory`
+
+### Prompt management: centralized + structured output
+
+All prompts live in `rag/prompts/` as module-level string constants. The `query.py` prompt handles two tasks in a single LLM call: scope judgment + query rewrite (指代消解 + 省略补全). Structured output uses Pydantic models (e.g., `QueryRewriteOutput`) with `ainvoke_structured()`.
+
+The `generate.py` prompt includes context-aware RAG instructions. `rerank.py` and `eval.py` prompts are used by the reranker and golden-data generation respectively.
 
 ### LLM calling pattern
 
@@ -78,9 +122,11 @@ Structured output uses `json_mode` (not function calling) with explicit JSON Sch
 
 Streaming (`astream`) does NOT retry — retry semantics for mid-stream failures are intentionally deferred.
 
-### Hybrid retrieval: vector + BM25 with RRF fusion
+### Hybrid retrieval: vector + BM25 with vec-first dedup merge
 
-`KnowledgeRetriever.search()` fires vector recall (pgvector cosine distance) and BM25 recall (ParadeDB `pg_search` with jieba tokenizer) concurrently via `asyncio.gather`. BM25 failures are caught and degraded to empty results — vector is the critical path. Both legs fetch `top_k * 2` candidates, then RRF (Reciprocal Rank Fusion, k=60) merges and re-ranks to final `top_k`. Lexical queries are sanitized (punctuation stripped) before BM25 to avoid noise.
+`KnowledgeRetriever.search(query, knowledge_base_id, top_k)` fires vector recall (pgvector cosine distance) and BM25 recall (ParadeDB `pg_search` with jieba tokenizer) concurrently via `asyncio.gather`. BM25 failures are caught and degraded to empty results — vector is the critical path. Both legs fetch `top_k * candidate_multiplier` candidates, then `_merge_dedup()` merges: vec-first deduplication, marking `sources` on each row (`["vec"]`, `["bm25"]`, or `["vec", "bm25"]`). Final ranking is delegated to the reranker node.
+
+Lexical queries are sanitized (punctuation stripped) before BM25 to avoid noise. Vector results below `RETRIEVER_VEC_SIMILARITY_THRESHOLD` are filtered before merging.
 
 ### Embedding: batch size limit
 
@@ -108,18 +154,21 @@ Entity extraction (graph pipeline) is a separate ARQ task (`extract_document_ent
 
 All DB access goes through `get_cursor(pool)` — an async context manager yielding dict-row cursors. Each connection auto-registers pgvector via `_configure`. Transactions auto-commit on clean exit and rollback on exception. There is no ORM; all queries are raw SQL. Alembic migrations live in `alembic/versions/` and use the sync `PG_SYNC_URL` (note: migrations use `psycopg` sync driver, not the async pool).
 
-### Retrieval eval system
+### Retrieval eval system: 7-leg breakdown + gate + history
 
 `rag/eval/` provides a retrieval quality regression suite:
 - **Golden dataset**: `rag/eval/datasets/retrieval_golden.jsonl` — hand-curated query → relevant doc_ids pairs (西游记 themed)
-- **Metrics**: hit@k, recall@k, ndcg@k, mrr — computed in `rag/eval/metrics.py`
-- **Gate**: `gate()` compares aggregate metrics against `rag/eval/baseline.json` thresholds; fails hard on regression
-- **Seed corpus**: `rag/eval/seed_corpus.py` populates an isolated eval KB (`EVAL_KB_ID = ...0ee`) from source documents
-- **Breakdown**: `--breakdown` runs vec-only and bm25-only alongside fused to diagnose which leg regressed
+- **7 evaluation legs**: `fused` (混合改写), `fused_reranked` (混合重排), `raw` (混合原文), `vec_only` (向量改写), `raw_vec` (向量原文), `bm25_only` (BM25改写), `raw_bm25` (BM25原文) — the `raw*` legs only run when golden items carry `rewrite_query`; `fused_reranked` only when a reranker is injected
+- **Metrics**: hit@k, recall@k, ndcg@k, mrr — computed per-query, then aggregated
+- **History**: each run saves `history/YYYYMMDD-HHMMSS-{commit}.json` with per-leg aggregate + per-query breakdown
+- **Gate**: `gate()` compares aggregate metrics against `baseline.json` thresholds; fails on >3% relative drop in recall@5 or mrr. `rewrite_gate()` separately checks that query rewriting doesn't degrade retrieval
+- **Classify mode** (`--classify`): runs LLM `handle_query` classification against golden `out_of_scope` labels, computes Precision/Recall/F1
+- **Breakdown table**: CJK-aligned multi-column terminal output showing all legs side-by-side, plus rewrite gain and rerank gain summaries
+- **Seed corpus**: `rag/eval/seed_corpus.py` populates an isolated eval environment from source documents
 - **Golden generation**: `rag/eval/generate_golden.py` uses LLM structured output to produce candidate query-document pairs for manual curation
-- **CLI**: `uv run rag-eval [--update-baseline] [--breakdown]` or `uv run pytest tests/ -v -m eval`
+- **CLI**: `uv run rag-eval [--update-baseline] [--classify]` or `uv run pytest tests/ -v -m eval`
 
-The eval KB is deliberately isolated from production (`EVAL_KB_ID` ≠ default KB).
+The eval environment is deliberately isolated from production. The eval retriever uses `EVAL_KB_ID` for knowledge-base-based routing.
 
 ### Exception handling in API
 
@@ -131,4 +180,4 @@ Service layer only raises `AppError` subclasses (from `rag/common/exception.py`)
 
 ### Windows compatibility
 
-Three places set `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())`: `rag/__main__.py` (API entry), `rag/api/main.py` (ASGI import-time for reload workers), `rag/worker/main.py` (worker entry), `rag/eval/run.py` (eval CLI), and `tests/conftest.py`. This is needed because psycopg3 async requires `SelectorEventLoop`, but Windows defaults to `ProactorEventLoop`. Uvicorn is started with `loop="none"` to prevent it from overriding the policy.
+`setup_windows_loop()` in `rag/common/platform.py` sets `asyncio.WindowsSelectorEventLoopPolicy()` when `sys.platform == "win32"`. This is called at the top of: `rag/__main__.py` (API entry), `rag/api/main.py` (ASGI import-time for reload workers), `rag/worker/main.py` (worker entry), `rag/eval/run.py` (eval CLI), and `tests/conftest.py`. This is needed because psycopg3 async requires `SelectorEventLoop`, but Windows defaults to `ProactorEventLoop`. Uvicorn is started with `loop="none"` to prevent it from overriding the policy.

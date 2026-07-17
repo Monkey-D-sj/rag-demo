@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     RERANK_DYNAMIC_TOPK_DEFAULT: int = 5
     RERANK_DYNAMIC_TOPK_RATIO: float = 0.7
 
+    # ── 语义缓存(handle_query 之后,答案级,全局作用域)──
+    SEMANTIC_CACHE_ENABLED: bool = False
+    SEMANTIC_CACHE_SIM_THRESHOLD: float = 0.95  # 余弦相似度命中阈值
+    SEMANTIC_CACHE_TTL_HOURS: int = 168         # 缓存有效期(7 天)
+
     # ── Loki ──
     LOKI_ENABLED: bool = False
     LOKI_URL: str = "http://localhost:3100"

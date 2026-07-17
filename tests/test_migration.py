@@ -28,3 +28,18 @@ def test_document_tables_exist_with_novel_regulation_kbs():
             cur.execute("SELECT name FROM knowledge_bases ORDER BY name")
             rows = cur.fetchall()
             assert rows == [("法规",), ("小说",)]
+
+
+@pytest.mark.integration
+def test_semantic_cache_table_exists():
+    s = get_settings()
+    with psycopg.connect(s.pg_async_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.semantic_cache')")
+            assert cur.fetchone()[0] == "semantic_cache"
+            cur.execute(
+                "SELECT indexname FROM pg_indexes"
+                " WHERE tablename = 'semantic_cache'"
+                " AND indexname = 'idx_semantic_cache_embedding'"
+            )
+            assert cur.fetchone() is not None

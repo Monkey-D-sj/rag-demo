@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_SIM_THRESHOLD: float = 0.95  # 余弦相似度命中阈值
     SEMANTIC_CACHE_TTL_HOURS: int = 168         # 缓存有效期(7 天)
 
+    # ── 查询分解(handle_query 拆子问题 → Send 扇出并行检索)──
+    QUERY_DECOMPOSITION_ENABLED: bool = False  # 关闭时路由恒单分支,行为与现状一致
+
     # ── Loki ──
     LOKI_ENABLED: bool = False
     LOKI_URL: str = "http://localhost:3100"

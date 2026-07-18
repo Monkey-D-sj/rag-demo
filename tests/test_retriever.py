@@ -298,3 +298,48 @@ async def test_fetch_parent_contents_delegates_to_store(monkeypatch):
 
     assert out == {"doc-1": "全文A"}
     assert called["ids"] == ["doc-1", "doc-2"]
+
+
+def test_fuse_multi_query_empty_and_single_passthrough():
+    from rag.document.retriever import fuse_multi_query_results
+
+    assert fuse_multi_query_results([]) == []
+    assert fuse_multi_query_results([[], []]) == []
+
+    single = [{"id": 1, "text": "a", "sources": ["vec"], "rrf_score": 0.9}]
+    out = fuse_multi_query_results([single, []])
+    # 单份非空列表原样返回(浅拷贝),保证单分支路径与现状行为一致
+    assert out == single
+    assert out is not single
+
+
+def test_fuse_multi_query_rrf_sum_and_sources_union():
+    from rag.document.retriever import fuse_multi_query_results
+
+    a = [
+        {"id": 1, "text": "c1", "sources": ["vec"]},
+        {"id": 2, "text": "c2", "sources": ["bm25"]},
+    ]
+    b = [
+        {"id": 2, "text": "c2", "sources": ["vec", "graph"]},
+        {"id": 3, "text": "c3", "sources": ["vec"]},
+    ]
+    out = fuse_multi_query_results([a, b], rrf_k=60)
+    by_id = {r["id"]: r for r in out}
+
+    # chunk2 两列表均命中: rank2 于 a + rank1 于 b
+    assert abs(by_id[2]["rrf_score"] - (1 / 62 + 1 / 61)) < 1e-9
+    # sources 保序并集去重
+    assert by_id[2]["sources"] == ["bm25", "vec", "graph"]
+    # 双命中排最前
+    assert out[0]["id"] == 2
+    # 单命中: a 中 rank1
+    assert abs(by_id[1]["rrf_score"] - 1 / 61) < 1e-9
+    # 输入行未被原地修改(融合基于浅拷贝)
+    assert "rrf_score" not in a[0]
+
+
+def test_settings_has_query_decomposition_toggle():
+    from rag.config import Settings
+
+    assert Settings.model_fields["QUERY_DECOMPOSITION_ENABLED"].default is False

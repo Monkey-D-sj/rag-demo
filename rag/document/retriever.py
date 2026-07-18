@@ -84,6 +84,41 @@ def _merge_dedup(
     return sorted_chunks[:top_k]
 
 
+def fuse_multi_query_results(
+    result_lists: list[list[dict]], rrf_k: int = 60,
+) -> list[dict]:
+    """跨子查询二级 RRF 融合:每份列表按排名计 1/(k+rank),同 chunk 多列表命中分数相加。
+
+    单份非空列表原样浅拷贝返回,保证单分支路径与现状行为一致。
+    sources 取保序并集;不做 top_k 截断,交由下游 rerank/dynamic_topk 收敛。
+    agent 的 recall_fuse 节点与 eval 第 9 轨共用此函数,保证评测即线上逻辑。
+    """
+    lists = [rows for rows in result_lists if rows]
+    if not lists:
+        return []
+    if len(lists) == 1:
+        return list(lists[0])
+
+    chunk_map: dict[str, dict] = {}
+    for rows in lists:
+        for rank, row in enumerate(rows, 1):
+            rid = str(row["id"])
+            rrf = 1.0 / (rrf_k + rank)
+            if rid in chunk_map:
+                merged = chunk_map[rid]
+                merged["rrf_score"] += rrf
+                merged["sources"] = list(dict.fromkeys(
+                    merged["sources"] + list(row.get("sources", []))
+                ))
+            else:
+                merged = dict(row)
+                merged["sources"] = list(row.get("sources", []))
+                merged["rrf_score"] = rrf
+                chunk_map[rid] = merged
+
+    return sorted(chunk_map.values(), key=lambda r: r["rrf_score"], reverse=True)
+
+
 def _rank_summary(rows: list[dict], score_key: str) -> list[dict]:
     """单路排名摘要进日志：排查「为什么这条被召回」时看各路贡献。"""
     return [

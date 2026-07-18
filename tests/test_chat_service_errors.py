@@ -10,6 +10,7 @@ class _MockRewriteResult:
     rewrite_query = "你好"
     is_out_of_scope = True
     entities = []
+    sub_queries = []
 
 
 class _ExplodingLLM:
@@ -40,7 +41,7 @@ class _NoopMemory:
 
 
 class _NoopRetriever:
-    async def search(self, query, knowledge_base_ids=None, top_k=5):
+    async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
         return []
 
     async def fetch_parent_contents(self, document_ids):

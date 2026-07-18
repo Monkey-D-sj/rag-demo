@@ -145,6 +145,75 @@ async def test_handle_query_failure_degrades_entities_empty(monkeypatch):
     assert out["rewrite_query"] == "q"
 
 
+async def test_handle_query_sub_queries_clamped_to_three(monkeypatch):
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    class _DecomposeLLM:
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(
+                rewrite_query="rw", is_out_of_scope=False,
+                sub_queries=["s1", "s2", "s3", "s4"],
+            )
+
+    runtime = SimpleNamespace(context=ContextSchema(llm=_DecomposeLLM(), memory_manager=None))
+    out = await query_mod.handle_query(
+        {"session_id": "s", "raw_query": "q", "context": ""}, runtime
+    )
+
+    # 代码层 clamp 到 3,防 LLM 超量输出
+    assert out["sub_queries"] == ["s1", "s2", "s3"]
+
+
+async def test_handle_query_decompose_emits_status(monkeypatch):
+    emitted: list[dict] = []
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda ev: emitted.append(ev)))
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    class _DecomposeLLM:
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(
+                rewrite_query="rw", is_out_of_scope=False, sub_queries=["s1", "s2"],
+            )
+
+    runtime = SimpleNamespace(context=ContextSchema(llm=_DecomposeLLM(), memory_manager=None))
+    await query_mod.handle_query(
+        {"session_id": "s", "raw_query": "q", "context": ""}, runtime
+    )
+
+    assert {"type": "status", "data": "已拆解为 2 个子问题"} in emitted
+
+
+async def test_handle_query_no_decompose_by_default(monkeypatch):
+    """简单问题 LLM 不拆解(默认空数组),不发拆解状态事件。"""
+    emitted: list[dict] = []
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda ev: emitted.append(ev)))
+    llm = _FakeLLM()
+    runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
+
+    out = await query_mod.handle_query(
+        {"session_id": "s", "raw_query": "q", "context": ""}, runtime
+    )
+
+    assert out["sub_queries"] == []
+    assert not any("拆解" in ev.get("data", "") for ev in emitted if ev.get("type") == "status")
+
+
+async def test_handle_query_failure_degrades_sub_queries_empty(monkeypatch):
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _BoomLLM:
+        async def ainvoke_structured(self, messages, schema):
+            raise RuntimeError("llm down")
+
+    runtime = SimpleNamespace(context=ContextSchema(llm=_BoomLLM(), memory_manager=None))
+    out = await query_mod.handle_query(
+        {"session_id": "s", "raw_query": "q", "context": ""}, runtime
+    )
+
+    assert out["sub_queries"] == []
+
+
 async def test_direct_answer_uses_direct_prompt(monkeypatch):
     """direct_answer 节点应使用直接回答 prompt，不依赖知识库内容。"""
     captured_messages = []

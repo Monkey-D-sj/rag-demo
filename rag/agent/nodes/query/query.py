@@ -23,6 +23,10 @@ class QueryRewriteOutput(BaseModel):
         default_factory=list,
         description="查询中出现的专有名词实体(人名/地名/物名等);is_out_of_scope 为 true 或查询无实体时返回空数组",
     )
+    sub_queries: list[str] = Field(
+        default_factory=list,
+        description="复杂问题拆解出的独立子查询(每个自包含,实体显式,无指代);简单问题或 is_out_of_scope 为 true 时返回空数组",
+    )
 
 
 async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
@@ -48,6 +52,12 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
         state["rewrite_query"] = result.rewrite_query
         state["is_out_of_scope"] = result.is_out_of_scope
         state["query_entities"] = result.entities
+        # 上限 3 个,防 LLM 超量输出;开关关闭时路由侧不消费,此处不做 gate
+        state["sub_queries"] = result.sub_queries[:3]
+        if state["sub_queries"] and not result.is_out_of_scope:
+            writer(stream_event(
+                StreamEventType.STATUS, f"已拆解为 {len(state['sub_queries'])} 个子问题"
+            ))
 
         if result.is_out_of_scope:
             logger.info(
@@ -61,5 +71,6 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
         state["rewrite_query"] = state["raw_query"]
         state["is_out_of_scope"] = False
         state["query_entities"] = []
+        state["sub_queries"] = []
 
     return state

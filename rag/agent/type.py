@@ -86,6 +86,7 @@ class MyState(TypedDict):
 	rewrite_query: str
 	is_out_of_scope: bool  # True 表示查询与知识库无关，跳过召回直接大模型兜底
 	query_entities: list[str]  # handle_query 抽取的查询实体,图召回入口
+	sub_queries: list[str]  # handle_query 拆解的子查询,Send 扇出用
 
 	# ----------- 召回 -----------
 	recall_bm25_results: list[dict]

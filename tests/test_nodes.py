@@ -309,11 +309,11 @@ async def test_recall_searches_kb_with_rewrite_query(monkeypatch):
     runtime = SimpleNamespace(
         context=ContextSchema(llm=None, memory_manager=None, retriever=retriever)
     )
-    state = {"session_id": "s1", "raw_query": "q1", "rewrite_query": "rw"}
+    state = {"sub_query": "rw", "entities": []}
 
     out = await kb_recall_mod.recall(state, runtime)
 
-    assert out["recall_vec_results"] == [{"text": "KB1"}]
+    assert out["sub_recall_results"] == [[{"text": "KB1"}]]
     assert retriever.calls[0][0] == "rw"
 
 
@@ -330,8 +330,7 @@ async def test_recall_passes_entities_to_retriever(monkeypatch):
 
     ret = _Ret()
     runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=ret))
-    state = {"session_id": "s1", "raw_query": "q", "rewrite_query": "rq",
-             "query_entities": ["孙悟空"]}
+    state = {"sub_query": "rq", "entities": ["孙悟空"]}
 
     await kb_recall_mod.recall(state, runtime)
 
@@ -345,9 +344,81 @@ async def test_recall_no_retriever_yields_empty(monkeypatch):
     runtime = SimpleNamespace(
         context=ContextSchema(llm=None, memory_manager=None, retriever=None)
     )
-    state = {"session_id": "s1", "raw_query": "q1", "rewrite_query": "rw"}
+    state = {"sub_query": "rw", "entities": []}
 
     out = await kb_recall_mod.recall(state, runtime)
+
+    assert out["sub_recall_results"] == [[]]
+
+
+async def test_recall_send_payload_contract(monkeypatch):
+    """recall 接收 Send 负载,返回 sub_recall_results 单元素列表交由 reducer 拼接。"""
+    monkeypatch.setattr(kb_recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _R:
+        def __init__(self):
+            self.calls = []
+
+        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+            self.calls.append((query, entities))
+            return [{"id": 1, "text": "KB1"}]
+
+    r = _R()
+    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=r))
+
+    out = await kb_recall_mod.recall({"sub_query": "sq", "entities": ["e1"]}, runtime)
+
+    assert r.calls == [("sq", ["e1"])]
+    assert out == {"sub_recall_results": [[{"id": 1, "text": "KB1"}]]}
+
+
+async def test_recall_branch_failure_degrades_empty(monkeypatch):
+    """单分支 retriever 异常必须兜住:Send 分支抛异常会 fail 整个 run。"""
+    monkeypatch.setattr(kb_recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    class _Boom:
+        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+            raise RuntimeError("pg down")
+
+    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=_Boom()))
+    out = await kb_recall_mod.recall({"sub_query": "sq", "entities": []}, runtime)
+
+    assert out == {"sub_recall_results": [[]]}
+
+
+async def test_recall_no_retriever_degrades_empty(monkeypatch):
+    monkeypatch.setattr(kb_recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=None))
+
+    out = await kb_recall_mod.recall({"sub_query": "sq", "entities": []}, runtime)
+
+    assert out == {"sub_recall_results": [[]]}
+
+
+async def test_recall_fuse_writes_recall_vec_results(monkeypatch):
+    from rag.agent.nodes.recall_fuse import fuse as fuse_mod
+
+    monkeypatch.setattr(fuse_mod, "get_settings", lambda: SimpleNamespace(RETRIEVER_RRF_K=60))
+    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None))
+    state = {"sub_recall_results": [
+        [{"id": 1, "text": "c1", "sources": ["vec"]}],
+        [{"id": 1, "text": "c1", "sources": ["bm25"]}, {"id": 2, "text": "c2", "sources": ["vec"]}],
+    ]}
+
+    out = await fuse_mod.recall_fuse(state, runtime)
+
+    ids = [r["id"] for r in out["recall_vec_results"]]
+    assert ids == [1, 2]  # 双命中去重且排前
+    assert out["recall_vec_results"][0]["sources"] == ["vec", "bm25"]
+
+
+async def test_recall_fuse_empty_input(monkeypatch):
+    from rag.agent.nodes.recall_fuse import fuse as fuse_mod
+
+    monkeypatch.setattr(fuse_mod, "get_settings", lambda: SimpleNamespace(RETRIEVER_RRF_K=60))
+    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None))
+
+    out = await fuse_mod.recall_fuse({"sub_recall_results": [[], []]}, runtime)
 
     assert out["recall_vec_results"] == []
 

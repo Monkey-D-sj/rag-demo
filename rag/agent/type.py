@@ -1,6 +1,7 @@
+import operator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, TypedDict, runtime_checkable
+from typing import Annotated, Protocol, TypedDict, runtime_checkable
 
 from rag.models.base import ChatModel
 
@@ -89,6 +90,9 @@ class MyState(TypedDict):
 	sub_queries: list[str]  # handle_query 拆解的子查询,Send 扇出用
 
 	# ----------- 召回 -----------
+	# Send 分支 fan-in:各 recall 分支 append 单元素列表,operator.add 拼接。
+	# 本项目首个 reducer 字段,仅此一处,其余字段保持 last-write-wins。
+	sub_recall_results: Annotated[list[list[dict]], operator.add]
 	recall_bm25_results: list[dict]
 	recall_vec_results: list[dict]
 

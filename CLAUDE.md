@@ -64,24 +64,25 @@ The worker has its own independent startup (`on_startup`) that creates separate 
 
 `ChatStream` (`rag/api/common/stream.py`) is an `asyncio.Queue`-backed async iterable. A background `asyncio.Task` feeds LangGraph custom events (status/message/error) into the queue; the main coroutine yields SSE-formatted lines to FastAPI's `StreamingResponse`. `close()` enqueues `[DONE]` + a sentinel (`None`) to terminate iteration. The async context manager (`async with`) auto-closes on exit and emits errors.
 
-### Agent workflow: 13-node pipeline with conditional routing
+### Agent workflow: 14-node pipeline with conditional routing
 
-The state graph (`rag/agent/workflow.py`) is a 13-node pipeline with conditional branching:
+The state graph (`rag/agent/workflow.py`) is a 14-node pipeline with conditional branching:
 
 ```
                                      ┌─ out-of-scope → direct_answer ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 START → recall_memory → handle_query ┤                                                                                                                                            END
                                      └─ in-scope → cache_lookup ┬─ hit → add_memory ───────────────────────────────────────────────────────────────────────────────────────────────┘
-                                                                └─ miss → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory ─┘
-                                                                                                                                           └─ no_results ──────────────────────────┘
+                                                                └─ miss → [Send × N] recall → recall_fuse → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory ─┘
+                                                                                                                                                                    └─ no_results ──────────────────────────┘
 ```
 
 | Node | Module | Role |
 |------|--------|------|
 | `recall_memory` | `nodes/recall_memory/` | Short-term (Redis) + Long-term (pgvector) memory recall via `MemoryManagerProtocol` |
-| `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全) + entity extraction for the graph recall leg. Outputs `is_out_of_scope`, `rewrite_query`, and `query_entities` |
+| `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全) + entity extraction for the graph recall leg + query decomposition (`sub_queries`, ≤3, gated by `QUERY_DECOMPOSITION_ENABLED` at routing). Outputs `is_out_of_scope`, `rewrite_query`, and `query_entities` |
 | `cache_lookup` | `nodes/cache_lookup/` | Semantic cache lookup (pgvector similarity, global scope); on hit, streams the cached answer/citations and sets `cache_hit=True` to skip retrieval and generation (gated by `SEMANTIC_CACHE_ENABLED`; pass-through if disabled or not injected) |
-| `recall` | `nodes/recall/` | Hybrid retrieval: vector (pgvector cosine) + BM25 (ParadeDB jieba) + graph (Neo4j 1-hop over `query_entities`, conditional on `GRAPH_RECALL_ENABLED`) concurrent recall, RRF fusion merge |
+| `recall` | `nodes/recall/` | Hybrid retrieval per Send branch: vector + BM25 + graph (main branch only) concurrent recall; branches carry `{sub_query, entities}` payloads |
+| `recall_fuse` | `nodes/recall_fuse/` | Fan-in of Send branches: second-level RRF fusion across sub-query result lists (shared `fuse_multi_query_results()`), writes `recall_vec_results` |
 | `neighbor_expand` | `nodes/neighbor_expand/` | Sentence Window: fetch ±N adjacent chunks from the same document (gated by `SENTENCE_WINDOW_ENABLED`; pass-through when disabled or pool missing) |
 | `rerank` | `nodes/rerank/` | Semantic re-ranking via Qwen3-Rerank (optional; pass-through if no reranker injected) |
 | `dynamic_topk` | `nodes/dynamic_topk/` | Adjacent-score-gap dynamic truncation of reranked results (with plateau protection) |
@@ -94,7 +95,7 @@ START → recall_memory → handle_query ┤                                    
 
 **Conditional routing:**
 - `_route_after_query`: `is_out_of_scope=True` → `direct_answer`; otherwise → `cache_lookup`
-- `_route_after_cache`: `cache_hit=True` → `add_memory`; otherwise → `recall`
+- `_route_after_cache`: `cache_hit=True` → `add_memory`; otherwise returns `list[Send]` fanning out to `recall` — branches are `[rewrite_query] + sub_queries` (sub-queries only when `QUERY_DECOMPOSITION_ENABLED`), entities ride only on the main branch
 - `_route_after_topk` (evaluated after `parent_expand`): `recall_vec_results` non-empty → `generate`; empty → `no_results`
 - The `generate` path writes memory via `generate → cache_store → add_memory`; a cache hit writes memory directly via `cache_lookup → add_memory`; `direct_answer` and `no_results` go straight to `END`
 
@@ -105,13 +106,15 @@ START → recall_memory → handle_query ┤                                    
 
 ### State type: TypedDict with conditional routing fields
 
-`MyState` (`rag/agent/type.py`) is a plain `TypedDict` — no Annotated reducers. Key fields:
+`MyState` (`rag/agent/type.py`) is a plain `TypedDict`. `sub_recall_results` is the only Annotated reducer field (`operator.add`, Send fan-in); all other fields are plain last-write-wins. Key fields:
 - `session_id`, `raw_query`, `context` — input fields
 - `is_out_of_scope` — set by `handle_query`; determines routing to `direct_answer` vs `cache_lookup`
 - `rewrite_query` — rewritten query from `handle_query`; falls back to `raw_query` on structured-output failure
 - `query_entities` — entities extracted by `handle_query`; code guarantees `[]` on structured-output failure, while an empty list on out-of-scope classification relies on prompt compliance rather than a code-level guard (that path never reaches `recall`, so it has no practical effect either way); passed to `recall` as the graph leg's seed entities
+- `sub_queries` — sub-queries decomposed by `handle_query` (≤3, code-clamped); falls back to `[]` on structured-output failure; consumed by `_route_after_cache` to fan out Send branches only when `QUERY_DECOMPOSITION_ENABLED`
 - `cache_hit` — set by `cache_lookup` on a semantic cache hit; `_route_after_cache` checks it to route straight to `add_memory`, skipping retrieval and generation
-- `recall_bm25_results`, `recall_vec_results` — populated by `recall`; `recall_vec_results` is then transformed in place by `neighbor_expand` → `rerank` → `dynamic_topk` → `parent_expand` and used by `generate`; `_route_after_topk` checks `recall_vec_results` emptiness
+- `sub_recall_results` — Send fan-in reducer field; each `recall` branch appends a single-element list, `operator.add` concatenates across parallel branches; consumed by `recall_fuse`
+- `recall_bm25_results`, `recall_vec_results` — `recall_vec_results` is written by `recall_fuse` (second-level RRF fusion of `sub_recall_results`), then transformed in place by `neighbor_expand` → `rerank` → `dynamic_topk` → `parent_expand` and used by `generate`; `_route_after_topk` checks `recall_vec_results` emptiness
 - `generated` — final LLM response, persisted by `add_memory`
 
 ### Prompt management: centralized + structured output

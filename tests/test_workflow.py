@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import rag.agent.workflow as wf
 from rag.agent.type import ContextSchema
 
@@ -113,6 +115,49 @@ async def test_invoke_out_of_scope_skips_recall(monkeypatch):
     assert messages == ["你好呀！"]
 
 
+async def test_invoke_decomposition_fans_out(monkeypatch):
+    """开关开启时:主查询+2 子查询共 3 个 Send 分支并行检索,融合后走完生成链路。"""
+    import rag.agent.workflow as wf_mod
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    monkeypatch.setattr(
+        wf_mod, "get_settings", lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=True)
+    )
+
+    class _DecomposeLLM:
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(
+                rewrite_query="孙悟空和猪八戒的兵器",
+                is_out_of_scope=False,
+                sub_queries=["孙悟空的兵器", "猪八戒的兵器"],
+            )
+
+        async def astream(self, messages):
+            yield "答"
+
+    class _PerQueryRetriever:
+        def __init__(self):
+            self.calls = []
+
+        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+            self.calls.append(query)
+            return [{"id": f"c-{query}", "text": f"KB-{query}", "sources": ["vec"]}]
+
+    retriever = _PerQueryRetriever()
+    ctx = ContextSchema(llm=_DecomposeLLM(), memory_manager=_FakeMM(), retriever=retriever)
+
+    messages: list[str] = []
+    async for event in wf.invoke("s1", "q", ctx):
+        if event["type"] == "message":
+            messages.append(event["data"])
+
+    # 三个分支各检索一次(Send 并行,顺序不保证,用 set 比较)
+    assert set(retriever.calls) == {"孙悟空和猪八戒的兵器", "孙悟空的兵器", "猪八戒的兵器"}
+    assert len(retriever.calls) == 3
+    # 融合结果非空,正常走到 generate
+    assert messages == ["答"]
+
+
 async def test_invoke_config_defaults_none(monkeypatch):
     captured = {}
 
@@ -133,10 +178,65 @@ def test_route_after_cache_hit_goes_to_add_memory():
     assert _route_after_cache({"cache_hit": True}) == "add_memory"
 
 
-def test_route_after_cache_miss_goes_to_recall():
-    from rag.agent.workflow import _route_after_cache
+def test_route_after_cache_miss_single_branch_when_disabled(monkeypatch):
+    """开关默认关闭:仅主查询单分支,sub_queries 被忽略。"""
+    import rag.agent.workflow as wf_mod
+    from langgraph.types import Send
 
-    assert _route_after_cache({}) == "recall"
+    monkeypatch.setattr(
+        wf_mod, "get_settings", lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=False)
+    )
+    out = wf_mod._route_after_cache(
+        {"rewrite_query": "rw", "query_entities": ["e1"], "sub_queries": ["s1"]}
+    )
+
+    assert out == [Send("recall", {"sub_query": "rw", "entities": ["e1"]})]
+
+
+def test_route_after_cache_fans_out_when_enabled(monkeypatch):
+    """开关开启:主查询带 entities + 子查询不带 entities(避免重复图召回)。"""
+    import rag.agent.workflow as wf_mod
+    from langgraph.types import Send
+
+    monkeypatch.setattr(
+        wf_mod, "get_settings", lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=True)
+    )
+    out = wf_mod._route_after_cache(
+        {"rewrite_query": "rw", "query_entities": ["e1"], "sub_queries": ["s1", "s2"]}
+    )
+
+    assert out == [
+        Send("recall", {"sub_query": "rw", "entities": ["e1"]}),
+        Send("recall", {"sub_query": "s1", "entities": []}),
+        Send("recall", {"sub_query": "s2", "entities": []}),
+    ]
+
+
+def test_route_after_cache_falls_back_to_raw_query(monkeypatch):
+    import rag.agent.workflow as wf_mod
+
+    monkeypatch.setattr(
+        wf_mod, "get_settings", lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=False)
+    )
+    out = wf_mod._route_after_cache({"raw_query": "raw"})
+
+    assert out[0].arg == {"sub_query": "raw", "entities": []}
+
+
+def test_graph_contains_recall_fuse():
+    from rag.agent.workflow import graph
+
+    assert "recall_fuse" in set(graph.get_graph().nodes)
+
+
+def test_graph_edges_recall_via_fuse():
+    from rag.agent.workflow import graph
+
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    assert ("recall", "recall_fuse") in edges
+    assert ("recall_fuse", "neighbor_expand") in edges
+    # 旧的 recall -> neighbor_expand 直连必须移除
+    assert ("recall", "neighbor_expand") not in edges
 
 
 def test_graph_contains_cache_nodes():

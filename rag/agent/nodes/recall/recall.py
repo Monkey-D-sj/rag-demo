@@ -2,26 +2,32 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from rag.common.logging import get_logger
-from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
+from rag.agent.type import ContextSchema, StreamEventType, stream_event
 
 logger = get_logger()
 
 
-async def recall(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
-    """从知识库召回相关 chunk（向量+BM25 混合检索 RRF 融合），写入 recall_vec_results。"""
+async def recall(state: dict, runtime: Runtime[ContextSchema]) -> dict:
+    """单分支知识库召回:接收 Send 负载 {sub_query, entities}。
+
+    结果以单元素列表返回,经 sub_recall_results 的 operator.add reducer 与
+    其他并行分支拼接,recall_fuse 统一融合。分支内任何异常必须兜住:
+    Send 分支抛异常会 fail 整个 run。
+    """
     writer = get_stream_writer()
     writer(stream_event(StreamEventType.STATUS, "检索知识库中..."))
 
     retriever = runtime.context.retriever
     if retriever is None:
         logger.warning("retriever 未注入,跳过知识库召回")
-        state["recall_vec_results"] = []
-        return state
+        return {"sub_recall_results": [[]]}
 
-    # 改写后的查询更适合检索,缺失时回退原始查询
-    query = state.get("rewrite_query") or state["raw_query"]
-    # kb_ids 不传 → 搜全部知识库
-    state["recall_vec_results"] = await retriever.search(
-        query, entities=state.get("query_entities") or None
-    )
-    return state
+    try:
+        # kb_ids 不传 → 搜全部知识库;entities 仅主查询分支非空(图召回入口)
+        rows = await retriever.search(
+            state["sub_query"], entities=state.get("entities") or None
+        )
+    except Exception:  # noqa: BLE001 - 分支级容错,单分支失败不拖垮整图
+        logger.warning("子查询召回失败,该分支降级为空", exc_info=True)
+        rows = []
+    return {"sub_recall_results": [rows]}

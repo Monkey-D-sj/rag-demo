@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from rag.graph.retriever import GraphRetriever, _score_chunks
 
 

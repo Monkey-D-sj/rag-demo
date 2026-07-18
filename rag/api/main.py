@@ -99,6 +99,8 @@ async def lifespan(app: FastAPI):
                 app.state.neo4j, settings.NEO4J_DATABASE, pool
             )
             logger.info("图召回已启用(第三路)。")
+        elif settings.GRAPH_RECALL_ENABLED and app.state.neo4j is None:
+            logger.warning("GRAPH_RECALL_ENABLED=true 但 NEO4J_ENABLED=false,图召回不生效")
         app.state.retriever = KnowledgeRetriever(
             pool, embedding, settings, graph_retriever=graph_retriever
         )

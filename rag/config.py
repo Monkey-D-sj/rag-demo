@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "neo4j_pass"
     NEO4J_DATABASE: str = "neo4j"
+    GRAPH_RECALL_TIMEOUT_SECONDS: int = 3  # 图路单次查询上界,超时降级两路
 
     # ── Retriever ──
     RETRIEVER_CANDIDATE_MULTIPLIER: int = 2

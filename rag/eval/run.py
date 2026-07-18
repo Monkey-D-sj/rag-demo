@@ -193,7 +193,7 @@ def _print_gate(result: dict, baseline: dict) -> bool:
     all_passed = True
     rows: list[tuple[str, str, str]] = []
 
-    legs = [l for l in ("fused", "fused_reranked", "vec_only", "bm25_only") if l in result]
+    legs = [l for l in ("fused", "fused_reranked", "graph_fused", "vec_only", "bm25_only") if l in result]
     for leg in legs:
         leg_baseline = baseline.get(leg, {})
         cur_agg = result[leg]["aggregate"]

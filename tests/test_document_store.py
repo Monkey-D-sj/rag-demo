@@ -161,7 +161,6 @@ async def test_get_documents_content_batch_and_slim_search_rows():
 
 
 async def test_get_chunks_by_uids_empty_short_circuit(monkeypatch):
-    called = []
     monkeypatch.setattr(
         "rag.document.store.get_cursor",
         lambda p: (_ for _ in ()).throw(AssertionError("不应建立游标")),
@@ -169,7 +168,6 @@ async def test_get_chunks_by_uids_empty_short_circuit(monkeypatch):
     from rag.document.store import get_chunks_by_uids
 
     assert await get_chunks_by_uids(object(), []) == []
-    assert called == []
 
 
 async def test_get_chunks_by_uids_builds_unnest_join(monkeypatch):

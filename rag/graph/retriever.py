@@ -73,6 +73,8 @@ class GraphRetriever:
             result = await session.run(_EXPAND_QUERY, names=entities)
             records = await result.data()
 
+        logger.info("图召回: 查询实体 %d 个,命中种子实体 %d 个", len(entities), len(records))
+
         ranked = _score_chunks(records)[:limit]
         if not ranked:
             return []

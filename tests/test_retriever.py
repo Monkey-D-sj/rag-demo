@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import pytest
@@ -242,6 +243,30 @@ async def test_search_no_entities_skips_graph(monkeypatch):
 
     assert graph_retriever.calls == []
     assert [x["id"] for x in result] == ["a"]
+
+
+async def test_search_graph_leg_timeout_degrades(monkeypatch):
+    """图路超时(GRAPH_RECALL_TIMEOUT_SECONDS)应降级两路,不抛异常,且远快于图路耗时。"""
+    import time as time_mod
+
+    vec = [_row("a", similarity=0.9)]
+    bm25 = [_row("b", text="B", score=5.0)]
+    r = _retriever(monkeypatch, vec, bm25)
+    r._graph_timeout = 0.05  # 对齐现有测试搭建方式,直接覆盖实例属性
+
+    class _SlowGraphRetriever:
+        async def search(self, entities, limit):
+            await asyncio.sleep(10)
+            return [_row("g", text="G")]
+
+    r._graph_retriever = _SlowGraphRetriever()
+
+    t0 = time_mod.perf_counter()
+    result = await r.search("孙悟空", ["kb-1"], entities=["孙悟空"])
+    elapsed = time_mod.perf_counter() - t0
+
+    assert [x["id"] for x in result] == ["a", "b"]
+    assert elapsed < 1.0
 
 
 async def test_search_dedupes_duplicate_entities_before_graph_call(monkeypatch):

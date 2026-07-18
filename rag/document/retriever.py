@@ -109,12 +109,15 @@ class KnowledgeRetriever:
         self._vec_threshold = settings.RETRIEVER_VEC_SIMILARITY_THRESHOLD
         self._rrf_k = settings.RETRIEVER_RRF_K
         self._graph_retriever = graph_retriever
+        self._graph_timeout = settings.GRAPH_RECALL_TIMEOUT_SECONDS
 
     @property
     def has_graph(self) -> bool:
         """图召回是否可用(eval 分轨判断用)。"""
         return self._graph_retriever is not None
 
+    # 图路不按 knowledge_base_ids 过滤(现有调用方从不同时传两者;若未来组合使用需在
+    # get_chunks_by_uids 加 KB 过滤)。
     @observe_if_enabled(name="knowledge_retrieve")
     async def search(
         self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5,
@@ -186,7 +189,12 @@ class KnowledgeRetriever:
             with span_scope("graph_recall", input={**span_input, "entities": dedup_entities}) as span:
                 t0 = time.perf_counter()
                 try:
-                    rows = await self._graph_retriever.search(dedup_entities, candidates)
+                    # asyncio.TimeoutError 是 Exception 的子类,超时会落入下面的
+                    # except 统一降级,无需单独分支。
+                    rows = await asyncio.wait_for(
+                        self._graph_retriever.search(dedup_entities, candidates),
+                        timeout=self._graph_timeout,
+                    )
                 except Exception:  # noqa: BLE001 - 图路失败降级,与 BM25 路对等容错
                     logger.warning("图召回失败,降级两路", exc_info=True)
                     rows = []

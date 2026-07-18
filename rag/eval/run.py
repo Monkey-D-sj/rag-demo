@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from rag.config import get_settings
 from rag.eval import DATASETS_DIR, EVAL_DIR
 from rag.eval.harness import build_retriever, eval_out_of_scope, load_golden, run_eval
-from rag.eval.metrics import aggregate_by_category, classify, gate, rewrite_gate
+from rag.eval.metrics import aggregate, aggregate_by_category, classify, gate, rewrite_gate
 from rag.models.embedding import EmbeddingModel
 
 from rag.eval.style import (
@@ -37,13 +37,14 @@ _LEG_LABEL = {
     "fused": "混合(改)",
     "fused_reranked": "混合重排",
     "graph_fused": "图谱融合",
+    "decomposed": "拆解融合",
     "raw": "混合(原)",
     "vec_only": "向量(改)",
     "raw_vec": "向量(原)",
     "bm25_only": "BM25(改)",
     "raw_bm25": "BM25(原)",
 }
-_LEG_ORDER = ("fused", "fused_reranked", "graph_fused", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
+_LEG_ORDER = ("fused", "fused_reranked", "graph_fused", "decomposed", "raw", "vec_only", "raw_vec", "bm25_only", "raw_bm25")
 _CAT_LABEL = {
     "basic": "基础召回",
     "chunk_boundary": "Chunk边界",
@@ -187,13 +188,28 @@ def _print_table(result: dict) -> None:
             deltas.append(f"{key}: {delta_str(d)}")
         print(f"    {'  '.join(deltas)}\n")
 
+    # ── 拆解收益:同子集(带 sub_queries 标注条目)内 decomposed vs fused ──
+    if "decomposed" in result and "fused" in result:
+        dec_ids = {pq["id"] for pq in result["decomposed"]["per_query"]}
+        fused_subset = [pq for pq in result["fused"]["per_query"] if pq["id"] in dec_ids]
+        if fused_subset:
+            print(bold("  🧩 拆解收益(仅带标注条目)"))
+            base_agg = aggregate(fused_subset)
+            dec_agg = result["decomposed"]["aggregate"]
+            deltas = []
+            for key in sorted(base_agg):
+                if key not in dec_agg:
+                    continue
+                deltas.append(f"{key}: {delta_str(dec_agg[key] - base_agg[key])}")
+            print(f"    {'  '.join(deltas)}\n")
+
 
 def _print_gate(result: dict, baseline: dict) -> bool:
     """多路门禁，含改写质量检查。"""
     all_passed = True
     rows: list[tuple[str, str, str]] = []
 
-    legs = [l for l in ("fused", "fused_reranked", "graph_fused", "vec_only", "bm25_only") if l in result]
+    legs = [l for l in ("fused", "fused_reranked", "graph_fused", "decomposed", "vec_only", "bm25_only") if l in result]
     for leg in legs:
         leg_baseline = baseline.get(leg, {})
         cur_agg = result[leg]["aggregate"]

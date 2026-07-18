@@ -3,10 +3,10 @@ from dataclasses import dataclass, field
 
 from psycopg_pool import AsyncConnectionPool
 
-from rag.config import Settings
+from rag.config import Settings, get_settings
 from rag.db.postgres import create_pg_pool
 from rag.document import store
-from rag.document.retriever import KnowledgeRetriever, _lexical_query
+from rag.document.retriever import KnowledgeRetriever, _lexical_query, fuse_multi_query_results
 from rag.eval import EVAL_KB_ID
 from rag.eval.embeddings_cache import load_cache, resolve_embeddings, save_cache
 from rag.eval.metrics import aggregate, evaluate_query
@@ -23,13 +23,15 @@ class GoldenItem:
     out_of_scope: bool = False
     category: str = ""
     entities: list[str] = field(default_factory=list)
+    sub_queries: list[str] = field(default_factory=list)
 
 
 def load_golden(path) -> list[GoldenItem]:
     """读取 jsonl golden 集；跳过空行；校验必填字段，缺失即报错。
 
     可选字段: rewrite_query(改写后查询)、out_of_scope(范围外,默认 false)、
-    entities(图召回轨用的实体标注,默认空列表)。
+    entities(图召回轨用的实体标注,默认空列表)、
+    sub_queries(拆解轨用的子查询标注,默认空列表)。
     范围外条目允许 gold_snippets 为空。
     """
     items: list[GoldenItem] = []
@@ -53,6 +55,7 @@ def load_golden(path) -> list[GoldenItem]:
                     out_of_scope=out_of_scope,
                     category=obj.get("category", ""),
                     entities=list(obj.get("entities", [])),
+                    sub_queries=list(obj.get("sub_queries", [])),
                 )
             )
     return items
@@ -90,6 +93,7 @@ async def run_eval(
     当 golden 标注了 rewrite_query 时追加 raw / raw_vec / raw_bm25 原始查询对照；
     当 reranker 注入时追加 fused_reranked 完整链路;
     当 retriever 带图召回且条目带 entities 标注时追加 graph_fused 三路融合。
+    当条目带 sub_queries 标注时追加 decomposed 拆解融合轨。
     """
     print(phase("开始评测"))
 
@@ -103,12 +107,16 @@ async def run_eval(
         unique_queries += list(dict.fromkeys(
             it.query for it in in_scope if it.rewrite_query
         ))
+    sub_qs = [sq for it in in_scope for sq in it.sub_queries]
+    unique_queries += sub_qs
     unique_queries = list(dict.fromkeys(unique_queries))
     q_embs = await resolve_embeddings(embedding, unique_queries, cache)
     save_cache(cache)
 
     def _chunk_preview(rows: list[dict]) -> list[dict]:
         return [{"chunk_index": r.get("chunk_index"), "text": r["text"][:120]} for r in rows]
+
+    rrf_k = get_settings().RETRIEVER_RRF_K
 
     total = len(in_scope)
     fused_pq: list[dict] = []
@@ -119,6 +127,7 @@ async def run_eval(
     bm25_pq: list[dict] = []
     raw_bm25_pq: list[dict] = []
     graph_pq: list[dict] = []
+    decomposed_pq: list[dict] = []
 
     print(f"\n评测中: {len(items)} 条 ({total} in-scope), 每条含 3+ 路检索…\n", flush=True)
 
@@ -145,6 +154,20 @@ async def run_eval(
                 "id": item.id, "query": item.query,
                 **evaluate_query([r["text"] for r in graph_rows], item.gold_snippets, ks),
                 "chunks": _chunk_preview(graph_rows),
+            })
+
+        # ── decomposed:主查询+子查询各自检索后二级 RRF 融合,仅当条目带 sub_queries 标注 ──
+        if item.sub_queries:
+            branch_rows = [rows]  # 主查询分支复用 fused 轨已检索的结果
+            for sq in item.sub_queries:
+                branch_rows.append(
+                    await retriever.search(sq, None, top_k=top_k, query_emb=q_embs[sq])
+                )
+            dec_rows = fuse_multi_query_results(branch_rows, rrf_k=rrf_k)
+            decomposed_pq.append({
+                "id": item.id, "query": item.query,
+                **evaluate_query([r["text"] for r in dec_rows], item.gold_snippets, ks),
+                "chunks": _chunk_preview(dec_rows),
             })
 
         # ── raw fused：原始 query 走完整管线 ──
@@ -219,6 +242,8 @@ async def run_eval(
         result["raw_bm25"] = {"aggregate": aggregate(raw_bm25_pq), "per_query": raw_bm25_pq}
     if graph_pq:
         result["graph_fused"] = {"aggregate": aggregate(graph_pq), "per_query": graph_pq}
+    if decomposed_pq:
+        result["decomposed"] = {"aggregate": aggregate(decomposed_pq), "per_query": decomposed_pq}
 
     # ── fused_reranked：fused 结果经过 reranker 重排序 ──
     if reranker is not None:

@@ -118,6 +118,22 @@ def test_golden_item_entities_optional(tmp_path):
     assert items[1].entities == []
 
 
+def test_load_golden_parses_sub_queries(tmp_path):
+    from rag.eval.harness import load_golden
+
+    p = tmp_path / "g.jsonl"
+    p.write_text(
+        '{"id": "q1", "query": "A和B的兵器", "gold_snippets": ["s"], '
+        '"sub_queries": ["A的兵器", "B的兵器"]}\n'
+        '{"id": "q2", "query": "单面问题", "gold_snippets": ["s"]}\n',
+        encoding="utf-8",
+    )
+    items = load_golden(p)
+
+    assert items[0].sub_queries == ["A的兵器", "B的兵器"]
+    assert items[1].sub_queries == []
+
+
 async def test_run_eval_graph_leg_gated_by_has_graph(monkeypatch):
     import rag.eval.harness as mod
 

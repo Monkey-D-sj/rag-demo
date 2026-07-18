@@ -163,11 +163,11 @@ Entity extraction (graph pipeline) is a separate ARQ task (`extract_document_ent
 
 All DB access goes through `get_cursor(pool)` — an async context manager yielding dict-row cursors. Each connection auto-registers pgvector via `_configure`. Transactions auto-commit on clean exit and rollback on exception. There is no ORM; all queries are raw SQL. Alembic migrations live in `alembic/versions/` and use the sync `PG_SYNC_URL` (note: migrations use `psycopg` sync driver, not the async pool).
 
-### Retrieval eval system: 8-leg breakdown + gate + history
+### Retrieval eval system: 9-leg breakdown + gate + history
 
 `rag/eval/` provides a retrieval quality regression suite:
-- **Golden dataset**: `rag/eval/datasets/retrieval_golden.jsonl` — hand-curated query → relevant doc_ids pairs (西游记 themed); items may also carry an optional `entities` annotation consumed by the `graph_fused` leg
-- **8 evaluation legs**: `fused` (混合改写), `fused_reranked` (混合重排), `raw` (混合原文), `vec_only` (向量改写), `raw_vec` (向量原文), `bm25_only` (BM25改写), `raw_bm25` (BM25原文), `graph_fused` (三路融合: 向量+BM25+图) — the `raw*` legs only run when golden items carry `rewrite_query`; `fused_reranked` only when a reranker is injected; `graph_fused` only when `retriever.has_graph` is true and the golden item carries `entities`
+- **Golden dataset**: `rag/eval/datasets/retrieval_golden.jsonl` — hand-curated query → relevant doc_ids pairs (西游记 themed); items may also carry an optional `entities` annotation consumed by the `graph_fused` leg, and an optional `sub_queries` annotation consumed by the `decomposed` leg
+- **9 evaluation legs**: `fused` (混合改写), `fused_reranked` (混合重排), `raw` (混合原文), `vec_only` (向量改写), `raw_vec` (向量原文), `bm25_only` (BM25改写), `raw_bm25` (BM25原文), `graph_fused` (三路融合: 向量+BM25+图), `decomposed` (拆解融合: 主查询+子查询二级 RRF) — the `raw*` legs only run when golden items carry `rewrite_query`; `fused_reranked` only when a reranker is injected; `graph_fused` only when `retriever.has_graph` is true and the golden item carries `entities`; `decomposed` only when the golden item carries `sub_queries`
 - **Metrics**: hit@k, recall@k, ndcg@k, mrr — computed per-query, then aggregated
 - **History**: each run saves `history/YYYYMMDD-HHMMSS-{commit}.json` with per-leg aggregate + per-query breakdown
 - **Gate**: `gate()` compares aggregate metrics against `baseline.json` thresholds; fails on >3% relative drop in recall@5 or mrr. `rewrite_gate()` separately checks that query rewriting doesn't degrade retrieval

@@ -77,9 +77,9 @@ function CitationBadgeInline({ idx, citations }: { idx: number; citations: Citat
   const cit = citations.find((c) => c.index === idx);
   if (!cit) return <sup>[{idx}]</sup>;
 
-  const preview = cit.text.length > 300
-    ? cit.text.slice(0, 300) + "…"
-    : cit.text;
+  // 弹窗优先展示原文片段 snippet，回退到 text（结构化标签）
+  const raw = cit.snippet || cit.text;
+  const preview = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
 
   return (
     <span ref={ref} className="relative inline-block">

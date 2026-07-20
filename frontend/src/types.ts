@@ -43,7 +43,10 @@ export interface GraphRetryResult {
 /** 单条引用元数据 */
 export interface Citation {
   index: number;
+  /** 结构化引用标签，如 **《xxx法》第X条** */
   text: string;
+  /** 原文片段，供弹窗预览 */
+  snippet?: string;
   document_title: string;
 }
 

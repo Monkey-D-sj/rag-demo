@@ -6,6 +6,27 @@ from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
 from rag.prompts.generate import system_prompt
 
 
+def _build_citation_label(filename: str, metadata: dict | None) -> str:
+    """从 chunk metadata 构建结构化引用标签。
+
+    示例：
+      - 法规类：**《治安管理处罚法》第二十三条**
+      - 书籍类：**《西游记》第一回**
+      - 无结构化元数据时回退：**《xxx》**
+    """
+    meta = metadata or {}
+    article = (meta.get("article") or "").strip()
+    chapter = (meta.get("chapter") or "").strip()
+
+    parts = [f"《{filename}》"]
+    if chapter:
+        parts.append(chapter)
+    if article:
+        parts.append(article)
+
+    return f"**{' '.join(parts)}**"
+
+
 async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
     """基于知识库检索结果生成回答：逐 token 流式输出。"""
     writer = get_stream_writer()
@@ -14,16 +35,25 @@ async def generate(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
     llm = runtime.context.llm
     chunks = state.get("recall_vec_results") or []
 
-    # 结构化拼接上下文：每个 chunk 编号 + 带来源文档标题，同时构建引用元数据
+    # 结构化拼接上下文：每个 chunk 编号 + 文档/章节/条款信息 + 正文
     context_parts: list[str] = []
     citations: list[dict] = []
     for i, c in enumerate(chunks, 1):
         title = c.get("filename", "未知文档")
         text = c.get("text", "")
-        context_parts.append(f"[{i}] (来源文档: {title})\n{text}")
+        meta = c.get("metadata") or {}
+
+        # 构建上下文行：含条款/章节信息供 LLM 引用
+        article = (meta.get("article") or "").strip()
+        chapter = (meta.get("chapter") or "").strip()
+        locator = " ".join(p for p in [chapter, article] if p)
+        header = f"[{i}] (来源: 《{title}》{(' ' + locator) if locator else ''})".rstrip()
+
+        context_parts.append(f"{header}\n{text}")
         citations.append({
             "index": i,
-            "text": text,
+            "text": _build_citation_label(title, meta),
+            "snippet": text,
             "document_title": title,
         })
 

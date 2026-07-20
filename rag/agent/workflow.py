@@ -13,8 +13,7 @@ from rag.agent.nodes.recall_fuse.fuse import recall_fuse
 from rag.agent.nodes.recall_memory.memory import recall_memory
 from rag.agent.nodes.rerank.rerank import rerank
 from rag.agent.nodes.dynamic_topk.topk import dynamic_topk
-from rag.agent.nodes.neighbor_expand.expand import neighbor_expand
-from rag.agent.nodes.parent_expand.expand import parent_expand
+from rag.agent.nodes.expand.expand import expand
 from rag.agent.type import ContextSchema, MyState
 from rag.config import get_settings
 
@@ -68,14 +67,12 @@ builder.add_node("cache_store", cache_store)
 builder.add_node("recall", recall)
 # Send 分支 fan-in:跨子查询融合去重
 builder.add_node("recall_fuse", recall_fuse)
-# Sentence Window：召回后拉取相邻 chunk 扩展上下文
-builder.add_node("neighbor_expand", neighbor_expand)
+# 统一扩展（sentence window / parent-child 按 KB 动态分流）
+builder.add_node("expand", expand)
 # 语义重排序
 builder.add_node("rerank", rerank)
 # 动态 top-k 截断
 builder.add_node("dynamic_topk", dynamic_topk)
-# Parent-Child Retrieval：chunk → 完整父文档展开
-builder.add_node("parent_expand", parent_expand)
 # 基于知识库生成
 builder.add_node("generate", generate)
 # 范围外直接大模型回答
@@ -85,11 +82,11 @@ builder.add_node("add_memory", add_memory)
 # 召回为空时的兜底话术（不调 LLM）
 builder.add_node("no_results", no_results)
 
-#                                        ┌─ out-of-scope -> direct_answer ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-# START -> recall_memory -> handle_query ┤                                                                                                                                                               END
-#                                        └─ in-scope -> cache_lookup ┬─ 命中 -> add_memory ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-#                                                                    └─ 未命中 -> [Send x N] recall -> recall_fuse -> neighbor_expand -> rerank -> dynamic_topk -> parent_expand ┬─ generate -> cache_store -> add_memory ─┘
-#                                                                                                                                                                              └─ no_results ────────────────────────────┘
+#                                        ┌─ out-of-scope -> direct_answer ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+# START -> recall_memory -> handle_query ┤                                                                                                                                                              END
+#                                        └─ in-scope -> cache_lookup ┬─ 命中 -> add_memory ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+#                                                                    └─ 未命中 -> [Send x N] recall -> recall_fuse -> rerank -> dynamic_topk -> expand ┬─ generate -> cache_store -> add_memory ─┘
+#                                                                                                                                                      └─ no_results ───────────────────────────┘
 builder.add_edge(START, "recall_memory")
 builder.add_edge("recall_memory", "handle_query")
 builder.add_conditional_edges(
@@ -103,12 +100,11 @@ builder.add_conditional_edges(
     {"add_memory": "add_memory", "recall": "recall"},
 )
 builder.add_edge("recall", "recall_fuse")
-builder.add_edge("recall_fuse", "neighbor_expand")
-builder.add_edge("neighbor_expand", "rerank")
+builder.add_edge("recall_fuse", "rerank")
 builder.add_edge("rerank", "dynamic_topk")
-builder.add_edge("dynamic_topk", "parent_expand")
+builder.add_edge("dynamic_topk", "expand")
 builder.add_conditional_edges(
-    "parent_expand",
+    "expand",
     _route_after_topk,
     {"generate": "generate", "no_results": "no_results"},
 )

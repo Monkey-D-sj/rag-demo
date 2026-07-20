@@ -234,9 +234,9 @@ def test_graph_edges_recall_via_fuse():
 
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert ("recall", "recall_fuse") in edges
-    assert ("recall_fuse", "neighbor_expand") in edges
-    # 旧的 recall -> neighbor_expand 直连必须移除
-    assert ("recall", "neighbor_expand") not in edges
+    assert ("recall_fuse", "rerank") in edges
+    assert ("rerank", "dynamic_topk") in edges
+    assert ("dynamic_topk", "expand") in edges
 
 
 def test_graph_contains_cache_nodes():

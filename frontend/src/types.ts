@@ -38,6 +38,15 @@ export interface GraphRetryResult {
   message: string;
 }
 
+// ── Session ──────────────────────────────────────────
+
+export interface Session {
+  session_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── SSE 事件类型 ──────────────────────────────────────
 
 /** 单条引用元数据 */

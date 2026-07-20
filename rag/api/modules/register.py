@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from rag.api.modules.chat import chat_router
+from rag.api.modules.chat import chat_router, session_router
 from rag.api.modules.document import document_router
 from rag.api.modules.files import files_router
 from rag.api.modules.health import health_router
@@ -10,6 +10,7 @@ from rag.api.modules.stats import stats_router
 def register_modules(app: FastAPI):
     app.include_router(health_router)
     app.include_router(chat_router)
+    app.include_router(session_router)
     app.include_router(document_router)
     app.include_router(files_router)
     app.include_router(stats_router)

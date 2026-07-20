@@ -9,7 +9,7 @@ from rag.api.dependencies.agent import (
     get_retriever,
     get_semantic_cache,
 )
-from rag.api.modules.chat import service
+from rag.api.modules.chat import service, session_store
 from rag.document.retriever import KnowledgeRetriever
 from rag.agent.memory import MemoryManager
 from rag.models.base import ChatModel
@@ -47,3 +47,40 @@ async def chat(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Session CRUD ──
+
+session_router = APIRouter(prefix="/sessions")
+
+
+@session_router.get("/")
+async def list_sessions(request: Request) -> list[dict]:
+    return await session_store.list_sessions(request.app.state.pg)
+
+
+class CreateSessionResponse(BaseModel):
+    session_id: str
+    title: str
+
+
+@session_router.post("/")
+async def create_session(request: Request) -> CreateSessionResponse:
+    row = await session_store.create_session(request.app.state.pg)
+    return CreateSessionResponse(session_id=row["session_id"], title=row["title"])
+
+
+@session_router.delete("/{session_id}")
+async def delete_session(session_id: str, request: Request) -> dict:
+    ok = await session_store.delete_session(request.app.state.pg, session_id)
+    return {"deleted": ok}
+
+
+class RenameRequest(BaseModel):
+    title: str
+
+
+@session_router.patch("/{session_id}")
+async def rename_session(session_id: str, body: RenameRequest, request: Request) -> dict:
+    await session_store.set_title(request.app.state.pg, session_id, body.title)
+    return {"ok": True}

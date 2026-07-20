@@ -5,6 +5,7 @@ import type {
   GraphRetryResult,
   LlmSummaryResponse,
   RetryResult,
+  Session,
 } from "@/types";
 
 const BASE = "/api";
@@ -93,6 +94,34 @@ export async function getHealth(): Promise<{
 }> {
   const res = await fetch(`${BASE}/health`);
   return res.json();
+}
+
+// ── Sessions ────────────────────────────────────────
+
+export async function listSessions(): Promise<Session[]> {
+  const res = await fetch(`${BASE}/sessions/`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "list sessions failed");
+  }
+  return res.json();
+}
+
+export async function createSession(): Promise<Session> {
+  const res = await fetch(`${BASE}/sessions/`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "create session failed");
+  }
+  return res.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${BASE}/sessions/${sessionId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "delete session failed");
+  }
 }
 
 // ── LLM Stats ───────────────────────────────────────

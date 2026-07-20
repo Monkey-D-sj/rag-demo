@@ -35,6 +35,17 @@ async def stream_chat(
     """
     token = bind_session(session_id)
     try:
+        # 会话自动管理：幂等创建 + 首条消息自动设标题（pool=None 时跳过，如测试场景）
+        if pool is not None:
+            from rag.api.modules.chat import session_store
+
+            row = await session_store.ensure_session(pool, session_id)
+            if row["title"] == "新会话":
+                title = query.strip()[:30] + ("…" if len(query.strip()) > 30 else "")
+                await session_store.set_title(pool, session_id, title)
+            else:
+                await session_store.touch_session(pool, session_id)
+
         context = ContextSchema(
             llm=llm, memory_manager=memory_manager, retriever=retriever, reranker=reranker,
             pool=pool, semantic_cache=semantic_cache,

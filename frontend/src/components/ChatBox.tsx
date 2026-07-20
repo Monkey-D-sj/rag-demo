@@ -114,13 +114,17 @@ interface Message {
 export default function ChatBox({
   sessionId,
   className,
+  onFirstMessage,
 }: {
   sessionId: string;
   className?: string;
+  /** 首个用户消息发送后回调，用于刷新会话列表标题 */
+  onFirstMessage?: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const firstMessageSent = useRef(false);
   const citationsRef = useRef<Citation[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -135,6 +139,12 @@ export default function ChatBox({
     setMessages((prev) => [...prev, { role: "user", content: q }]);
     setInput("");
     setSending(true);
+
+    // 首条消息通知父组件刷新标题
+    if (!firstMessageSent.current) {
+      firstMessageSent.current = true;
+      onFirstMessage?.();
+    }
 
     const assistantIdx = messages.length + 1;
     setMessages((prev) => [

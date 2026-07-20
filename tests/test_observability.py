@@ -1,57 +1,36 @@
 import sys
 import types
 
+import pytest
+
 import rag.observability.langfuse as ob
 
 
-def test_handler_none_when_disabled(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+@pytest.mark.parametrize("enabled, has_keys", [
+    ("false", True),
+    ("true", False),
+])
+def test_noop_when_disabled_or_missing_keys(monkeypatch, enabled, has_keys):
+    """可观测性禁用或缺 key 时，handler/observe/span 全部降级为 noop。"""
+    monkeypatch.setenv("LANGFUSE_ENABLED", enabled)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test" if has_keys else "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test" if has_keys else "")
+
+    # handler → None
     assert ob.get_callback_handler() is None
 
-
-def test_handler_none_when_enabled_without_keys(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
-    assert ob.get_callback_handler() is None
-
-
-def test_observe_passthrough_when_disabled(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
-
+    # observe → 原函数直通
     async def fn(x):
         return x + 1
-
     assert ob.observe_if_enabled("t")(fn) is fn
 
-
-def test_observe_passthrough_when_enabled_without_keys(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
-
-    async def fn(x):
-        return x
-
-    assert ob.observe_if_enabled("t")(fn) is fn
-
-
-def test_span_scope_yields_none_when_disabled(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
-    with ob.span_scope("vector_recall", input={"q": "x"}) as span:
-        assert span is None
-
-
-def test_span_scope_yields_none_when_enabled_without_keys(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+    # span_scope → yield None
     with ob.span_scope("bm25_recall") as span:
         assert span is None
 
 
 def test_span_scope_degrades_to_nullcontext_on_sdk_failure(monkeypatch):
-    """可观测性失败只能丢 span,不能抛给业务调用方(曾致整个检索请求 500)。"""
+    """可观测性 SDK 加载失败只能丢 span，不能抛给业务调用方（曾致整个检索请求 500）。"""
     monkeypatch.setenv("LANGFUSE_ENABLED", "true")
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
@@ -73,8 +52,7 @@ def test_span_scope_degrades_to_nullcontext_on_sdk_failure(monkeypatch):
 
 
 def test_get_callback_handler_inits_client_once(monkeypatch):
-    """连续两次 get_callback_handler() 应只构造一次全局 Langfuse 客户端,
-    CallbackHandler 则每次都新建(不是同一个对象)。"""
+    """Langfuse 全局客户端只初始化一次，CallbackHandler 每次新建。"""
     monkeypatch.setenv("LANGFUSE_ENABLED", "true")
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
@@ -100,7 +78,7 @@ def test_get_callback_handler_inits_client_once(monkeypatch):
     handler1 = ob.get_callback_handler()
     handler2 = ob.get_callback_handler()
 
-    assert len(client_calls) == 1  # 客户端只初始化一次
+    assert len(client_calls) == 1
     assert isinstance(handler1, _FakeCallbackHandler)
     assert isinstance(handler2, _FakeCallbackHandler)
-    assert handler1 is not handler2  # handler 每次请求新建
+    assert handler1 is not handler2

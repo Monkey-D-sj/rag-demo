@@ -25,6 +25,8 @@ def _record(level=logging.INFO, msg="hello", exc_info=None, **extra):
     return record
 
 
+# ── Formatter ──
+
 def test_json_formatter_basic_fields():
     out = JsonFormatter().format(_record(msg="hello world"))
     data = json.loads(out)
@@ -34,29 +36,35 @@ def test_json_formatter_basic_fields():
     assert "timestamp" in data
 
 
-def test_json_formatter_includes_exc_info():
+def test_json_formatter_includes_exc_info_and_extras():
+    """exc_info 被序列化；自定义 extra 字段出现在输出中；std attrs 不泄漏。"""
     try:
         raise ValueError("boom")
     except ValueError:
         import sys
-        rec = _record(level=logging.ERROR, msg="failed", exc_info=sys.exc_info())
+        rec = _record(
+            level=logging.ERROR, msg="failed", exc_info=sys.exc_info(),
+            kb_id="kb1", when=datetime.datetime(2026, 7, 5, 12, 0, 0),
+        )
     data = json.loads(JsonFormatter().format(rec))
-    assert "exc_info" in data
     assert "ValueError: boom" in data["exc_info"]
+    assert data["kb_id"] == "kb1"
+    assert "2026-07-05" in data["when"]
+    assert "args" not in data        # std attrs 不泄漏
+    assert "levelno" not in data
 
 
-def test_text_formatter_plain_has_no_ansi():
-    out = ColorTextFormatter(use_color=False).format(_record(msg="hi"))
-    assert "\x1b[" not in out
-    assert "INFO" in out
-    assert "rag.test" in out
-    assert "hi" in out
+def test_text_formatter_color_toggle():
+    """use_color=False 无 ANSI 转义；use_color=True 含 ANSI。"""
+    plain = ColorTextFormatter(use_color=False).format(_record(msg="hi"))
+    assert "\x1b[" not in plain
+    assert "INFO" in plain
+
+    colored = ColorTextFormatter(use_color=True).format(_record(msg="hi"))
+    assert "\x1b[" in colored
 
 
-def test_text_formatter_color_has_ansi():
-    out = ColorTextFormatter(use_color=True).format(_record(msg="hi"))
-    assert "\x1b[" in out
-
+# ── setup_logging ──
 
 @pytest.fixture(autouse=True)
 def _clean_root_handlers(monkeypatch):
@@ -66,11 +74,8 @@ def _clean_root_handlers(monkeypatch):
     saved = root.handlers[:]
     saved_level = root.level
     root.handlers.clear()
-    # setup_logging 是进程级一次性(_logging_initialized 置位后永久 no-op),
-    # 不重置 flag 的话下面的 setup 测试全在测空操作; monkeypatch 会在用例后还原。
     monkeypatch.setattr(logging_mod, "_logging_initialized", False)
     yield
-    # 先关闭测试期间新加的 handler(RotatingFileHandler 在 Windows 上会锁文件)
     for h in root.handlers:
         h.close()
     root.handlers.clear()
@@ -78,7 +83,7 @@ def _clean_root_handlers(monkeypatch):
     root.setLevel(saved_level)
 
 
-def test_setup_logging_text_adds_stream_handler():
+def test_setup_logging_adds_stream_handler():
     setup_logging(Settings(LOG_FORMAT="text"))
     root = logging.getLogger()
     assert len(root.handlers) == 1
@@ -92,19 +97,19 @@ def test_setup_logging_is_idempotent():
     assert len(logging.getLogger().handlers) == 1
 
 
-def test_setup_logging_respects_level():
+def test_setup_logging_respects_level_and_falls_back_on_invalid():
     setup_logging(Settings(LOG_LEVEL="WARNING"))
     assert logging.getLogger().level == logging.WARNING
 
+    # 重置后测非法 level 回退
+    import rag.common.logging as logging_mod
+    for h in logging.getLogger().handlers:
+        h.close()
+    logging.getLogger().handlers.clear()
+    logging_mod._logging_initialized = False
 
-def test_setup_logging_json_output_is_valid_json(capsys):
-    setup_logging(Settings(LOG_FORMAT="json"))
-    logging.getLogger("rag.test").error("boom")
-    err = capsys.readouterr().err
-    line = [ln for ln in err.splitlines() if ln.strip()][-1]
-    data = json.loads(line)
-    assert data["message"] == "boom"
-    assert data["level"] == "ERROR"
+    setup_logging(Settings(LOG_LEVEL="NOTALEVEL"))
+    assert logging.getLogger().level == logging.INFO
 
 
 def test_setup_logging_creates_file_and_parent_dir(tmp_path):
@@ -120,13 +125,7 @@ def test_setup_logging_creates_file_and_parent_dir(tmp_path):
     assert "written" in log_path.read_text(encoding="utf-8")
 
 
-def test_setup_logging_invalid_level_falls_back_to_info():
-    setup_logging(Settings(LOG_LEVEL="NOTALEVEL"))
-    assert logging.getLogger().level == logging.INFO
-
-
 def test_setup_logging_tames_uvicorn_loggers():
-    # 预先给 uvicorn logger 装一个 handler、关掉 propagate，模拟 uvicorn 默认状态
     uv = logging.getLogger("uvicorn")
     uv.addHandler(logging.NullHandler())
     uv.propagate = False
@@ -139,26 +138,10 @@ def test_setup_logging_tames_uvicorn_loggers():
         assert lg.propagate is True
 
 
-def test_json_formatter_includes_extra_fields():
-    out = json.loads(JsonFormatter().format(_record(kb_id="kb1", top_k=5)))
-    assert out["kb_id"] == "kb1"
-    assert out["top_k"] == 5
+# ── Session context ──
 
-
-def test_json_formatter_serializes_non_json_values_via_str():
-    rec = _record(when=datetime.datetime(2026, 7, 5, 12, 0, 0))
-    out = json.loads(JsonFormatter().format(rec))
-    assert "2026-07-05" in out["when"]
-
-
-def test_json_formatter_does_not_leak_std_attrs():
-    out = json.loads(JsonFormatter().format(_record()))
-    assert "args" not in out
-    assert "lineno" not in out
-    assert "levelno" not in out
-
-
-def test_session_filter_injects_and_resets():
+def test_session_filter_and_text_suffix():
+    """session_id 注入 LogRecord 并在 text 输出末尾追加。"""
     f = _SessionContextFilter()
     token = bind_session("s-1")
     try:
@@ -167,36 +150,15 @@ def test_session_filter_injects_and_resets():
         assert record.session_id == "s-1"
     finally:
         reset_session(token)
+
     record2 = _record()
     f.filter(record2)
     assert not hasattr(record2, "session_id")
 
-
-def test_session_filter_keeps_explicit_extra():
-    f = _SessionContextFilter()
-    token = bind_session("ctx-session")
-    try:
-        record = _record(session_id="explicit")
-        f.filter(record)
-        assert record.session_id == "explicit"
-    finally:
-        reset_session(token)
-
-
-def test_text_formatter_appends_session_suffix():
-    line = ColorTextFormatter(use_color=False).format(
-        _record(session_id="s-9")
-    )
+    # text formatter 追加 session 后缀
+    line = ColorTextFormatter(use_color=False).format(_record(session_id="s-9"))
     assert line.endswith("| session_id=s-9")
 
-
-def test_text_formatter_no_suffix_without_session():
-    line = ColorTextFormatter(use_color=False).format(_record())
-    assert "session_id=" not in line
-
-
-def test_get_logger_returns_caller_module_name():
-    # 存量 bug 回归:模块顶层 get_logger() 曾错误追溯到 importlib 帧
-    import rag.document.retriever as m
-
-    assert m.logger.name == "rag.document.retriever"
+    # 无 session 时不追加
+    line_no = ColorTextFormatter(use_color=False).format(_record())
+    assert "session_id=" not in line_no

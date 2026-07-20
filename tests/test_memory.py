@@ -22,7 +22,8 @@ async def get_cursor_cleanup(pool, session_id):
     yield
 
 
-# ── 短期记忆单元测试 ──
+# ── 短期记忆 ──
+
 
 async def test_add_message_pushes_to_redis():
     redis = MagicMock()
@@ -33,7 +34,6 @@ async def test_add_message_pushes_to_redis():
 
     await mgr.add_message("sid1", "hello", {"role": "user"})
 
-    # 验证 redis pipeline 调用
     key = "session:sid1:messages"
     pipe.rpush.assert_called_once()
     assert pipe.rpush.call_args[0][0] == key
@@ -56,22 +56,18 @@ async def test_get_recent_messages_reads_redis():
     redis.lrange.assert_awaited_once_with("session:sid1:messages", -2, -1)
     assert [r["text"] for r in result] == ["a", "b"]
 
-
-async def test_get_recent_messages_returns_empty_when_n_zero():
-    redis = MagicMock()
-    mgr = MemoryManager(pool=None, embedding=None, redis=redis)
+    # n=0 时直接短路
     assert await mgr.get_recent_messages("sid1", n=0) == []
 
 
 async def test_short_term_noop_when_redis_is_none():
     mgr = MemoryManager(pool=None, embedding=None, redis=None)
-    # 不应抛异常
     await mgr.add_message("sid1", "hi")
     assert await mgr.get_recent_messages("sid1") == []
     await mgr.clear_session("sid1")
 
 
-# ── 长期记忆单元测试 ──
+# ── 长期记忆 ──
 
 
 class _FakeEmbedding(EmbeddingModel):
@@ -102,36 +98,22 @@ class _FakeCursor:
         return [{"text": "mock_result", "similarity": 0.95}]
 
 
-async def test_search_builds_correct_query(monkeypatch):
+async def test_search_and_add(monkeypatch):
+    """长期记忆搜索构建正确查询；add 返回 UUID。"""
     pool = MagicMock()
     mgr = MemoryManager(pool=pool, embedding=_FakeEmbedding())
 
     fake_cur = _FakeCursor()
-    monkeypatch.setattr(
-        "rag.agent.memory.manager.get_cursor",
-        lambda p: fake_cur,
-    )
+    monkeypatch.setattr("rag.agent.memory.manager.get_cursor", lambda p: fake_cur)
 
+    # search
     await mgr.search("sid1", "关税", top_k=3, filters={"type": "doc"})
-
-    assert "top_k" in fake_cur.last_params
     assert fake_cur.last_params["top_k"] == 3
-    assert "filter_0" in fake_cur.last_params
     assert fake_cur.last_params["filter_0"] == "doc"
 
-
-async def test_add_returns_memory_id(monkeypatch):
-    pool = MagicMock()
-    mgr = MemoryManager(pool=pool, embedding=_FakeEmbedding())
-
-    fake_cur = _FakeCursor()
-    monkeypatch.setattr(
-        "rag.agent.memory.manager.get_cursor",
-        lambda p: fake_cur,
-    )
-
+    # add
     mid = await mgr.add("sid1", "测试文本")
-    assert mid  # UUID 字符串
+    assert mid
     assert len(mid) == 36
 
 

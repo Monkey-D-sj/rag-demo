@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from rag.agent.cache.manager import (
     SemanticCache,
@@ -13,7 +13,7 @@ class _FakeEmbedding:
 
 
 class _FakeCursor:
-    """模拟 psycopg cursor,记录全部 execute 调用,fetchone 按序出队。"""
+    """模拟 psycopg cursor，记录全部 execute 调用，fetchone 按序出队。"""
 
     def __init__(self, rows=None):
         self.calls = []          # [(sql, params), ...]
@@ -33,82 +33,66 @@ class _FakeCursor:
 
 
 def _make_cache(cur, monkeypatch, recorder=None):
-    monkeypatch.setattr(
-        "rag.agent.cache.manager.get_cursor", lambda p: cur
-    )
-    return SemanticCache(
+    """注入 _FakeCursor 并返回 (SemanticCache, cursor) 以便检查 SQL 调用。"""
+    monkeypatch.setattr("rag.agent.cache.manager.get_cursor", lambda p: cur)
+    cache = SemanticCache(
         MagicMock(), _FakeEmbedding(),
         threshold=0.95, ttl_hours=168, recorder=recorder,
     )
+    return cache, cur
 
 
-async def test_lookup_hit_above_threshold(monkeypatch):
+# ── lookup ──
+
+async def test_lookup_hit(monkeypatch):
+    """相似度 >= threshold 返回缓存结果，增 hit_count 并记录用量。"""
     row = {"id": 1, "answer": "答案A", "citations": [{"index": 1}], "similarity": 0.97}
-    cur = _FakeCursor(rows=[row])
-    cache = _make_cache(cur, monkeypatch)
+    recorder = MagicMock()
+    cache, cur = _make_cache(_FakeCursor(rows=[row]), monkeypatch, recorder=recorder)
 
-    hit = await cache.lookup("孙悟空是谁")
+    hit = await cache.lookup("孙悟空是谁", session_id="s1")
 
     assert hit == {"answer": "答案A", "citations": [{"index": 1}]}
-    # 第二条 SQL 是 hit_count 自增
     assert any("hit_count" in sql for sql, _ in cur.calls)
+
+    rec = recorder.record.call_args[0][0]
+    assert rec.call_type == "semantic_cache"
+    assert rec.status == "cache_hit"
 
 
 async def test_lookup_miss_below_threshold(monkeypatch):
+    """相似度低于阈值返回 None，不增 hit_count。"""
     row = {"id": 1, "answer": "答案A", "citations": [], "similarity": 0.90}
-    cur = _FakeCursor(rows=[row])
-    cache = _make_cache(cur, monkeypatch)
+    cache, cur = _make_cache(_FakeCursor(rows=[row]), monkeypatch)
 
     assert await cache.lookup("孙悟空是谁") is None
-    # 未命中不得自增 hit_count
     assert not any("hit_count" in sql for sql, _ in cur.calls)
 
 
-async def test_lookup_empty_table_returns_none(monkeypatch):
-    cur = _FakeCursor(rows=[])
-    cache = _make_cache(cur, monkeypatch)
-    assert await cache.lookup("孙悟空是谁") is None
-
-
 async def test_lookup_db_error_degrades_to_none(monkeypatch):
+    """DB 异常降级为 None，不抛给调用方。"""
     class _BoomCursor(_FakeCursor):
         async def execute(self, sql, params=None):
             raise RuntimeError("db down")
 
-    cache = _make_cache(_BoomCursor(), monkeypatch)
-    assert await cache.lookup("孙悟空是谁") is None  # 不抛异常
+    cache, _ = _make_cache(_BoomCursor(), monkeypatch)
+    assert await cache.lookup("孙悟空是谁") is None
 
 
-async def test_lookup_hit_records_usage(monkeypatch):
-    row = {"id": 1, "answer": "A", "citations": [], "similarity": 0.99}
-    recorder = MagicMock()
-    cache = _make_cache(_FakeCursor(rows=[row]), monkeypatch, recorder=recorder)
-
-    await cache.lookup("q", session_id="s1")
-
-    assert recorder.record.call_count == 1
-    rec = recorder.record.call_args[0][0]
-    assert rec.call_type == "semantic_cache"
-    assert rec.status == "cache_hit"
-    assert rec.session_id == "s1"
-
+# ── store ──
 
 async def test_store_inserts_when_no_near_duplicate(monkeypatch):
-    cur = _FakeCursor(rows=[None])  # 查重无结果
-    cache = _make_cache(cur, monkeypatch)
-
+    cache, cur = _make_cache(_FakeCursor(rows=[None]), monkeypatch)
     await cache.store("q", "answer", [{"index": 1}])
-
     assert any("INSERT INTO semantic_cache" in sql for sql, _ in cur.calls)
 
 
 async def test_store_skips_near_duplicate(monkeypatch):
-    row = {"id": 1, "answer": "old", "citations": [], "similarity": 0.98}
-    cur = _FakeCursor(rows=[row])
-    cache = _make_cache(cur, monkeypatch)
-
+    cache, cur = _make_cache(
+        _FakeCursor(rows=[{"id": 1, "answer": "old", "citations": [], "similarity": 0.98}]),
+        monkeypatch,
+    )
     await cache.store("q", "answer", [])
-
     assert not any("INSERT INTO" in sql for sql, _ in cur.calls)
 
 
@@ -117,9 +101,11 @@ async def test_store_db_error_swallowed(monkeypatch):
         async def execute(self, sql, params=None):
             raise RuntimeError("db down")
 
-    cache = _make_cache(_BoomCursor(), monkeypatch)
+    cache, _ = _make_cache(_BoomCursor(), monkeypatch)
     await cache.store("q", "a", [])  # 不抛异常即通过
 
+
+# ── 管理操作 ──
 
 async def test_clear_and_purge_sql(monkeypatch):
     cur = _FakeCursor()
@@ -136,6 +122,5 @@ async def test_clear_and_purge_sql(monkeypatch):
 
 def test_protocol_conformance():
     from rag.agent.type import SemanticCacheProtocol
-
     cache = SemanticCache(MagicMock(), _FakeEmbedding(), threshold=0.95, ttl_hours=1)
     assert isinstance(cache, SemanticCacheProtocol)

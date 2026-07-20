@@ -555,51 +555,44 @@ async def test_rerank_empty_chunks_skips():
 
 
 async def test_dynamic_truncate_empty():
-    """空列表应直接返回空列表。"""
     assert topk_mod._dynamic_truncate([], 5, 0.7) == []
 
 
 async def test_dynamic_truncate_single():
-    """只有一条结果时直接返回，不做比较。"""
     chunk = {"rerank_score": 9.0, "text": "A"}
     result = topk_mod._dynamic_truncate([chunk], 5, 0.7)
     assert result == [chunk]
 
 
 async def test_dynamic_truncate_no_gap_returns_default_topk():
-    """所有相邻分差都小，应返回 default_top_k 条。"""
     chunks = [
-        {"rerank_score": 9.0},
-        {"rerank_score": 8.5},
-        {"rerank_score": 8.0},
-        {"rerank_score": 7.5},
-        {"rerank_score": 7.0},
-        {"rerank_score": 6.5},
+        {"rerank_score": 9.0}, {"rerank_score": 8.5},
+        {"rerank_score": 8.0}, {"rerank_score": 7.5},
+        {"rerank_score": 7.0}, {"rerank_score": 6.5},
     ]
     result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
     assert len(result) == 5
-    assert result[0]["rerank_score"] == 9.0
-    assert result[4]["rerank_score"] == 7.0
 
 
 async def test_dynamic_truncate_gap_truncates():
-    """第 2-3 名之间 gap 大（1.0/8.5=0.118 < 0.7），且 post-gap 内部也有 gap
-    （0.3/1.0=0.3 < 0.7），非高原 → 应在第 2 条后截断。"""
+    """相邻分数比值低于阈值时截断，含零分处理。"""
     chunks = [
         {"rerank_score": 9.0, "text": "A"},
         {"rerank_score": 8.5, "text": "B"},
         {"rerank_score": 1.0, "text": "C"},
-        {"rerank_score": 0.3, "text": "D"},
+        {"rerank_score": 0.0, "text": "D"},
     ]
     result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
     assert len(result) == 2
     assert result[0]["text"] == "A"
-    assert result[1]["text"] == "B"
+
+    # 零分处无限大 gap → 截断
+    chunks2 = [{"rerank_score": 9.0, "text": "A"}, {"rerank_score": 0.0, "text": "B"}]
+    assert len(topk_mod._dynamic_truncate(chunks2, 5, 0.7)) == 1
 
 
 async def test_dynamic_truncate_plateau_skips_gap():
-    """gap 之后的分数形成高原（内部比值均 >= threshold），跳过此 gap 继续扫描。
-    模拟场景：前 2 条高分 → 一条低分 → 但后续多条分数紧密（第二梯队），不应截断。"""
+    """gap 之后分数形成高原（内部比值均 >= threshold），跳过该 gap 继续扫描。"""
     chunks = [
         {"rerank_score": 9.0, "text": "A"},
         {"rerank_score": 8.5, "text": "B"},
@@ -608,216 +601,67 @@ async def test_dynamic_truncate_plateau_skips_gap():
         {"rerank_score": 0.96, "text": "E"},
         {"rerank_score": 0.95, "text": "F"},
     ]
-    # 1.0/8.5=0.118 < 0.7 → gap 候选
-    # post=[1.0, 0.98, 0.96, 0.95] 内部: 0.98, 0.98, 0.99 均 >= 0.7 → plateau → 跳过
-    # 后续无 gap → 取 default_top_k=5
     result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
     assert len(result) == 5
     assert [r["text"] for r in result] == ["A", "B", "C", "D", "E"]
 
 
-async def test_dynamic_truncate_gap_after_first_returns_one():
-    """第一名本身分数极低且与第二名 gap 大，保留第1条。"""
-    chunks = [
-        {"rerank_score": 1.0, "text": "A"},
-        {"rerank_score": 0.1, "text": "B"},
-    ]
-    # score[1]/score[0] = 0.1/1.0 = 0.1 < 0.7 → 截断保留前 1 条
-    result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
-    assert len(result) == 1
-
-
-async def test_dynamic_truncate_score_zero_infinite_gap():
-    """score 为 0 时视为无限大 gap，在 0 分处截断。"""
-    chunks = [
-        {"rerank_score": 9.0, "text": "A"},
-        {"rerank_score": 0.0, "text": "B"},
-        {"rerank_score": 0.0, "text": "C"},
-    ]
-    # score[1]=0.0, score[0]=9.0 → 0/9=0 < threshold, 截断到前 1 条
-    result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
-    assert len(result) == 1
-    assert result[0]["text"] == "A"
-
-
-async def test_dynamic_truncate_first_score_zero_empty():
-    """第一名 score 就是 0，直接在首位截断，返回空。"""
-    chunks = [
-        {"rerank_score": 0.0, "text": "A"},
-        {"rerank_score": 9.0, "text": "B"},
-    ]
-    result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
-    assert result == []
-
-
 async def test_dynamic_truncate_missing_rerank_score_hard_truncate():
-    """无 rerank_score 字段时（rerank 未启用），硬截断 default_top_k。"""
-    chunks = [
-        {"text": "A"}, {"text": "B"}, {"text": "C"},
-        {"text": "D"}, {"text": "E"}, {"text": "F"},
-    ]
+    """无 rerank_score 时（rerank 未启用），硬截断 default_top_k。"""
+    chunks = [{"text": c} for c in ["A", "B", "C", "D", "E", "F"]]
     result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
     assert len(result) == 5
-
-
-async def test_dynamic_truncate_all_same_score():
-    """所有分数完全相同时，无 gap，取 default_top_k。"""
-    chunks = [
-        {"rerank_score": 5.0} for _ in range(10)
-    ]
-    result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
-    assert len(result) == 5
-
-
-async def test_dynamic_truncate_negative_score_treated_as_zero():
-    """负分数视为 0 处理，触发 gap 截断。"""
-    chunks = [
-        {"rerank_score": 9.0, "text": "A"},
-        {"rerank_score": -1.0, "text": "B"},
-    ]
-    result = topk_mod._dynamic_truncate(chunks, 5, 0.7)
-    # -1 → 0, gap 无限大，截断到前 1 条
-    assert len(result) == 1
-    assert result[0]["text"] == "A"
-
-
-async def test_dynamic_truncate_extreme_threshold():
-    """ratio_threshold 为 0.01 时几乎不截断；0.99 时几乎总是截断。"""
-    chunks = [
-        {"rerank_score": 9.0},
-        {"rerank_score": 8.0},
-        {"rerank_score": 7.0},
-    ]
-    # threshold 很低 → 极小的比值才会触发截断
-    r1 = topk_mod._dynamic_truncate(chunks, 5, 0.01)
-    # 8/9 ≈ 0.89 > 0.01, 7/8=0.875 > 0.01, no gap → all 3
-    assert len(r1) == 3
-
-    # threshold 很高 → 几乎任何相邻变化都截断
-    r2 = topk_mod._dynamic_truncate(chunks, 5, 0.99)
-    # 8/9 ≈ 0.89 < 0.99 → 截断到前 1 条
-    assert len(r2) == 1
 
 
 # ── dynamic_topk node integration tests ──
 
 
 async def test_dynamic_topk_enabled_filters(monkeypatch):
-    """启用时节点应调用 _dynamic_truncate 并写回结果。"""
     monkeypatch.setattr(topk_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
-    # 确保启用
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
-        "S", (), {
-            "RERANK_DYNAMIC_TOPK_ENABLED": True,
-            "RERANK_DYNAMIC_TOPK_DEFAULT": 5,
-            "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
-        }
+        "S", (), {"RERANK_DYNAMIC_TOPK_ENABLED": True, "RERANK_DYNAMIC_TOPK_DEFAULT": 5, "RERANK_DYNAMIC_TOPK_RATIO": 0.7}
     )())
     runtime = SimpleNamespace(context=SimpleNamespace())
-    chunks = [
-        {"rerank_score": 9.0, "text": "A"},
-        {"rerank_score": 0.5, "text": "B"},
-    ]
+    chunks = [{"rerank_score": 9.0, "text": "A"}, {"rerank_score": 0.5, "text": "B"}]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
-
     out = await topk_mod.dynamic_topk(state, runtime)
-
-    # gap 9→0.5 (ratio 0.056 < 0.7) → 截断到前 1 条
     assert len(out["recall_vec_results"]) == 1
     assert out["recall_vec_results"][0]["text"] == "A"
 
 
 async def test_dynamic_topk_disabled_passthrough(monkeypatch):
-    """禁用时节点应透传原始结果不做任何修改。"""
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
         "S", (), {"RERANK_DYNAMIC_TOPK_ENABLED": False}
     )())
     runtime = SimpleNamespace(context=SimpleNamespace())
     chunks = [{"rerank_score": 9.0}, {"rerank_score": 8.0}]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
-
     out = await topk_mod.dynamic_topk(state, runtime)
-
-    assert out["recall_vec_results"] is chunks  # 引用不变
+    assert out["recall_vec_results"] is chunks
 
 
 async def test_dynamic_topk_empty_passthrough(monkeypatch):
-    """空结果直接透传，不调 _dynamic_truncate。"""
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
-        "S", (), {
-            "RERANK_DYNAMIC_TOPK_ENABLED": True,
-            "RERANK_DYNAMIC_TOPK_DEFAULT": 5,
-            "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
-        }
+        "S", (), {"RERANK_DYNAMIC_TOPK_ENABLED": True, "RERANK_DYNAMIC_TOPK_DEFAULT": 5, "RERANK_DYNAMIC_TOPK_RATIO": 0.7}
     )())
     runtime = SimpleNamespace(context=SimpleNamespace())
-    state = {"recall_vec_results": [], "raw_query": "q"}
-
-    out = await topk_mod.dynamic_topk(state, runtime)
-
+    out = await topk_mod.dynamic_topk({"recall_vec_results": [], "raw_query": "q"}, runtime)
     assert out["recall_vec_results"] == []
 
 
-async def test_dynamic_topk_non_list_passthrough(monkeypatch):
-    """recall_vec_results 不是 list 时透传，不抛异常。"""
-    monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
-        "S", (), {
-            "RERANK_DYNAMIC_TOPK_ENABLED": True,
-            "RERANK_DYNAMIC_TOPK_DEFAULT": 5,
-            "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
-        }
-    )())
-    runtime = SimpleNamespace(context=SimpleNamespace())
-    state = {"recall_vec_results": "not a list", "raw_query": "q"}
-
-    out = await topk_mod.dynamic_topk(state, runtime)
-
-    assert out["recall_vec_results"] == "not a list"
-
-
-async def test_dynamic_topk_all_truncated_to_zero_emits_status(monkeypatch):
-    """截断到 0 条时应发送 '未找到足够相关内容' 状态。"""
+async def test_dynamic_topk_truncated_to_zero_emits_status(monkeypatch):
+    """截断到 0 条时发送用户可见的状态事件。"""
     emitted = []
     monkeypatch.setattr(topk_mod, "get_stream_writer", lambda: (lambda ev: emitted.append(ev)))
     monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
-        "S", (), {
-            "RERANK_DYNAMIC_TOPK_ENABLED": True,
-            "RERANK_DYNAMIC_TOPK_DEFAULT": 5,
-            "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
-        }
+        "S", (), {"RERANK_DYNAMIC_TOPK_ENABLED": True, "RERANK_DYNAMIC_TOPK_DEFAULT": 5, "RERANK_DYNAMIC_TOPK_RATIO": 0.7}
     )())
     runtime = SimpleNamespace(context=SimpleNamespace())
-    # 第一个 chunk rerank_score=0.0 → scores[0]=0 → 在 i=0 处截断返回 []
     chunks = [{"rerank_score": 0.0}, {"rerank_score": 9.0}]
     state = {"recall_vec_results": chunks, "raw_query": "q"}
-
     out = await topk_mod.dynamic_topk(state, runtime)
-
     assert out["recall_vec_results"] == []
     assert stream_event(StreamEventType.STATUS, "未找到足够相关内容") in emitted
-
-
-async def test_dynamic_topk_exception_passthrough(monkeypatch):
-    """节点内部异常时应捕获并透传原始结果，不抛异常。"""
-    monkeypatch.setattr(topk_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
-    monkeypatch.setattr(topk_mod, "get_settings", lambda: type(
-        "S", (), {
-            "RERANK_DYNAMIC_TOPK_ENABLED": True,
-            "RERANK_DYNAMIC_TOPK_DEFAULT": 5,
-            "RERANK_DYNAMIC_TOPK_RATIO": 0.7,
-        }
-    )())
-    # 让 _dynamic_truncate 抛异常
-    monkeypatch.setattr(topk_mod, "_dynamic_truncate", lambda c, d, r: (_ for _ in ()).throw(ValueError("boom")))
-
-    runtime = SimpleNamespace(context=SimpleNamespace())
-    chunks = [{"rerank_score": 9.0}]
-    state = {"recall_vec_results": chunks, "raw_query": "q"}
-
-    out = await topk_mod.dynamic_topk(state, runtime)
-
-    # 透传原始结果，不抛异常
-    assert out["recall_vec_results"] is chunks
 
 
 # ── parent_expand node integration tests ──

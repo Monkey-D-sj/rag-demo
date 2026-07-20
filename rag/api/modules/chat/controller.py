@@ -93,3 +93,17 @@ class RenameRequest(BaseModel):
 async def rename_session(session_id: str, body: RenameRequest, request: Request) -> dict:
     await session_store.set_title(request.app.state.pg, session_id, body.title)
     return {"ok": True}
+
+
+@session_router.get("/{session_id}/messages")
+async def get_session_messages(
+    session_id: str,
+    request: Request,
+    memory_manager: MemoryManager = Depends(get_memory_manager),
+) -> list[dict]:
+    """返回会话的近期消息列表，供前端恢复聊天记录。"""
+    msgs = await memory_manager.get_recent_messages(session_id, n=50)
+    return [
+        {"role": m.get("metadata", {}).get("role", "assistant"), "content": m["text"]}
+        for m in msgs
+    ]

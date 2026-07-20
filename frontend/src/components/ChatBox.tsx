@@ -115,11 +115,14 @@ export default function ChatBox({
   sessionId,
   className,
   onFirstMessage,
+  initialMessages,
 }: {
   sessionId: string;
   className?: string;
   /** 首个用户消息发送后回调，用于刷新会话列表标题 */
   onFirstMessage?: () => void;
+  /** 从服务端加载的历史消息，用于恢复聊天记录 */
+  initialMessages?: { role: "user" | "assistant"; content: string }[];
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -127,6 +130,14 @@ export default function ChatBox({
   const firstMessageSent = useRef(false);
   const citationsRef = useRef<Citation[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // 有历史消息时预填充，并标记已发过首条消息（不再触发标题更新）
+  useEffect(() => {
+    if (initialMessages && initialMessages.length > 0) {
+      setMessages(initialMessages as Message[]);
+      firstMessageSent.current = true;
+    }
+  }, [initialMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

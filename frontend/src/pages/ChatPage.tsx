@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquarePlus, Trash2 } from "lucide-react";
 import ChatBox from "@/components/ChatBox";
-import { listSessions, createSession, deleteSession } from "@/api/client";
+import { listSessions, createSession, deleteSession, getSessionMessages } from "@/api/client";
+import type { SessionMessage } from "@/api/client";
 import { formatDate, uuid } from "@/lib/utils";
 import type { Session } from "@/types";
 
@@ -20,6 +21,7 @@ export default function ChatPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [history, setHistory] = useState<SessionMessage[]>([]);
   const fallbackRef = useRef(false);  // API 不可用时使用本地模式
 
   // 加载会话列表
@@ -41,21 +43,9 @@ export default function ChatPage() {
     }
   }, [sessions]);
 
-  // 初始化
-  useEffect(() => {
-    (async () => {
-      const list = await load();
-      if (list.length > 0 && !activeId) {
-        setActiveId(list[0].session_id);
-      }
-      setLoading(false);
-    })();
-  // 仅在挂载时运行
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // 创建新会话
   const handleCreate = async () => {
+    setHistory([]);  // 新会话无历史
     if (fallbackRef.current) {
       const fb = localSession();
       setSessions((prev) => [fb, ...prev]);
@@ -95,6 +85,31 @@ export default function ChatPage() {
       }
     }
   };
+
+  // 切换会话时加载历史消息
+  useEffect(() => {
+    if (!activeId || fallbackRef.current) return;
+    getSessionMessages(activeId)
+      .then(setHistory)
+      .catch(() => setHistory([]));
+  }, [activeId]);
+
+  // 首次加载：选中最近会话或创建新会话
+  useEffect(() => {
+    (async () => {
+      const list = await load();
+      if (list.length > 0 && !activeId) {
+        const id = list[0].session_id;
+        setActiveId(id);
+        // 加载该会话的消息
+        if (!fallbackRef.current) {
+          getSessionMessages(id).then(setHistory).catch(() => {});
+        }
+      }
+      setLoading(false);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFirstMessage = useCallback(() => {
     load().then(setSessions);
@@ -180,6 +195,7 @@ export default function ChatPage() {
             sessionId={activeId}
             className="flex-1"
             onFirstMessage={handleFirstMessage}
+            initialMessages={history}
           />
         )}
       </div>

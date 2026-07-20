@@ -124,6 +124,22 @@ export async function deleteSession(sessionId: string): Promise<void> {
   }
 }
 
+export interface SessionMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export async function getSessionMessages(
+  sessionId: string,
+): Promise<SessionMessage[]> {
+  const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "get session messages failed");
+  }
+  return res.json();
+}
+
 // ── LLM Stats ───────────────────────────────────────
 
 export async function getLlmSummary(

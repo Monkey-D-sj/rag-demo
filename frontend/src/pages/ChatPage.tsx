@@ -1,78 +1,101 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquarePlus, Trash2 } from "lucide-react";
 import ChatBox from "@/components/ChatBox";
 import { listSessions, createSession, deleteSession } from "@/api/client";
-import { formatDate } from "@/lib/utils";
+import { formatDate, uuid } from "@/lib/utils";
 import type { Session } from "@/types";
+
+/** 本地兜底会话：当后端 session API 不可用时使用 */
+function localSession(): Session {
+  const id = uuid();
+  return {
+    session_id: id,
+    title: "新会话",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const fallbackRef = useRef(false);  // API 不可用时使用本地模式
 
   // 加载会话列表
   const load = useCallback(async () => {
+    if (fallbackRef.current) return sessions;  // 本地模式下不需要重新加载
     try {
       const list = await listSessions();
       setSessions(list);
       return list;
     } catch {
-      return [];
+      // API 不可用 → 进入本地兜底模式
+      if (!fallbackRef.current) {
+        fallbackRef.current = true;
+        const fb = localSession();
+        setSessions([fb]);
+        return [fb];
+      }
+      return sessions;
     }
-  }, []);
+  }, [sessions]);
 
-  // 初始化：加载列表 → 选中最近会话或创建新会话
+  // 初始化
   useEffect(() => {
     (async () => {
       const list = await load();
-      if (list.length > 0) {
+      if (list.length > 0 && !activeId) {
         setActiveId(list[0].session_id);
-      } else {
-        try {
-          const s = await createSession();
-          setSessions([s]);
-          setActiveId(s.session_id);
-        } catch {
-          // 忽略
-        }
       }
       setLoading(false);
     })();
-  }, [load]);
+  // 仅在挂载时运行
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 创建新会话
   const handleCreate = async () => {
+    if (fallbackRef.current) {
+      const fb = localSession();
+      setSessions((prev) => [fb, ...prev]);
+      setActiveId(fb.session_id);
+      return;
+    }
     try {
       const s = await createSession();
       setSessions((prev) => [s, ...prev]);
       setActiveId(s.session_id);
     } catch {
-      // 忽略
+      fallbackRef.current = true;
+      const fb = localSession();
+      setSessions((prev) => [fb, ...prev]);
+      setActiveId(fb.session_id);
     }
   };
 
   // 删除会话
   const handleDelete = async (id: string) => {
-    try {
-      await deleteSession(id);
-      const remaining = sessions.filter((s) => s.session_id !== id);
-      setSessions(remaining);
-      if (activeId === id) {
-        if (remaining.length > 0) {
-          setActiveId(remaining[0].session_id);
-        } else {
-          // 全删光了，自动创建新会话
-          const s = await createSession();
-          setSessions([s]);
-          setActiveId(s.session_id);
-        }
+    if (!fallbackRef.current) {
+      try {
+        await deleteSession(id);
+      } catch {
+        fallbackRef.current = true;
       }
-    } catch {
-      // 忽略
+    }
+    const remaining = sessions.filter((s) => s.session_id !== id);
+    setSessions(remaining);
+    if (activeId === id) {
+      if (remaining.length > 0) {
+        setActiveId(remaining[0].session_id);
+      } else {
+        const fb = localSession();
+        setSessions([fb]);
+        setActiveId(fb.session_id);
+      }
     }
   };
 
-  // ChatBox 发首条消息后刷新标题
   const handleFirstMessage = useCallback(() => {
     load().then(setSessions);
   }, [load]);
@@ -87,7 +110,7 @@ export default function ChatPage() {
 
   return (
     <div className="flex-1 flex min-h-0">
-      {/* 侧边栏：会话列表 */}
+      {/* 侧边栏 */}
       <aside className="w-60 border-r border-gray-800 flex flex-col min-h-0 shrink-0">
         <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -142,7 +165,6 @@ export default function ChatPage() {
 
       {/* 主区域 */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* 顶栏 */}
         <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-gray-200">Chat</h2>
@@ -152,7 +174,6 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* ChatBox */}
         {activeId && (
           <ChatBox
             key={activeId}

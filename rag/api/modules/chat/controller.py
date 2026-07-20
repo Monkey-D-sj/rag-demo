@@ -56,18 +56,27 @@ session_router = APIRouter(prefix="/sessions")
 
 @session_router.get("/")
 async def list_sessions(request: Request) -> list[dict]:
-    return await session_store.list_sessions(request.app.state.pg)
-
-
-class CreateSessionResponse(BaseModel):
-    session_id: str
-    title: str
+    rows = await session_store.list_sessions(request.app.state.pg)
+    return [
+        {
+            "session_id": r["session_id"],
+            "title": r["title"],
+            "created_at": r["created_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat(),
+        }
+        for r in rows
+    ]
 
 
 @session_router.post("/")
-async def create_session(request: Request) -> CreateSessionResponse:
+async def create_session(request: Request) -> dict:
     row = await session_store.create_session(request.app.state.pg)
-    return CreateSessionResponse(session_id=row["session_id"], title=row["title"])
+    return {
+        "session_id": row["session_id"],
+        "title": row["title"],
+        "created_at": row["created_at"].isoformat(),
+        "updated_at": row["updated_at"].isoformat(),
+    }
 
 
 @session_router.delete("/{session_id}")

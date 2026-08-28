@@ -84,7 +84,11 @@ async def on_shutdown(ctx: dict) -> None:
 
 
 async def retry_failed_documents(ctx: dict) -> None:
-    """每五分钟扫描 failed/stalled 文档并重新投递，状态领取保持幂等。"""
+    """每五分钟扫描 failed/stalled 文档并重新投递，状态领取保持幂等。
+
+    relay 腿：delivery_status='pending' 的文档（投递失败/丢失）补投，
+    confirm 成功后置 sent；已投递过的 failed/stalled 文档只重投，不碰 delivery_status。
+    """
     settings: Settings = ctx["settings"]
     failed_ids = await store.claim_failed_for_retry(
         ctx["pg"], settings.MAX_RETRY_ROUNDS, settings.RETRY_BACKOFF_BASE
@@ -92,11 +96,20 @@ async def retry_failed_documents(ctx: dict) -> None:
     stalled_ids = await store.find_stalled_documents(
         ctx["pg"], settings.STALE_DOC_SECONDS
     )
-    for document_id in dict.fromkeys([*failed_ids, *stalled_ids]):
+    undelivered_ids = await store.find_undelivered_documents(ctx["pg"])
+    for document_id in dict.fromkeys(
+        [*failed_ids, *stalled_ids, *undelivered_ids]
+    ):
         try:
             await ctx["task_publisher"].enqueue("ingest_document", document_id)
         except Exception:
             logger.exception("自愈重试投递失败: %s", document_id)
+            continue
+        if document_id in undelivered_ids:
+            try:
+                await store.set_delivery_status(ctx["pg"], document_id, "sent")
+            except Exception:
+                logger.warning("标记投递状态 sent 失败: %s", document_id, exc_info=True)
 
 
 async def purge_semantic_cache(ctx: dict) -> None:

@@ -88,6 +88,14 @@ export default function DocumentList({ docs, onDocsChange }: Props) {
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${st.cls}`}>
                     {st.label}
                   </span>
+                  {d.delivery_status === "pending" && (
+                    <span
+                      className="ml-2 text-xs text-amber-400/70"
+                      title="任务尚未被消息队列确认，worker 会自动补投"
+                    >
+                      投递重试中
+                    </span>
+                  )}
                   {d.error && (
                     <span className="ml-2 text-xs text-red-400/70" title={d.error}>
                       {d.error.slice(0, 40)}{d.error.length > 40 ? "…" : ""}

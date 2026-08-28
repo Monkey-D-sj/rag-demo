@@ -8,12 +8,15 @@ from rag.api.modules.document.schemas import (
     DocumentStatusResponse,
     GraphRetryResponse,
 )
+from rag.common.logging import get_logger
 from rag.common.minio_client import presigned_get_url, put_object
 from rag.config import get_settings
 from rag.document import store
 from rag.tasks import TaskPublisher
 
 ALLOWED_TYPES = {"txt", "md", "pdf", "docx"}
+
+logger = get_logger()
 
 
 def _safe_filename(name: str | None) -> str:
@@ -55,7 +58,19 @@ async def ingest_upload(
         content_hash=content_hash,
         object_key=object_key,
     )
-    await task_publisher.enqueue("ingest_document", document_id)
+    try:
+        await task_publisher.enqueue("ingest_document", document_id)
+    except Exception:
+        # 投递失败不阻塞上传：文档已落库，delivery_status 保持 pending，
+        # worker 的投递 relay 会按周期补投。
+        logger.exception("任务投递失败，交由 relay 补投: %s", document_id)
+    else:
+        try:
+            await store.set_delivery_status(pg, document_id, "sent")
+        except Exception:
+            logger.warning(
+                "投递成功但标记 sent 失败，relay 将补投: %s", document_id, exc_info=True
+            )
     return document_id
 
 
@@ -67,6 +82,7 @@ async def get_status(pg, document_id: str) -> DocumentStatusResponse:
         document_id=str(doc["id"]),
         filename=doc["filename"],
         status=doc["status"],
+        delivery_status=doc.get("delivery_status", "sent"),
         chunk_count=doc["chunk_count"],
         error=doc["error"],
         graph_status=doc.get("graph_status"),
@@ -98,6 +114,7 @@ async def list_documents(
             content_type=row["content_type"],
             size_bytes=row["size_bytes"],
             status=row["status"],
+            delivery_status=row.get("delivery_status", "sent"),
             chunk_count=row["chunk_count"],
             error=row["error"],
             graph_status=row.get("graph_status"),
@@ -126,7 +143,23 @@ async def retry_document(pg, task_publisher: TaskPublisher, document_id: str) ->
             message="文档未处于 failed 状态，无需重试",
         )
     await store.force_retry(pg, document_id)
-    await task_publisher.enqueue("ingest_document", document_id)
+    try:
+        await task_publisher.enqueue("ingest_document", document_id)
+    except Exception:
+        logger.exception("强制重试投递失败，交由 relay 补投: %s", document_id)
+        try:
+            await store.set_delivery_status(pg, document_id, "pending")
+        except Exception:
+            logger.warning(
+                "标记投递状态 pending 失败: %s", document_id, exc_info=True
+            )
+    else:
+        try:
+            await store.set_delivery_status(pg, document_id, "sent")
+        except Exception:
+            logger.warning(
+                "投递成功但标记 sent 失败，relay 将补投: %s", document_id, exc_info=True
+            )
     return DocumentRetryResponse(
         document_id=str(doc["id"]),
         status="pending",

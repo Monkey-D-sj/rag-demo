@@ -21,6 +21,7 @@ async def test_store_lifecycle_and_idempotent_replace():
 
         doc = await store.get_document(pool, doc_id)
         assert doc["status"] == "pending"
+        assert doc["delivery_status"] == "pending"
         assert doc["filename"] == "a.txt"
 
         await store.set_status(pool, doc_id, "processing")
@@ -199,3 +200,62 @@ async def test_get_chunks_by_uids_builds_unnest_join(monkeypatch):
     assert "unnest" in cur.sql
     assert cur.params["docs"] == ["d1", "d2"]
     assert cur.params["idxs"] == [3, 0]
+
+
+async def test_find_undelivered_documents_sql(monkeypatch):
+    """投递 relay 扫描：只挑 delivery_status='pending' 且未 done 的文档。"""
+
+    class _Cur:
+        def __init__(self):
+            self.sql = ""
+            self.params = {}
+            self.rows = [{"id": "d1"}, {"id": "d2"}]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params or {}
+
+        async def fetchall(self):
+            return self.rows
+
+    cur = _Cur()
+    monkeypatch.setattr("rag.document.store.get_cursor", lambda p: cur)
+    from rag.document.store import find_undelivered_documents
+
+    ids = await find_undelivered_documents(object())
+
+    assert ids == ["d1", "d2"]
+    assert "delivery_status = 'pending'" in cur.sql
+    assert "status <> 'done'" in cur.sql
+
+
+async def test_set_delivery_status_sql(monkeypatch):
+    class _Cur:
+        def __init__(self):
+            self.sql = ""
+            self.params = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params or {}
+
+    cur = _Cur()
+    monkeypatch.setattr("rag.document.store.get_cursor", lambda p: cur)
+    from rag.document.store import set_delivery_status
+
+    await set_delivery_status(object(), "doc-1", "sent")
+
+    assert "UPDATE documents SET delivery_status" in cur.sql
+    assert cur.params == {"s": "sent", "id": "doc-1"}

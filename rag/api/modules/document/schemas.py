@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 
 DocumentStatus = Literal["pending", "processing", "done", "failed"]
 
+# 任务投递状态:broker 是否已确认收下文档的入库任务
+DeliveryStatus = Literal["pending", "sent"]
+
 
 # ── Response Schemas ───────────────────────────────────────
 
@@ -32,6 +35,10 @@ class DocumentStatusResponse(BaseModel):
     document_id: str = Field(..., description="文档 UUID")
     filename: str = Field(..., description="原始文件名")
     status: DocumentStatus = Field(..., description="当前处理状态")
+    delivery_status: DeliveryStatus = Field(
+        default="sent",
+        description="任务投递状态：sent=broker 已确认；pending=投递失败待 relay 补投",
+    )
     chunk_count: int | None = Field(
         default=None,
         description="切块数量（仅 done 状态时有值）",
@@ -71,6 +78,10 @@ class DocumentListItem(BaseModel):
     content_type: str = Field(..., description="文件类型(txt/md/pdf/docx)")
     size_bytes: int = Field(..., description="文件大小(字节)")
     status: DocumentStatus = Field(..., description="当前处理状态")
+    delivery_status: DeliveryStatus = Field(
+        default="sent",
+        description="任务投递状态：sent=broker 已确认；pending=投递失败待 relay 补投",
+    )
     chunk_count: int = Field(..., description="切块数量")
     error: str | None = Field(default=None, description="失败原因(仅 failed)")
     graph_status: str | None = Field(default=None, description="实体抽取状态")

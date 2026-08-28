@@ -25,10 +25,10 @@ async def create_document(
             """
             INSERT INTO documents
                 (id, knowledge_base_id, filename, content_type,
-                 size_bytes, content_hash, object_key, status)
+                 size_bytes, content_hash, object_key, status, delivery_status)
             VALUES
                 (%(id)s, %(kb)s, %(fn)s, %(ct)s,
-                 %(sz)s, %(hash)s, %(key)s, 'pending')
+                 %(sz)s, %(hash)s, %(key)s, 'pending', 'pending')
             """,
             {
                 "id": document_id,
@@ -169,7 +169,7 @@ async def list_documents(
         await cur.execute(
             f"""
             SELECT id, knowledge_base_id, filename, content_type,
-                   size_bytes, status, chunk_count, error,
+                   size_bytes, status, delivery_status, chunk_count, error,
                    graph_status, graph_error,
                    created_at, updated_at,
                    COUNT(*) OVER() AS total
@@ -342,6 +342,37 @@ async def set_status(
             WHERE id = %(id)s
             """,
             {"s": status, "e": error, "id": document_id},
+        )
+
+
+async def find_undelivered_documents(pool: AsyncConnectionPool) -> list[str]:
+    """找出任务尚未被 broker 确认的文档，供投递 relay 补投。
+
+    覆盖 create_document 落库后 enqueue 失败/丢失（delivery_status 停在 pending）
+    的场景；status='done' 的文档已完成，不再参与。返回的重复投递由
+    claim_for_processing 的行级锁去重。
+    """
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            """
+            SELECT id
+            FROM documents
+            WHERE delivery_status = 'pending'
+              AND status <> 'done'
+            """
+        )
+        rows = await cur.fetchall()
+    return [str(row["id"]) for row in rows]
+
+
+async def set_delivery_status(
+    pool: AsyncConnectionPool, document_id: str, status: str
+) -> None:
+    """标记文档任务的投递状态：'sent' 表示 broker 已确认收下任务消息。"""
+    async with get_cursor(pool) as cur:
+        await cur.execute(
+            "UPDATE documents SET delivery_status = %(s)s WHERE id = %(id)s",
+            {"s": status, "id": document_id},
         )
 
 

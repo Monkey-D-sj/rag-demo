@@ -6,6 +6,8 @@ export interface DocumentItem {
   document_id: string;
   filename: string;
   status: DocumentStatus;
+  /** 任务投递状态：sent=broker 已确认；pending=投递失败待 relay 补投 */
+  delivery_status?: "pending" | "sent";
   chunk_count: number | null;
   error: string | null;
   graph_status?: string | null;

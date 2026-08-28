@@ -29,12 +29,20 @@ async def test_retry_cron_rescues_stalled_documents(monkeypatch):
     async def fake_find_stalled(pool, stale_after_seconds):
         return ["s1"]
 
+    async def fake_find_undelivered(pool):
+        return []
+
+    async def fake_set_delivery_status(pool, doc_id, status):
+        pass
+
     class _Publisher:
         async def enqueue(self, name, document_id, **kwargs):
             published.append((name, document_id))
 
     monkeypatch.setattr(wm.store, "claim_failed_for_retry", fake_claim_failed)
     monkeypatch.setattr(wm.store, "find_stalled_documents", fake_find_stalled)
+    monkeypatch.setattr(wm.store, "find_undelivered_documents", fake_find_undelivered)
+    monkeypatch.setattr(wm.store, "set_delivery_status", fake_set_delivery_status)
 
     ctx = {
         "pg": None,
@@ -46,6 +54,45 @@ async def test_retry_cron_rescues_stalled_documents(monkeypatch):
     await wm.retry_failed_documents(ctx)
 
     assert set(published) == {("ingest_document", "f1"), ("ingest_document", "s1")}
+
+
+async def test_retry_cron_relays_undelivered_documents(monkeypatch):
+    """delivery_status='pending' 的文档由 relay 补投，confirm 成功置 sent。"""
+    published = []
+    sent = []
+
+    async def fake_claim_failed(pool, max_rounds, backoff):
+        return []
+
+    async def fake_find_stalled(pool, stale_after_seconds):
+        return []
+
+    async def fake_find_undelivered(pool):
+        return ["u1"]
+
+    async def fake_set_delivery_status(pool, doc_id, status):
+        sent.append((doc_id, status))
+
+    class _Publisher:
+        async def enqueue(self, name, document_id, **kwargs):
+            published.append((name, document_id))
+
+    monkeypatch.setattr(wm.store, "claim_failed_for_retry", fake_claim_failed)
+    monkeypatch.setattr(wm.store, "find_stalled_documents", fake_find_stalled)
+    monkeypatch.setattr(wm.store, "find_undelivered_documents", fake_find_undelivered)
+    monkeypatch.setattr(wm.store, "set_delivery_status", fake_set_delivery_status)
+
+    ctx = {
+        "pg": None,
+        "task_publisher": _Publisher(),
+        "settings": SimpleNamespace(
+            MAX_RETRY_ROUNDS=10, RETRY_BACKOFF_BASE=60, STALE_DOC_SECONDS=900
+        ),
+    }
+    await wm.retry_failed_documents(ctx)
+
+    assert published == [("ingest_document", "u1")]
+    assert sent == [("u1", "sent")]
 
 
 def test_worker_task_timeouts_match_previous_arq_limits():

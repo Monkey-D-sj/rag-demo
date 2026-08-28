@@ -64,16 +64,16 @@ The worker has its own independent startup (`on_startup`) that creates separate 
 
 `ChatStream` (`rag/api/common/stream.py`) is an `asyncio.Queue`-backed async iterable. A background `asyncio.Task` feeds LangGraph custom events (status/message/error) into the queue; the main coroutine yields SSE-formatted lines to FastAPI's `StreamingResponse`. `close()` enqueues `[DONE]` + a sentinel (`None`) to terminate iteration. The async context manager (`async with`) auto-closes on exit and emits errors.
 
-### Agent workflow: 14-node pipeline with conditional routing
+### Agent workflow: 13-node pipeline with conditional routing
 
-The state graph (`rag/agent/workflow.py`) is a 14-node pipeline with conditional branching:
+The state graph (`rag/agent/workflow.py`) is a 13-node pipeline with conditional branching:
 
 ```
-                                     ┌─ out-of-scope → direct_answer ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-START → recall_memory → handle_query ┤                                                                                                                                            END
-                                     └─ in-scope → cache_lookup ┬─ hit → add_memory ───────────────────────────────────────────────────────────────────────────────────────────────┘
-                                                                └─ miss → [Send × N] recall → recall_fuse → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory ─┘
-                                                                                                                                                                    └─ no_results ──────────────────────────┘
+                                     ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+START → recall_memory → handle_query ┤                                                                                                                                                   END
+                                     └─ in-scope → cache_lookup ┬─ hit → add_memory ──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                └─ miss → [Send × N] recall → recall_fuse → rerank → dynamic_topk → expand ┬─ generate → cache_store → add_memory ─┘
+                                                                                                                                             └─ no_results ───────────────────────────┘
 ```
 
 | Node | Module | Role |
@@ -83,10 +83,9 @@ START → recall_memory → handle_query ┤                                    
 | `cache_lookup` | `nodes/cache_lookup/` | Semantic cache lookup (pgvector similarity, global scope); on hit, streams the cached answer/citations and sets `cache_hit=True` to skip retrieval and generation (gated by `SEMANTIC_CACHE_ENABLED`; pass-through if disabled or not injected) |
 | `recall` | `nodes/recall/` | Hybrid retrieval per Send branch: vector + BM25 + graph (main branch only) concurrent recall; branches carry `{sub_query, entities}` payloads |
 | `recall_fuse` | `nodes/recall_fuse/` | Fan-in of Send branches: second-level RRF fusion across sub-query result lists (shared `fuse_multi_query_results()`), writes `recall_vec_results` |
-| `neighbor_expand` | `nodes/neighbor_expand/` | Sentence Window: fetch ±N adjacent chunks from the same document (gated by `SENTENCE_WINDOW_ENABLED`; pass-through when disabled or pool missing) |
 | `rerank` | `nodes/rerank/` | Semantic re-ranking via Qwen3-Rerank (optional; pass-through if no reranker injected) |
 | `dynamic_topk` | `nodes/dynamic_topk/` | Adjacent-score-gap dynamic truncation of reranked results (with plateau protection) |
-| `parent_expand` | `nodes/parent_expand/` | Parent-Child Retrieval: expand regulation-KB chunks to full parent document text by doc_id (gated by `PARENT_CHILD_ENABLED`; degrades to dedup-only on failure) |
+| `expand` | `nodes/expand/` | Unified chunk expansion: dynamically routes by KB type — regulation chunks → parent-child (fetch full document text, dedup by doc_id; gated by `PARENT_CHILD_ENABLED`); general chunks → sentence window (fetch ±N adjacent chunks; gated by `SENTENCE_WINDOW_ENABLED`) |
 | `generate` | `nodes/generate/` | RAG generation with retrieved context, SSE token streaming |
 | `direct_answer` | `nodes/generate/` | Out-of-scope direct LLM answer (no retrieval, no memory write-back) |
 | `no_results` | `nodes/generate/` | Static fallback message when recall is empty (no LLM call) |
@@ -96,7 +95,7 @@ START → recall_memory → handle_query ┤                                    
 **Conditional routing:**
 - `_route_after_query`: `is_out_of_scope=True` → `direct_answer`; otherwise → `cache_lookup`
 - `_route_after_cache`: `cache_hit=True` → `add_memory`; otherwise returns `list[Send]` fanning out to `recall` — branches are `[rewrite_query] + sub_queries` (sub-queries only when `QUERY_DECOMPOSITION_ENABLED`), entities ride only on the main branch
-- `_route_after_topk` (evaluated after `parent_expand`): `recall_vec_results` non-empty → `generate`; empty → `no_results`
+- `_route_after_topk` (evaluated after `expand`): `recall_vec_results` non-empty → `generate`; empty → `no_results`
 - The `generate` path writes memory via `generate → cache_store → add_memory`; a cache hit writes memory directly via `cache_lookup → add_memory`; `direct_answer` and `no_results` go straight to `END`
 
 **Key design patterns:**
@@ -114,7 +113,7 @@ START → recall_memory → handle_query ┤                                    
 - `sub_queries` — sub-queries decomposed by `handle_query` (≤3, code-clamped); falls back to `[]` on structured-output failure; consumed by `_route_after_cache` to fan out Send branches only when `QUERY_DECOMPOSITION_ENABLED`
 - `cache_hit` — set by `cache_lookup` on a semantic cache hit; `_route_after_cache` checks it to route straight to `add_memory`, skipping retrieval and generation
 - `sub_recall_results` — Send fan-in reducer field; each `recall` branch appends a single-element list, `operator.add` concatenates across parallel branches; consumed by `recall_fuse`
-- `recall_bm25_results`, `recall_vec_results` — `recall_vec_results` is written by `recall_fuse` (second-level RRF fusion of `sub_recall_results`), then transformed in place by `neighbor_expand` → `rerank` → `dynamic_topk` → `parent_expand` and used by `generate`; `_route_after_topk` checks `recall_vec_results` emptiness
+- `recall_bm25_results`, `recall_vec_results` — `recall_vec_results` is written by `recall_fuse` (second-level RRF fusion of `sub_recall_results`), then transformed in place by `rerank` → `dynamic_topk` → `expand` and used by `generate`; `_route_after_topk` checks `recall_vec_results` emptiness
 - `generated` — final LLM response, persisted by `add_memory`
 
 ### Prompt management: centralized + structured output
@@ -157,7 +156,9 @@ Documents flow through `pending → processing → done|failed`. `claim_for_proc
 - **failed**: retry with exponential backoff (`backoff_base * 2^retry_count` seconds), up to `MAX_RETRY_ROUNDS`
 - **stalled**: `pending`/`processing` documents stuck longer than `STALE_DOC_SECONDS` are reclaimed
 
-Entity extraction (graph pipeline) is a separate ARQ task (`extract_document_entities`, timeout=900s). It uses `BoundedSemaphore` to limit concurrent LLM calls. Single-chunk failures are skipped; all-chunk failures mark `graph_status=failed` for cron retry. `asyncio.CancelledError` (from ARQ timeout) is caught separately to set `failed` status before re-raising.
+**Delivery relay (`delivery_status`)**: each document's `delivery_status` (`pending`/`sent`) records whether the broker has confirmed the ingest task (migration default `sent`, so existing rows aren't re-published). `create_document` writes `pending` in the same transaction as the insert — if the process dies before the publish, the row is still recoverable. The API's `ingest_upload`/`retry_document` publish immediately and flip to `sent` only after broker confirm; on publish failure they keep the row `pending` and still return 202 (upload never 500s once the file is committed). The cron's relay leg (`find_undelivered_documents`: `delivery_status='pending' AND status <> 'done'`) re-publishes stragglers and marks `sent` on confirm. Duplicate deliveries (cron racing the confirm window) are harmless — `claim_for_processing`'s row-level claim lets only one succeed.
+
+Entity extraction (graph pipeline) is a separate RabbitMQ task (`extract_document_entities`, timeout=900s). It uses `BoundedSemaphore` to limit concurrent LLM calls. Single-chunk failures are skipped; all-chunk failures mark `graph_status=failed` for cron retry. `asyncio.CancelledError` (from ARQ timeout) is caught separately to set `failed` status before re-raising.
 
 ### Database: async psycopg3 with dict_row cursors
 

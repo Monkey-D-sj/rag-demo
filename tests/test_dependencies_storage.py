@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from rag.api.dependencies.storage import get_arq_pool, get_minio
+from rag.api.dependencies.storage import get_minio, get_task_publisher
 
 
 def test_get_minio_reads_app_state():
@@ -9,7 +9,7 @@ def test_get_minio_reads_app_state():
     assert get_minio(request) is sentinel
 
 
-def test_get_arq_pool_reads_app_state():
+def test_get_task_publisher_reads_app_state():
     sentinel = object()
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(arq_pool=sentinel)))
-    assert get_arq_pool(request) is sentinel
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(task_publisher=sentinel)))
+    assert get_task_publisher(request) is sentinel

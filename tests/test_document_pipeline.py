@@ -189,9 +189,9 @@ async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
     async def fake_get_object(*a, **k):
         return b"data"
 
-    class _Redis:
-        async def enqueue_job(self, name, *args):
-            enqueued.append((name, args))
+    class _TaskPublisher:
+        async def enqueue(self, name, document_id, **kwargs):
+            enqueued.append((name, (document_id,)))
 
     monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
     monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
@@ -204,7 +204,7 @@ async def test_ingest_enqueues_graph_task_when_enabled(monkeypatch):
     monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: [("a", {})])
 
     ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),
-           "settings": _settings(graph=True), "redis": _Redis()}
+           "settings": _settings(graph=True), "task_publisher": _TaskPublisher()}
 
     await pipe.ingest_document(ctx, "d1")
     assert ("extract_document_entities", ("d1",)) in enqueued

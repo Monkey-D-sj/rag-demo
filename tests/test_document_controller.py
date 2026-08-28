@@ -4,16 +4,16 @@ from fastapi.testclient import TestClient
 import rag.api.modules.document.controller as ctrl
 import rag.api.modules.document.service as svc
 from rag.api.dependencies.db import get_pg
-from rag.api.dependencies.storage import get_arq_pool, get_minio
+from rag.api.dependencies.storage import get_minio, get_task_publisher
 from rag.api.common.error_handlers import register_error_handlers
 
 
-class _FakeArq:
+class _FakeTaskPublisher:
     def __init__(self):
         self.jobs = []
 
-    async def enqueue_job(self, name, *args):
-        self.jobs.append((name, args))
+    async def enqueue(self, name, document_id, **kwargs):
+        self.jobs.append((name, document_id, kwargs))
 
 
 def _build_app():
@@ -24,22 +24,22 @@ def _build_app():
     return app
 
 
-def _app(arq):
+def _app(task_publisher):
     app = _build_app()
     app.dependency_overrides[get_minio] = lambda: object()
-    app.dependency_overrides[get_arq_pool] = lambda: arq
+    app.dependency_overrides[get_task_publisher] = lambda: task_publisher
     return app
 
 
 def test_upload_rejects_unknown_type():
-    arq = _FakeArq()
-    client = TestClient(_app(arq))
+    task_publisher = _FakeTaskPublisher()
+    client = TestClient(_app(task_publisher))
     resp = client.post(
         "/documents/", files={"file": ("a.exe", b"x", "application/octet-stream")},
         data={"knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
     )
     assert resp.status_code == 400
-    assert arq.jobs == []
+    assert task_publisher.jobs == []
 
 
 def test_upload_happy_path_enqueues(monkeypatch):
@@ -56,8 +56,8 @@ def test_upload_happy_path_enqueues(monkeypatch):
     monkeypatch.setattr(svc, "put_object", fake_put)
     monkeypatch.setattr(svc.store, "create_document", fake_create_document)
 
-    arq = _FakeArq()
-    client = TestClient(_app(arq))
+    task_publisher = _FakeTaskPublisher()
+    client = TestClient(_app(task_publisher))
     resp = client.post(
         "/documents/", files={"file": ("note.txt", b"hello", "text/plain")},
         data={"knowledge_base_id": "00000000-0000-0000-0000-000000000002"},
@@ -66,7 +66,7 @@ def test_upload_happy_path_enqueues(monkeypatch):
     assert resp.status_code == 202
     body = resp.json()
     assert body == {"document_id": "doc-1", "status": "pending"}
-    assert arq.jobs == [("ingest_document", ("doc-1",))]
+    assert task_publisher.jobs == [("ingest_document", "doc-1", {})]
     assert created["content_type"] == "txt"
     assert created["data"] == b"hello"
 

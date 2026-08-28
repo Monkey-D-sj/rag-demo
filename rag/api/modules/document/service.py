@@ -11,6 +11,7 @@ from rag.api.modules.document.schemas import (
 from rag.common.minio_client import presigned_get_url, put_object
 from rag.config import get_settings
 from rag.document import store
+from rag.tasks import TaskPublisher
 
 ALLOWED_TYPES = {"txt", "md", "pdf", "docx"}
 
@@ -24,7 +25,7 @@ async def ingest_upload(
     *,
     pg,
     minio,
-    arq_pool,
+    task_publisher: TaskPublisher,
     filename: str | None,
     content_type: str | None,
     data: bytes,
@@ -54,7 +55,7 @@ async def ingest_upload(
         content_hash=content_hash,
         object_key=object_key,
     )
-    await arq_pool.enqueue_job("ingest_document", document_id)
+    await task_publisher.enqueue("ingest_document", document_id)
     return document_id
 
 
@@ -109,7 +110,7 @@ async def list_documents(
     return DocumentListResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-async def retry_document(pg, arq_pool, document_id: str) -> DocumentRetryResponse:
+async def retry_document(pg, task_publisher: TaskPublisher, document_id: str) -> DocumentRetryResponse:
     """强制重试：重置 retry_count=0 并立即投递，旁路 cron 退避。
 
     cron 自愈对同文档每轮递增 retry_count 并按指数退避；本接口是运维入口，
@@ -125,7 +126,7 @@ async def retry_document(pg, arq_pool, document_id: str) -> DocumentRetryRespons
             message="文档未处于 failed 状态，无需重试",
         )
     await store.force_retry(pg, document_id)
-    await arq_pool.enqueue_job("ingest_document", document_id)
+    await task_publisher.enqueue("ingest_document", document_id)
     return DocumentRetryResponse(
         document_id=str(doc["id"]),
         status="pending",
@@ -134,7 +135,7 @@ async def retry_document(pg, arq_pool, document_id: str) -> DocumentRetryRespons
     )
 
 
-async def retry_graph(pg, arq_pool, document_id: str) -> GraphRetryResponse:
+async def retry_graph(pg, task_publisher: TaskPublisher, document_id: str) -> GraphRetryResponse:
     """仅重跑实体图抽取：跳过切块+向量，直接投递 extract_document_entities。"""
     doc = await store.get_document(pg, document_id)
     if doc is None:
@@ -154,7 +155,7 @@ async def retry_graph(pg, arq_pool, document_id: str) -> GraphRetryResponse:
             message=f"实体抽取状态为 {gs}，无需重试",
         )
 
-    await arq_pool.enqueue_job("extract_document_entities", document_id)
+    await task_publisher.enqueue("extract_document_entities", document_id)
     return GraphRetryResponse(
         document_id=str(doc["id"]),
         graph_status="pending",

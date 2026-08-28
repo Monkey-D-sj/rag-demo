@@ -7,8 +7,6 @@ setup_windows_loop()
 
 from contextlib import AsyncExitStack, asynccontextmanager
 
-from arq import create_pool
-from arq.connections import RedisSettings
 from fastapi import FastAPI
 
 from rag.api.common.error_handlers import register_error_handlers
@@ -24,6 +22,7 @@ from rag.governance import create_guard
 from rag.models.embedding import EmbeddingModel
 from rag.models.normal import NormalModel
 from rag.models.rerank import QwenReranker
+from rag.tasks import RabbitMQTaskPublisher
 
 logger = get_logger()
 
@@ -136,17 +135,10 @@ async def lifespan(app: FastAPI):
         # minio 为同步 SDK,内部 urllib3 连接池随对象回收,无需显式关闭
         app.state.minio = create_minio_client(settings)
         logger.info("minio 客户端初始化完成")
-        logger.info("初始化 arq 任务队列")
-        app.state.arq_pool = await create_pool(
-            RedisSettings(
-                host=settings.REDIS_HOST,
-                port=settings.REDIS_PORT,
-                database=settings.ARQ_REDIS_DB,
-                password=settings.REDIS_PASSWORD,
-            )
-        )
-        stack.push_async_callback(_close("arq 任务队列", app.state.arq_pool.aclose))
-        logger.info("arq 任务队列初始化完成")
+        logger.info("初始化 RabbitMQ 任务队列")
+        app.state.task_publisher = await RabbitMQTaskPublisher.connect(settings)
+        stack.push_async_callback(_close("RabbitMQ 任务队列", app.state.task_publisher.close))
+        logger.info("RabbitMQ 任务队列初始化完成")
         logger.info("---------------------------------------------------------")
         logger.info("---------------------  初始化依赖项完成  -------------------")
         logger.info("---------------------------------------------------------")

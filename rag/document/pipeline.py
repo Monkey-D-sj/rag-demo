@@ -35,7 +35,7 @@ class _IngestDeps(TypedDict, total=False):
     embedding: EmbeddingModel
     settings: Settings
     llm: ChatModel  # 可选，用于表格摘要生成；缺失时降级为规则摘要
-    redis: object  # arq 框架自动注入 ArqRedis,仅用于 enqueue_job
+    task_publisher: object  # RabbitMQ 任务发布器，仅用于投递实体抽取任务
 
 
 def _parse_and_chunk(
@@ -200,7 +200,7 @@ async def _ingest(ctx: _IngestDeps, document_id: str) -> None:
 
         # 向量入库已完成;实体图抽取为 best-effort 增强,投递独立任务(阶段一)。
         if settings.ENABLE_ENTITY_EXTRACTION:
-            await ctx["redis"].enqueue_job("extract_document_entities", document_id)
+            await ctx["task_publisher"].enqueue("extract_document_entities", document_id)
         else:
             await store.set_graph_status(pool, document_id, "skipped")
     except asyncio.CancelledError:

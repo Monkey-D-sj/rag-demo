@@ -1,6 +1,5 @@
 from typing import Annotated
 
-from arq import ArqRedis
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import RedirectResponse
 from minio import Minio
@@ -8,7 +7,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from rag.api.common.schemas import ErrorResponse
 from rag.api.dependencies.db import get_pg
-from rag.api.dependencies.storage import get_arq_pool, get_minio
+from rag.api.dependencies.storage import get_minio, get_task_publisher
 from rag.api.modules.document import service
 from rag.api.modules.document.exceptions import FileTooLarge, UnsupportedFileType
 from rag.api.modules.document.schemas import (
@@ -37,7 +36,7 @@ async def upload_document(
     knowledge_base_id: str = Form(...),
     pg=Depends(get_pg),
     minio=Depends(get_minio),
-    arq_pool=Depends(get_arq_pool),
+    task_publisher=Depends(get_task_publisher),
 ) -> DocumentUploadResponse:
     # 1) 扩展名校验 — 只需文件名，零 I/O，不必先读入整个文件
     name = service._safe_filename(file.filename)
@@ -55,7 +54,7 @@ async def upload_document(
     document_id = await service.ingest_upload(
         pg=pg,
         minio=minio,
-        arq_pool=arq_pool,
+        task_publisher=task_publisher,
         filename=file.filename,
         content_type=file.content_type,
         data=data,
@@ -125,9 +124,9 @@ async def download_document(
 async def retry_document(
     document_id: str,
     pg: Annotated[AsyncConnectionPool, Depends(get_pg)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    task_publisher=Depends(get_task_publisher),
 ) -> DocumentRetryResponse:
-    return await service.retry_document(pg, arq_pool, document_id)
+    return await service.retry_document(pg, task_publisher, document_id)
 
 
 @document_router.post(
@@ -141,6 +140,6 @@ async def retry_document(
 async def retry_graph(
     document_id: str,
     pg: Annotated[AsyncConnectionPool, Depends(get_pg)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    task_publisher=Depends(get_task_publisher),
 ) -> GraphRetryResponse:
-    return await service.retry_graph(pg, arq_pool, document_id)
+    return await service.retry_graph(pg, task_publisher, document_id)

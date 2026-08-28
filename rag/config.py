@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 按项目根目录解析 .env，无论从哪个目录启动都能正确加载
@@ -62,8 +62,13 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "rag-documents"
     MINIO_SECURE: bool = False
 
-    # ── arq / 文档入库 ──
-    ARQ_REDIS_DB: int = 1
+    # ── RabbitMQ / 文档入库 ──
+    RABBITMQ_URL: str = "amqp://rag:rag123@localhost:5672/"
+    RABBITMQ_QUEUE: str = "rag.documents"
+    RABBITMQ_DLQ: str = "rag.documents.dlq"
+    # 总尝试次数，包含首次执行；最后一次失败后消息进入死信队列。
+    RABBITMQ_MAX_ATTEMPTS: int = Field(default=3, ge=1)
+    RABBITMQ_PREFETCH_COUNT: int = Field(default=4, ge=1)
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 100
     EMBEDDING_BATCH_SIZE: int = 10

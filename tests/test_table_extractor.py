@@ -7,55 +7,16 @@ from __future__ import annotations
 import io
 
 
-# ── Markdown 转换 ──
+# ── 列名+值 拼接 ──
 
 
-class TestToMarkdown:
-    """Markdown pipe table 转换。"""
+class TestFlattenTable:
+    """列名+值 拼接生成（不依赖 LLM）。"""
 
-    def test_simple_table(self):
-        from rag.document.table_extractor import _to_markdown
+    def test_full_table(self):
+        from rag.document.table_extractor import _flatten_table
 
-        md = _to_markdown(["姓名", "年龄"], [["张三", "28"], ["李四", "35"]])
-        lines = md.split("\n")
-        assert "| 姓名 | 年龄 |" in lines[0]
-        assert "| --- | --- |" in lines[1]
-        assert "| 张三 | 28 |" in lines[2]
-        assert "| 李四 | 35 |" in lines[3]
-
-    def test_escapes_pipe_in_cell(self):
-        from rag.document.table_extractor import _to_markdown
-
-        md = _to_markdown(["值"], [["a|b"]])
-        assert "a\\|b" in md
-
-    def test_truncates_large_table(self):
-        from rag.document.table_extractor import _to_markdown
-
-        rows = [[str(i), f"val{i}"] for i in range(100)]
-        md = _to_markdown(["序号", "值"], rows)
-        assert "仅展示前" in md
-        data_lines = [l for l in md.split("\n") if l.startswith("|")]
-        assert len(data_lines) <= 42  # 表头 + 分隔 + 40 数据
-
-    def test_single_header_no_body(self):
-        from rag.document.table_extractor import _to_markdown
-
-        md = _to_markdown(["姓名", "年龄"], [])
-        lines = md.split("\n")
-        assert len(lines) == 2  # 仅表头 + 分隔行
-
-
-# ── 规则摘要 ──
-
-
-class TestBuildSummary:
-    """规则摘要生成（不依赖 LLM）。"""
-
-    def test_full_summary(self):
-        from rag.document.table_extractor import _build_summary
-
-        s = _build_summary(
+        s = _flatten_table(
             ["姓名", "年龄"],
             [["张三", "28"], ["李四", "35"]],
             caption="员工信息表",
@@ -65,10 +26,19 @@ class TestBuildSummary:
         assert "年龄" in s
         assert "张三" in s
 
-    def test_all_empty_returns_placeholder(self):
-        from rag.document.table_extractor import _build_summary
+    def test_all_rows_included_no_truncation(self):
+        from rag.document.table_extractor import _flatten_table
 
-        s = _build_summary([], [])
+        rows = [[str(i), f"val{i}"] for i in range(100)]
+        s = _flatten_table(["序号", "值"], rows)
+        # 末行保留,无折叠提示
+        assert "值：val99" in s
+        assert "仅展示前" not in s
+
+    def test_all_empty_returns_placeholder(self):
+        from rag.document.table_extractor import _flatten_table
+
+        s = _flatten_table([], [])
         assert s == "表格数据"
 
 
@@ -88,15 +58,13 @@ class TestTableBlock:
         assert meta["table_caption"] == "员工表"
         assert "员工表" in meta["table_summary"]
 
-    def test_truncated_flag(self):
+    def test_all_rows_kept_no_truncation(self):
         from rag.document.table_extractor import TableBlock
 
         rows = [[str(i)] for i in range(100)]
         tb = TableBlock(["序号"], rows)
-        assert tb.truncated() is True
-
-        tb2 = TableBlock(["A"], [["1"]])
-        assert tb2.truncated() is False
+        # 不做行数截断,末行保留在嵌入文本
+        assert "序号：99" in tb.embed_text
 
     def test_page_stored(self):
         from rag.document.table_extractor import TableBlock
@@ -208,13 +176,13 @@ class TestExtractTablesFromPdf:
 # ── 管线层表格提取（降级） ──
 
 
-class TestTableSummaryFallback:
-    """LLM 不可用时降级为规则摘要。"""
+class TestTableExtract:
+    """pipeline 表格提取返回 TableBlock,meta 携带 列名+值 拼接文本。"""
 
-    async def test_extract_without_llm_returns_rule_summary(self):
+    async def test_extract_returns_flattened_summary(self):
         from docx import Document
 
-        from rag.document.pipeline import _extract_and_summarize_tables
+        from rag.document.pipeline import _extract_tables
 
         doc = Document()
         table = doc.add_table(rows=3, cols=2, style="Table Grid")
@@ -228,7 +196,7 @@ class TestTableSummaryFallback:
         buf = io.BytesIO()
         doc.save(buf)
 
-        blocks = await _extract_and_summarize_tables(buf.getvalue(), "docx", llm=None)
+        blocks = await _extract_tables(buf.getvalue(), "docx")
         assert len(blocks) == 1
         meta = blocks[0].meta
         assert "产品" in meta["table_summary"]
@@ -236,11 +204,9 @@ class TestTableSummaryFallback:
         assert "A" in meta["table_summary"]
 
     async def test_extract_no_tables_returns_empty(self):
-        from rag.document.pipeline import _extract_and_summarize_tables
+        from rag.document.pipeline import _extract_tables
 
-        blocks = await _extract_and_summarize_tables(
-            b"plain text no tables", "txt", llm=None,
-        )
+        blocks = await _extract_tables(b"plain text no tables", "txt")
         assert blocks == []
 
 

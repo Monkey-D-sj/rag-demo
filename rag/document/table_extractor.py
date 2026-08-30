@@ -1,4 +1,4 @@
-"""PDF / DOCX 表格提取，输出 Markdown pipe table + 结构化元数据。
+"""PDF / DOCX 表格提取,输出 列名+值 拼接文本 + 结构化元数据。
 
 PDF 使用 pdfplumber（处理跨页表格、合并单元格）；
 DOCX 使用 python-docx（已有依赖，无需额外安装）。
@@ -14,16 +14,11 @@ logger = get_logger()
 
 # ── 表格数据模型 ──
 
-# 超大表格截断：保留表头 + 前 N 行，其余行折叠提示
-_MAX_TABLE_ROWS = 40
-# 嵌入摘要的首行采样数
-_SUMMARY_SAMPLE_ROWS = 3
-
 
 class TableBlock:
     """从文档提取的一张表格的结构化表示。"""
 
-    __slots__ = ("caption", "headers", "rows", "markdown", "page")
+    __slots__ = ("caption", "headers", "rows", "text", "page")
 
     def __init__(
         self,
@@ -37,11 +32,7 @@ class TableBlock:
         self.rows = rows
         self.caption = caption
         self.page = page
-        self.markdown = _to_markdown(headers, rows)
-
-    def truncated(self) -> bool:
-        """该表格是否因行数过多被截断。"""
-        return len(self.rows) > _MAX_TABLE_ROWS
+        self.text = _flatten_table(headers, rows, caption)
 
     @property
     def meta(self) -> dict:
@@ -52,141 +43,39 @@ class TableBlock:
             "table_rows": len(self.rows),
             "table_cols": len(self.headers),
             "table_caption": self.caption,
-            "table_summary": _build_summary(
-                self.headers, self.rows, self.caption
-            ),
+            "table_summary": self.text,
         }
 
     @property
     def embed_text(self) -> str:
-        """供 embedding 使用的文本：表名/摘要 + Markdown 正文。
-
-        摘要在前，利用 embedding 模型对前置信息的偏好提升检索准确度。
-        """
-        summary = self.meta["table_summary"]
-        return f"{summary}\n\n{self.markdown}"
+        """供 embedding 使用的文本:全表 列名+值 拼接。"""
+        return self.text
 
 
-# ── Markdown 转换 ──
+# ── 列名+值 拼接(不依赖 LLM) ──
 
 
-def _escape_pipe(text: str) -> str:
-    """转义 Markdown 表格中的 | 字符，避免破坏列结构。"""
-    return str(text).replace("|", "\\|").replace("\n", " ")
-
-
-def _to_markdown(headers: list[str], rows: list[list[str]]) -> str:
-    """将表头和行转为 Markdown pipe table 字符串。
-
-    超大表格截断为前 _MAX_TABLE_ROWS 行 + 折叠提示。
-    """
-    n_cols = len(headers)
-
-    # 补齐列数不一致的行
-    def _pad(row: list[str], width: int) -> list[str]:
-        padded = list(row)
-        while len(padded) < width:
-            padded.append("")
-        return padded[:width]
-
-    h = _pad(headers, n_cols)
-    lines: list[str] = []
-    # 表头行
-    lines.append("| " + " | ".join(_escape_pipe(c) for c in h) + " |")
-    # 分隔行
-    lines.append("| " + " | ".join("---" for _ in range(n_cols)) + " |")
-
-    truncated = len(rows) > _MAX_TABLE_ROWS
-    display_rows = rows[:_MAX_TABLE_ROWS] if truncated else rows
-    for row in display_rows:
-        r = _pad(row, n_cols)
-        lines.append("| " + " | ".join(_escape_pipe(c) for c in r) + " |")
-
-    if truncated:
-        lines.append(f"\n*（表格共 {len(rows)} 行，此处仅展示前 {_MAX_TABLE_ROWS} 行）*")
-
-    return "\n".join(lines)
-
-
-# ── 自然语言摘要（不依赖 LLM） ──
-
-
-def _build_summary(
+def _flatten_table(
     headers: list[str],
     rows: list[list[str]],
     caption: str = "",
 ) -> str:
-    """不依赖 LLM 的规则摘要：表名 + 列名 + 前几行数据转自然语言。
+    """全表按 列名+值 拼接为单段文本,不做截断,供 embedding 检索。
 
-    用于 embedding 检索，让"查找 Q4 营收"这类查询能命中纯数字表格。
+    每行把非空单元格展开为"列名:值",行内用逗号连接,行间用句号连接,
+    表名作前缀。让"查找 Q4 营收"这类查询能命中纯数字表格。
     """
     parts: list[str] = []
 
     if caption.strip():
         parts.append(f"表格：{caption.strip()}")
 
-    if headers:
-        parts.append("包含列：" + "、".join(h for h in headers if h))
+    for row in rows:
+        cells = [f"{h}：{c}" for h, c in zip(headers, row) if h and c]
+        if cells:
+            parts.append("，".join(cells))
 
-    if rows:
-        sample = rows[:_SUMMARY_SAMPLE_ROWS]
-        prose_lines: list[str] = []
-        for i, row in enumerate(sample):
-            pairs = [
-                f"{h}为{cell}"
-                for h, cell in zip(headers, row)
-                if h and cell
-            ]
-            if pairs:
-                prose_lines.append("第{}行：{}。".format(i + 1, "，".join(pairs)))
-        if prose_lines:
-            parts.append("示例数据：" + " ".join(prose_lines))
-
-    return "；".join(parts) if parts else "表格数据"
-
-
-# ── LLM 摘要（可选，best-effort） ──
-
-
-async def generate_table_summary(
-    llm,  # ChatModel, 惰性类型避免循环导入
-    markdown: str,
-    headers: list[str],
-    caption: str = "",
-) -> str | None:
-    """用 LLM 生成表格自然语言摘要，提升 embedding 检索语义覆盖。
-
-    失败时返回 None，调用方降级使用规则摘要（`_build_summary`）。
-    """
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    header_hint = ""
-    if headers:
-        header_hint = f"列名：{'、'.join(headers)}。"
-    caption_hint = f"表名：{caption}。" if caption.strip() else ""
-
-    system = (
-        "你是一个数据分析助手。请用 1-2 句流畅的中文概述给定表格的核心内容，"
-        "包含：表格主题、关键字段、数据范围或趋势（如有）。"
-        "只输出摘要文字，不要加前缀和引号。"
-    )
-    human = (
-        f"{caption_hint}{header_hint}\n"
-        f"表格内容（Markdown 格式）：\n{markdown}"
-    )
-
-    try:
-        result = await llm.ainvoke([
-            SystemMessage(content=system),
-            HumanMessage(content=human),
-        ])
-        summary = str(result).strip() if result else ""
-        if summary:
-            return summary
-    except Exception:
-        logger.warning("表格摘要 LLM 调用失败，降级为规则摘要", exc_info=True)
-
-    return None
+    return "。".join(parts) if parts else "表格数据"
 
 
 # ── 公共入口 ──

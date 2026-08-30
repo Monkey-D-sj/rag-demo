@@ -12,7 +12,6 @@ class RetrieverProtocol(Protocol):
 
 	async def search(
 		self, query: str, knowledge_base_ids: list[str] | None = None, top_k: int = 5,
-		entities: list[str] | None = None,
 	) -> list[dict]: ...
 
 	async def fetch_parent_contents(
@@ -86,7 +85,7 @@ class MyState(TypedDict):
 	context: str
 	rewrite_query: str
 	is_out_of_scope: bool  # True 表示查询与知识库无关，跳过召回直接大模型兜底
-	query_entities: list[str]  # handle_query 抽取的查询实体,图召回入口
+	answer_from_context: bool  # True 表示只依据会话上下文回答，跳过知识库召回
 	sub_queries: list[str]  # handle_query 拆解的子查询,Send 扇出用
 
 	# ----------- 召回 -----------
@@ -112,24 +111,23 @@ class RerankerProtocol(Protocol):
 
 @runtime_checkable
 class SemanticCacheProtocol(Protocol):
-    """agent 层所需的语义缓存接口。具体实现(如 SemanticCache)只需满足此协议即可。"""
+	"""agent 层所需的语义缓存接口。具体实现(如 SemanticCache)只需满足此协议即可。"""
 
-    async def lookup(
-        self, query: str, session_id: str | None = None
-    ) -> dict | None: ...
+	async def lookup(
+		self, query: str, *, session_id: str
+	) -> dict | None: ...
 
-    async def store(
-        self, query: str, answer: str, citations: list
-    ) -> None: ...
+	async def store(
+		self, query: str, answer: str, citations: list, *, session_id: str
+	) -> None: ...
 
 
 @dataclass
 class ContextSchema:
 	llm: ChatModel
-	memory_manager: MemoryManagerProtocol
+	memory_manager: MemoryManagerProtocol | None
 	retriever: RetrieverProtocol | None = None
 	reranker: RerankerProtocol | None = None
 	pool: object | None = None  # AsyncConnectionPool，供节点直接查 DB
 	semantic_cache: "SemanticCacheProtocol | None" = None
 
-	

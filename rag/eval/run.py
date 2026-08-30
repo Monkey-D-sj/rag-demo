@@ -8,7 +8,14 @@ from datetime import datetime, timezone
 from rag.config import get_settings
 from rag.eval import DATASETS_DIR, EVAL_DIR
 from rag.eval.harness import build_retriever, eval_out_of_scope, load_golden, run_eval
-from rag.eval.metrics import aggregate, aggregate_by_category, classify, gate, rewrite_gate
+from rag.eval.metrics import (
+    aggregate,
+    aggregate_by_category,
+    classify,
+    gate,
+    rewrite_gate,
+    short_circuit_compliance,
+)
 from rag.models.embedding import EmbeddingModel
 
 from rag.eval.style import (
@@ -25,6 +32,7 @@ from rag.eval.style import (
 )
 
 GOLDEN_PATH = DATASETS_DIR / "retrieval_golden.jsonl"
+ROUTE_GOLDEN_PATH = DATASETS_DIR / "context_route_golden.jsonl"
 BASELINE_PATH = EVAL_DIR / "baseline.json"
 HISTORY_DIR = EVAL_DIR / "history"
 HISTORY_DIR.mkdir(exist_ok=True)
@@ -90,11 +98,8 @@ def _pad(s: str, width: int, left: bool = True) -> str:
 
 
 def _load_baseline() -> dict:
-    try:
-        with open(BASELINE_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
+    from rag.eval.baseline import load_baseline
+    return load_baseline(BASELINE_PATH).get("retrieval", {}).get("legs", {})
 
 
 def _print_table(result: dict) -> None:
@@ -329,13 +334,14 @@ def _print_category_table(result: dict) -> None:
 
 
 async def _run_classify(items, llm) -> dict:
-    """范围判断评测：跑 LLM 分类 vs golden 标注。"""
+    """范围判断评测：跑 LLM 分类 vs golden 标注,并检查短路契约合规。"""
     from langchain_core.messages import HumanMessage, SystemMessage
     from rag.agent.nodes.query.query import QueryRewriteOutput
     from rag.prompts.query import system_prompt
 
     predicted: list[bool] = []
     actual: list[bool] = []
+    results: list[QueryRewriteOutput | None] = []
 
     for item in items:
         actual.append(item.out_of_scope)
@@ -349,8 +355,10 @@ async def _run_classify(items, llm) -> dict:
                 QueryRewriteOutput,
             )
             predicted.append(result.is_out_of_scope)
+            results.append(result)
         except Exception:
             predicted.append(False)  # 降级默认 in-scope
+            results.append(None)
 
     metrics = classify(predicted, actual)
     print("== 范围判断评测（LLM 分类 vs golden 标注） ==")
@@ -358,9 +366,83 @@ async def _run_classify(items, llm) -> dict:
     print(f"  Recall:    {metrics['recall']:.2%}")
     print(f"  F1:        {metrics['f1']:.2%}")
     print(f"  TP={metrics['tp']}  FP={metrics['fp']}  FN={metrics['fn']}")
+
+    # 短路契约合规:只校验 golden out_of_scope 条目(短路只在命中时生效)
+    oos_rows = [
+        (r, item.query)
+        for item, r in zip(items, results)
+        if item.out_of_scope and r is not None
+    ]
+    if oos_rows:
+        compliance = short_circuit_compliance(oos_rows)
+        print("  短路契约合规(out_of_scope 条目应跳过任务二/三/四):")
+        print(
+            f"    合规 {compliance['compliant']}/{compliance['checked']} "
+            f"({compliance['compliant_rate']:.0%})"
+        )
+        for violation, n in sorted(
+            compliance["rule_violations"].items(), key=lambda kv: -kv[1]
+        ):
+            print(f"    {red(f'{n}×')} {violation}")
+        for row in compliance["non_compliant"][:5]:
+            print(f"    {dim('✗')} {row['raw_query']}")
     print()
 
     return metrics
+
+
+async def _run_route_classify(items, llm) -> dict:
+    """路由优先级评测:会话题(任务二) vs 范围外(任务一) vs 检索。
+
+    核心校验:任务一不抢占任务二,且短路命中时被跳过字段为固定值。
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+    from rag.eval.harness import RouteItem
+    from rag.eval.metrics import route_violations, short_circuit_violations
+    from rag.prompts.query import system_prompt
+
+    labels = {
+        "context_answer": "会话上下文问答(任务二)",
+        "out_of_scope": "范围外直答(任务一)",
+        "retrieval": "知识库检索",
+    }
+    rows: dict[str, list[tuple[RouteItem, list[str]]]] = {k: [] for k in labels}
+
+    for item in items:
+        try:
+            result: QueryRewriteOutput = await llm.ainvoke_structured(
+                [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=f"用户查询: {item.query}\n上下文: {item.context}"),
+                ],
+                QueryRewriteOutput,
+            )
+        except Exception:
+            rows[item.expected].append((item, ["LLM 结构化输出失败"]))
+            continue
+        violations = route_violations(item.expected, result)
+        violations += short_circuit_violations(result, item.query)
+        rows[item.expected].append((item, violations))
+
+    print("== 路由优先级评测（会话题 vs 范围外 vs 检索） ==")
+    total = passed = 0
+    for key, label in labels.items():
+        group = rows[key]
+        if not group:
+            continue
+        ok = sum(1 for _, v in group if not v)
+        total += len(group)
+        passed += ok
+        print(f"  {label}: 合规 {ok}/{len(group)}")
+        for item, violations in group:
+            for v in violations:
+                print(f"    {red('✗')} [{item.id}] {item.query} → {v}")
+    if total:
+        print(f"  总合规率: {passed}/{total} ({passed / total:.0%})")
+    print()
+
+    return {"total": total, "passed": passed, "pass_rate": passed / total if total else 0.0}
 
 
 def _git_sha() -> str:
@@ -412,7 +494,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="检索层评测（含查询改写与范围判断）")
     parser.add_argument("--update-baseline", action="store_true", help="用本次结果刷新全部 baseline")
-    parser.add_argument("--classify", action="store_true", help="跑范围判断 LLM 分类评测")
+    parser.add_argument("--classify", action="store_true", help="跑范围判断 + 短路契约 + 路由优先级 LLM 评测")
     parser.add_argument("--category", type=str, default=None,
                         help="只评测指定类别（basic, synonym, chunk_boundary, …）")
     args = parser.parse_args()
@@ -459,8 +541,9 @@ def main() -> None:
     # ── 题型分类评测 ──
     _print_category_table(result)
 
-    # ── 范围判断评测 ──
+    # ── 范围判断评测 + 短路契约 + 路由优先级 ──
     if args.classify:
+        from rag.eval.harness import load_route_golden
         from rag.models.normal import NormalModel
 
         llm = NormalModel(settings)
@@ -469,14 +552,29 @@ def main() -> None:
             return await _run_classify(items, llm)
 
         metrics = asyncio.run(_clf())
+
+        # 路由评测先于 F1 门禁执行:即使范围判断不达标,短路契约/路由优先级也应有报告
+        route_items = load_route_golden(ROUTE_GOLDEN_PATH)
+
+        async def _rt() -> dict:
+            return await _run_route_classify(route_items, llm)
+
+        asyncio.run(_rt())
+
         if metrics["f1"] < 0.9:
             raise SystemExit("范围判断 F1 不达标")
 
     # ── 更新 baseline ──
     if args.update_baseline:
-        new_baseline = {leg: result[leg]["aggregate"] for leg in result if leg in _LEG_KEYS}
-        with open(BASELINE_PATH, "w", encoding="utf-8") as f:
-            json.dump(new_baseline, f, ensure_ascii=False, indent=2, sort_keys=True)
+        from rag.eval.baseline import update_baseline
+        new_baseline = update_baseline(
+            BASELINE_PATH,
+            provenance={},
+            retrieval={"legs": {leg: result[leg]["aggregate"] for leg in result if leg in _LEG_KEYS}},
+            answer_metrics={},
+            run_id=_git_sha(),
+            reason="retrieval baseline update",
+        )
         print(f"已更新 baseline -> {BASELINE_PATH}")
         return
 

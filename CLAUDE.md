@@ -51,6 +51,8 @@ cd frontend && pnpm install && pnpm dev
 - `rag-api` (→ `rag.__main__:main`)
 - `rag-worker` (→ `rag.worker.main:run`)
 - `rag-eval` (→ `rag.eval.run:main`) — retrieval eval CLI with `--update-baseline` / `--classify` flags
+- `rag-eval-answer` (→ `rag.eval.answer_run:main`) — production LangGraph answer eval with collect/score/resume
+- `rag-eval-suite` (→ `rag.eval.suite_run:main`) — retrieval + answer aggregate gate
 
 ## Architecture
 
@@ -69,7 +71,7 @@ The worker has its own independent startup (`on_startup`) that creates separate 
 The state graph (`rag/agent/workflow.py`) is a 13-node pipeline with conditional branching:
 
 ```
-                                     ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                     ┌─ out-of-scope → END (handle_query 内直接作答) ────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 START → recall_memory → handle_query ┤                                                                                                                                                   END
                                      └─ in-scope → cache_lookup ┬─ hit → add_memory ──────────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                                 └─ miss → [Send × N] recall → recall_fuse → rerank → dynamic_topk → expand ┬─ generate → cache_store → add_memory ─┘
@@ -79,7 +81,7 @@ START → recall_memory → handle_query ┤                                    
 | Node | Module | Role |
 |------|--------|------|
 | `recall_memory` | `nodes/recall_memory/` | Short-term (Redis) + Long-term (pgvector) memory recall via `MemoryManagerProtocol` |
-| `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全) + entity extraction for the graph recall leg + query decomposition (`sub_queries`, ≤3, gated by `QUERY_DECOMPOSITION_ENABLED` at routing). Outputs `is_out_of_scope`, `rewrite_query`, and `query_entities` |
+| `handle_query` | `nodes/query/` | LLM structured output: scope check + query rewrite (指代消解 + 省略补全) + query decomposition (`sub_queries`, ≤3, gated by `QUERY_DECOMPOSITION_ENABLED` at routing); out-of-scope queries are answered directly here (streamed, no retrieval/memory write-back). Outputs `is_out_of_scope`, `rewrite_query` |
 | `cache_lookup` | `nodes/cache_lookup/` | Semantic cache lookup (pgvector similarity, global scope); on hit, streams the cached answer/citations and sets `cache_hit=True` to skip retrieval and generation (gated by `SEMANTIC_CACHE_ENABLED`; pass-through if disabled or not injected) |
 | `recall` | `nodes/recall/` | Hybrid retrieval per Send branch: vector + BM25 + graph (main branch only) concurrent recall; branches carry `{sub_query, entities}` payloads |
 | `recall_fuse` | `nodes/recall_fuse/` | Fan-in of Send branches: second-level RRF fusion across sub-query result lists (shared `fuse_multi_query_results()`), writes `recall_vec_results` |
@@ -87,16 +89,16 @@ START → recall_memory → handle_query ┤                                    
 | `dynamic_topk` | `nodes/dynamic_topk/` | Adjacent-score-gap dynamic truncation of reranked results (with plateau protection) |
 | `expand` | `nodes/expand/` | Unified chunk expansion: dynamically routes by KB type — regulation chunks → parent-child (fetch full document text, dedup by doc_id; gated by `PARENT_CHILD_ENABLED`); general chunks → sentence window (fetch ±N adjacent chunks; gated by `SENTENCE_WINDOW_ENABLED`) |
 | `generate` | `nodes/generate/` | RAG generation with retrieved context, SSE token streaming |
-| `direct_answer` | `nodes/generate/` | Out-of-scope direct LLM answer (no retrieval, no memory write-back) |
+| `context_answer` | `nodes/generate/` | Conversation-history-only answer (`answer_from_context`), no KB retrieval, writes memory |
 | `no_results` | `nodes/generate/` | Static fallback message when recall is empty (no LLM call) |
 | `cache_store` | `nodes/cache_store/` | Best-effort write-back of the generated answer + citations to the semantic cache (gated by `SEMANTIC_CACHE_ENABLED`; pass-through if disabled or not injected) |
 | `add_memory` | `nodes/add_memory/` | Persists turn to short-term + long-term memory (best-effort, failures silently ignored) |
 
 **Conditional routing:**
-- `_route_after_query`: `is_out_of_scope=True` → `direct_answer`; otherwise → `cache_lookup`
-- `_route_after_cache`: `cache_hit=True` → `add_memory`; otherwise returns `list[Send]` fanning out to `recall` — branches are `[rewrite_query] + sub_queries` (sub-queries only when `QUERY_DECOMPOSITION_ENABLED`), entities ride only on the main branch
+- `_route_after_query`: `is_out_of_scope=True` → `END` (answer already streamed inside `handle_query`); otherwise → `cache_lookup`
+- `_route_after_cache`: `cache_hit=True` → `add_memory`; otherwise returns `list[Send]` fanning out to `recall` — branches are `[rewrite_query] + sub_queries` (sub-queries only when `QUERY_DECOMPOSITION_ENABLED`)
 - `_route_after_topk` (evaluated after `expand`): `recall_vec_results` non-empty → `generate`; empty → `no_results`
-- The `generate` path writes memory via `generate → cache_store → add_memory`; a cache hit writes memory directly via `cache_lookup → add_memory`; `direct_answer` and `no_results` go straight to `END`
+- The `generate` path writes memory via `generate → cache_store → add_memory`; a cache hit writes memory directly via `cache_lookup → add_memory`; `context_answer` writes memory via `context_answer → add_memory`; out-of-scope (answered inside `handle_query`) and `no_results` go straight to `END`
 
 **Key design patterns:**
 - **Graceful degradation**: Memory recall failure → empty context. Retriever failure → empty results. Structured output failure → raw query passthrough. Reranker missing → pass-through.
@@ -107,9 +109,8 @@ START → recall_memory → handle_query ┤                                    
 
 `MyState` (`rag/agent/type.py`) is a plain `TypedDict`. `sub_recall_results` is the only Annotated reducer field (`operator.add`, Send fan-in); all other fields are plain last-write-wins. Key fields:
 - `session_id`, `raw_query`, `context` — input fields
-- `is_out_of_scope` — set by `handle_query`; determines routing to `direct_answer` vs `cache_lookup`
+- `is_out_of_scope` — set by `handle_query`; when True, `handle_query` streams the direct answer and routes to `END` (no `cache_lookup`)
 - `rewrite_query` — rewritten query from `handle_query`; falls back to `raw_query` on structured-output failure
-- `query_entities` — entities extracted by `handle_query`; code guarantees `[]` on structured-output failure, while an empty list on out-of-scope classification relies on prompt compliance rather than a code-level guard (that path never reaches `recall`, so it has no practical effect either way); passed to `recall` as the graph leg's seed entities
 - `sub_queries` — sub-queries decomposed by `handle_query` (≤3, code-clamped); falls back to `[]` on structured-output failure; consumed by `_route_after_cache` to fan out Send branches only when `QUERY_DECOMPOSITION_ENABLED`
 - `cache_hit` — set by `cache_lookup` on a semantic cache hit; `_route_after_cache` checks it to route straight to `add_memory`, skipping retrieval and generation
 - `sub_recall_results` — Send fan-in reducer field; each `recall` branch appends a single-element list, `operator.add` concatenates across parallel branches; consumed by `recall_fuse`
@@ -160,6 +161,8 @@ Documents flow through `pending → processing → done|failed`. `claim_for_proc
 
 Entity extraction (graph pipeline) is a separate RabbitMQ task (`extract_document_entities`, timeout=900s). It uses `BoundedSemaphore` to limit concurrent LLM calls. Single-chunk failures are skipped; all-chunk failures mark `graph_status=failed` for cron retry. `asyncio.CancelledError` (from ARQ timeout) is caught separately to set `failed` status before re-raising.
 
+`documents.content` (the full text used by the regulation-KB parent-child expand) is now paragraphs **plus** table blocks (`embed_text`: rule/LLM summary + Markdown), appended after table extraction — so table-heavy regulation docs don't lose their table content when expand replaces a chunk's text with the full document.
+
 ### Database: async psycopg3 with dict_row cursors
 
 All DB access goes through `get_cursor(pool)` — an async context manager yielding dict-row cursors. Each connection auto-registers pgvector via `_configure`. Transactions auto-commit on clean exit and rollback on exception. There is no ORM; all queries are raw SQL. Alembic migrations live in `alembic/versions/` and use the sync `PG_SYNC_URL` (note: migrations use `psycopg` sync driver, not the async pool).
@@ -172,11 +175,11 @@ All DB access goes through `get_cursor(pool)` — an async context manager yield
 - **Metrics**: hit@k, recall@k, ndcg@k, mrr — computed per-query, then aggregated
 - **History**: each run saves `history/YYYYMMDD-HHMMSS-{commit}.json` with per-leg aggregate + per-query breakdown
 - **Gate**: `gate()` compares aggregate metrics against `baseline.json` thresholds; fails on >3% relative drop in recall@5 or mrr. `rewrite_gate()` separately checks that query rewriting doesn't degrade retrieval
-- **Classify mode** (`--classify`): runs LLM `handle_query` classification against golden `out_of_scope` labels, computes Precision/Recall/F1
+- **Classify mode** (`--classify`): runs LLM `handle_query` classification against golden `out_of_scope` labels, computes Precision/Recall/F1, then reports **short-circuit compliance** (out-of-scope items must keep `answer_from_context=false`、`sub_queries=[]`、`rewrite_query≈原文` per the prompt's task-priority contract) and runs a **route-precedence eval** against `rag/eval/datasets/context_route_golden.jsonl` (curated `(context, query)` triples asserting conversation-history questions are routed to `context_answer` — not misrouted to `out_of_scope`; non-KB chat to `out_of_scope`; KB questions to retrieval)
 - **Breakdown table**: CJK-aligned multi-column terminal output showing all legs side-by-side, plus rewrite gain and rerank gain summaries
 - **Seed corpus**: `rag/eval/seed_corpus.py` populates an isolated eval environment from source documents
 - **Golden generation**: `rag/eval/generate_golden.py` uses LLM structured output to produce candidate query-document pairs for manual curation
-- **CLI**: `uv run rag-eval [--update-baseline] [--classify]` or `uv run pytest tests/ -v -m eval`
+- **CLI**: `uv run rag-eval [--update-baseline] [--classify]`, `uv run rag-eval-answer [--limit 15|--ids ...|--all]`, or `uv run rag-eval-suite`
 
 The eval environment is deliberately isolated from production. The eval retriever uses `EVAL_KB_ID` for knowledge-base-based routing.
 

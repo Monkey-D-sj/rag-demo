@@ -109,6 +109,80 @@ def gate(
     return passed, deltas
 
 
+def short_circuit_violations(result, raw_query: str) -> list[str]:
+    """检查 query 结构化输出是否满足短路契约,返回违反的规则描述列表。
+
+    契约(见 rag/prompts/query.py「任务优先级与短路」):
+    - is_out_of_scope=true:任务二/三/四被跳过 → answer_from_context=false、
+      sub_queries=[]、rewrite_query≈原文(归一化比较,容忍标点/空白差异)
+    - answer_from_context=true:任务三/四被跳过 → sub_queries=[]、rewrite_query≈原文
+
+    result 需具备 rewrite_query/is_out_of_scope/answer_from_context/sub_queries 四个属性。
+    """
+    violations: list[str] = []
+    if result.is_out_of_scope:
+        if result.answer_from_context:
+            violations.append("is_out_of_scope=true 但 answer_from_context=true,任务二应被短路")
+        if result.sub_queries:
+            violations.append(f"is_out_of_scope=true 但 sub_queries={result.sub_queries},任务四应被短路")
+        if normalize(result.rewrite_query) != normalize(raw_query):
+            violations.append("is_out_of_scope=true 但 rewrite_query≠原文,任务三应被短路")
+    if result.answer_from_context:
+        if result.sub_queries:
+            violations.append(f"answer_from_context=true 但 sub_queries={result.sub_queries},任务四应被短路")
+        if normalize(result.rewrite_query) != normalize(raw_query):
+            violations.append("answer_from_context=true 但 rewrite_query≠原文,任务三应被短路")
+    return violations
+
+
+def short_circuit_compliance(rows: list[tuple[object, str]]) -> dict:
+    """聚合多条 (result, raw_query) 的短路合规率。
+
+    返回 {"checked", "compliant", "compliant_rate", "rule_violations", "non_compliant"},
+    non_compliant 每条含 {"raw_query", "violations"}。
+    """
+    checked = len(rows)
+    per_rule: dict[str, int] = {}
+    non_compliant: list[dict] = []
+    for result, raw_query in rows:
+        violations = short_circuit_violations(result, raw_query)
+        if violations:
+            non_compliant.append({"raw_query": raw_query, "violations": violations})
+            for v in violations:
+                per_rule[v] = per_rule.get(v, 0) + 1
+    compliant = checked - len(non_compliant)
+    return {
+        "checked": checked,
+        "compliant": compliant,
+        "compliant_rate": compliant / checked if checked else 0.0,
+        "rule_violations": per_rule,
+        "non_compliant": non_compliant,
+    }
+
+
+def route_violations(expected: str, result) -> list[str]:
+    """按预期路由校验 query 结构化输出的路由字段,返回违反描述。
+
+    expected ∈ {"context_answer", "out_of_scope", "retrieval"}。
+    context_answer 走会话上下文、out_of_scope 走直答、retrieval 走知识库检索。
+    """
+    violations: list[str] = []
+    if expected == "context_answer":
+        if result.is_out_of_scope:
+            violations.append("会话题被误判为 out_of_scope(任务一不应抢占任务二)")
+        if not result.answer_from_context:
+            violations.append("会话题未被识别为 answer_from_context")
+    elif expected == "out_of_scope":
+        if not result.is_out_of_scope:
+            violations.append("范围外查询未被识别为 out_of_scope")
+    elif expected == "retrieval":
+        if result.is_out_of_scope:
+            violations.append("知识库问题被误判为 out_of_scope")
+        if result.answer_from_context:
+            violations.append("知识库问题被误判为 answer_from_context")
+    return violations
+
+
 def classify(
     predicted: list[bool],
     actual: list[bool],

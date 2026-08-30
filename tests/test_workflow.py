@@ -30,7 +30,7 @@ class _FakeRetriever:
     def __init__(self):
         self.calls = []
 
-    async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+    async def search(self, query, knowledge_base_ids=None, top_k=5):
         self.calls.append((query, knowledge_base_ids))
         return [{"text": "KB1"}]
 
@@ -76,7 +76,7 @@ async def test_invoke_passes_config_to_astream(monkeypatch):
 
 
 async def test_invoke_out_of_scope_skips_recall(monkeypatch):
-    """is_out_of_scope=True 时 graph 应跳过 recall，直接走 direct_answer。"""
+    """is_out_of_scope=True 时 graph 应跳过 recall,由 handle_query 直接作答。"""
     from rag.agent.nodes.query.query import QueryRewriteOutput
 
     class _OutOfScopeLLM:
@@ -111,8 +111,54 @@ async def test_invoke_out_of_scope_skips_recall(monkeypatch):
     assert retriever.calls == []
     # 没有"检索知识库中..."的状态
     assert "检索知识库中..." not in statuses
-    # 走了 direct_answer 拿到了回复
+    # handle_query 内直接作答拿到了回复
     assert messages == ["你好呀！"]
+
+
+async def test_invoke_context_question_skips_kb_recall():
+    """会话历史问题只使用上下文回答，知识库检索器不应被调用。"""
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    class _ContextLLM:
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(
+                rewrite_query="我第一次讲了啥",
+                is_out_of_scope=False,
+                answer_from_context=True,
+            )
+
+        async def astream(self, messages):
+            yield "你第一次说的是：我叫小明。"
+
+    class _NoCallRetriever:
+        def __init__(self):
+            self.calls = []
+
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
+            self.calls.append(query)
+            return [{"text": "SHOULD_NOT_APPEAR"}]
+
+    class _ContextMemory(_FakeMM):
+        async def get_recent_messages(self, session_id, n=10):
+            return [{"text": "我叫小明", "metadata": {"role": "user"}}]
+
+    retriever = _NoCallRetriever()
+    ctx = ContextSchema(
+        llm=_ContextLLM(), memory_manager=_ContextMemory(), retriever=retriever
+    )
+
+    messages: list[str] = []
+    statuses: list[str] = []
+    async for event in wf.invoke("s1", "我第一次讲了啥", ctx):
+        if event["type"] == "message":
+            messages.append(event["data"])
+        elif event["type"] == "status":
+            statuses.append(event["data"])
+
+    assert retriever.calls == []
+    assert "检索知识库中..." not in statuses
+    assert "根据会话上下文回答中" in statuses
+    assert messages == ["你第一次说的是：我叫小明。"]
 
 
 async def test_invoke_decomposition_fans_out(monkeypatch):
@@ -139,7 +185,7 @@ async def test_invoke_decomposition_fans_out(monkeypatch):
         def __init__(self):
             self.calls = []
 
-        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
             self.calls.append(query)
             return [{"id": f"c-{query}", "text": f"KB-{query}", "sources": ["vec"]}]
 
@@ -187,14 +233,14 @@ def test_route_after_cache_miss_single_branch_when_disabled(monkeypatch):
         wf_mod, "get_settings", lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=False)
     )
     out = wf_mod._route_after_cache(
-        {"rewrite_query": "rw", "query_entities": ["e1"], "sub_queries": ["s1"]}
+        {"rewrite_query": "rw", "sub_queries": ["s1"]}
     )
 
-    assert out == [Send("recall", {"sub_query": "rw", "entities": ["e1"]})]
+    assert out == [Send("recall", {"sub_query": "rw"})]
 
 
 def test_route_after_cache_fans_out_when_enabled(monkeypatch):
-    """开关开启:主查询带 entities + 子查询不带 entities(避免重复图召回)。"""
+    """开关开启:按 [主查询]+子查询 扇出并行召回。"""
     import rag.agent.workflow as wf_mod
     from langgraph.types import Send
 
@@ -202,13 +248,13 @@ def test_route_after_cache_fans_out_when_enabled(monkeypatch):
         wf_mod, "get_settings", lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=True)
     )
     out = wf_mod._route_after_cache(
-        {"rewrite_query": "rw", "query_entities": ["e1"], "sub_queries": ["s1", "s2"]}
+        {"rewrite_query": "rw", "sub_queries": ["s1", "s2"]}
     )
 
     assert out == [
-        Send("recall", {"sub_query": "rw", "entities": ["e1"]}),
-        Send("recall", {"sub_query": "s1", "entities": []}),
-        Send("recall", {"sub_query": "s2", "entities": []}),
+        Send("recall", {"sub_query": "rw"}),
+        Send("recall", {"sub_query": "s1"}),
+        Send("recall", {"sub_query": "s2"}),
     ]
 
 
@@ -220,7 +266,7 @@ def test_route_after_cache_falls_back_to_raw_query(monkeypatch):
     )
     out = wf_mod._route_after_cache({"raw_query": "raw"})
 
-    assert out[0].arg == {"sub_query": "raw", "entities": []}
+    assert out[0].arg == {"sub_query": "raw"}
 
 
 def test_graph_contains_recall_fuse():

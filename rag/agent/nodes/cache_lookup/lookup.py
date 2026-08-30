@@ -2,7 +2,10 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from rag.agent.type import ContextSchema, MyState, StreamEventType, stream_event
+from rag.common.logging import get_logger
 from rag.config import get_settings
+
+logger = get_logger()
 
 
 async def cache_lookup(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
@@ -15,8 +18,13 @@ async def cache_lookup(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
     if not settings.SEMANTIC_CACHE_ENABLED or cache is None:
         return state
 
+    session_id = state.get("session_id")
+    if not session_id:
+        logger.warning("语义缓存跳过：缺少 session_id")
+        return state
+
     query = state.get("rewrite_query") or state["raw_query"]
-    hit = await cache.lookup(query, session_id=state.get("session_id"))
+    hit = await cache.lookup(query, session_id=session_id)
     if hit is None:
         return state
 

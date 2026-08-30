@@ -1,13 +1,13 @@
 """remove default KB, seed book + regulation KBs
 
 Revision ID: 0008
-Revises: 0007
+Revises: 0006
 Create Date: 2026-07-13
 """
 from alembic import op
 
 revision = "0008"
-down_revision = "0007"
+down_revision = "0006"
 branch_labels = None
 depends_on = None
 
@@ -17,7 +17,7 @@ REGULATION_KB_ID = "00000000-0000-0000-0000-000000000003"
 
 
 def upgrade() -> None:
-    # 0. 确保扩展存在（兼容从 stamp 0007 开始运行的场景）
+    # 0. 确保扩展存在（兼容从 stamp 0006 开始运行的场景）
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_search")
 

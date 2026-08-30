@@ -26,6 +26,43 @@ class GoldenItem:
     sub_queries: list[str] = field(default_factory=list)
 
 
+@dataclass
+class RouteItem:
+    id: str
+    query: str
+    context: str
+    expected: str  # context_answer | out_of_scope | retrieval
+
+
+def load_route_golden(path) -> list[RouteItem]:
+    """读取路由优先级评测集 jsonl: [{id, query, context, expected}, ...]。
+
+    expected ∈ {context_answer, out_of_scope, retrieval},非法值直接报错。
+    """
+    valid = {"context_answer", "out_of_scope", "retrieval"}
+    items: list[RouteItem] = []
+    with open(path, encoding="utf-8") as f:
+        for lineno, raw in enumerate(f, 1):
+            line = raw.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            if not obj.get("query"):
+                raise ValueError(f"{path}:{lineno} 缺少 query")
+            expected = obj.get("expected")
+            if expected not in valid:
+                raise ValueError(f"{path}:{lineno} expected 非法: {expected!r}")
+            items.append(
+                RouteItem(
+                    id=str(obj.get("id", lineno)),
+                    query=obj["query"],
+                    context=obj.get("context", ""),
+                    expected=expected,
+                )
+            )
+    return items
+
+
 def load_golden(path) -> list[GoldenItem]:
     """读取 jsonl golden 集；跳过空行；校验必填字段，缺失即报错。
 

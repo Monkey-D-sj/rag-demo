@@ -14,12 +14,7 @@ from rag.config import Settings
 from rag.document.chunker import SplitStrategy, chunk
 from rag.document import store
 from rag.document.parser import parse
-from rag.document.table_extractor import (
-    TableBlock,
-    extract_tables,
-    generate_table_summary,
-)
-from rag.models.base import ChatModel
+from rag.document.table_extractor import TableBlock, extract_tables
 from rag.models.embedding import EmbeddingModel
 
 from rag.document import REGULATION_KB_ID
@@ -34,7 +29,6 @@ class _IngestDeps(TypedDict, total=False):
     bucket: str
     embedding: EmbeddingModel
     settings: Settings
-    llm: ChatModel  # 可选，用于表格摘要生成；缺失时降级为规则摘要
     task_publisher: object  # RabbitMQ 任务发布器，仅用于投递实体抽取任务
 
 
@@ -62,37 +56,25 @@ def _parse_and_chunk(
     return full_text, chunks
 
 
-async def _extract_and_summarize_tables(
+def _append_tables(full_text: str, table_blocks: list[TableBlock]) -> str:
+    """把表格块并入全文,供 parent-child retrieval 展开时保留表格信息。
+
+    表格以 embed_text(摘要 + markdown)追加在正文后;无表格时原样返回。
+    """
+    if not table_blocks:
+        return full_text
+    return "\n\n".join([full_text, *(tb.embed_text for tb in table_blocks)])
+
+
+async def _extract_tables(
     data: bytes,
     content_type: str,
-    llm: ChatModel | None = None,
 ) -> list[TableBlock]:
-    """提取文档中的表格，并（可选）用 LLM 生成自然语言摘要。
+    """提取文档中的表格,返回 TableBlock 列表(表格文本为 列名+值 拼接)。
 
-    LLM 摘要失败时静默降级为规则摘要（`TableBlock.meta` 已包含），
-    不阻塞表格入库。
+    CPU 密集段(PDF 表格解析)offload 到线程池。
     """
-    # CPU 密集段（PDF 表格解析）offload 到线程池
-    blocks = await asyncio.to_thread(extract_tables, data, content_type)
-    if not blocks:
-        return []
-
-    if llm is not None:
-        for tb in blocks:
-            try:
-                summary = await generate_table_summary(
-                    llm, tb.markdown, tb.headers, tb.caption
-                )
-                if summary:
-                    # 覆盖规则摘要为 LLM 生成的更高质版本
-                    tb.meta["table_summary"] = summary
-            except Exception:
-                logger.warning(
-                    "表格摘要生成失败（列: %s），降级为规则摘要",
-                    tb.headers, exc_info=True,
-                )
-
-    return blocks
+    return await asyncio.to_thread(extract_tables, data, content_type)
 
 
 # 知识库 → 切分策略（硬编码，每个 KB 固定策略）
@@ -148,15 +130,13 @@ async def _ingest(ctx: _IngestDeps, document_id: str) -> None:
             if not chunks:
                 raise ValueError("切块结果为空,无可入库内容")
 
-            # 存储解析后的全文，供 parent-child retrieval 使用
-            await store.set_document_content(pool, document_id, full_text)
-
             # ── 表格提取（best-effort，不影响正文入库） ──
-            table_blocks = await _extract_and_summarize_tables(
-                src,
-                content_type,
-                llm=ctx.get("llm"),
-            )
+            table_blocks = await _extract_tables(src, content_type)
+
+            # 全文 = 正文段落 + 表格,存 documents.content 供 parent-child retrieval。
+            # 表格必须并进去,否则表格型法规文档 expand 全文替换时表格信息会丢。
+            full_content = _append_tables(full_text, table_blocks)
+            await store.set_document_content(pool, document_id, full_content)
         finally:
             if tmp_path is not None:
                 try:

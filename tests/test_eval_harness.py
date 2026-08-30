@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from rag.eval.harness import GoldenItem, load_golden, run_eval
+from rag.eval.harness import GoldenItem, RouteItem, load_golden, load_route_golden, run_eval
 
 
 def test_load_golden_parses_and_skips_blank_lines(tmp_path: Path):
@@ -68,6 +68,36 @@ class _FakeRetriever:
 
 class _FakePool:
     pass
+
+
+def test_load_route_golden_parses(tmp_path):
+    p = tmp_path / "r.jsonl"
+    p.write_text(
+        '{"id": "r1", "query": "我第一次讲了啥", "context": "用户：我叫小明", "expected": "context_answer"}\n'
+        '{"id": "r2", "query": "你好啊", "context": "", "expected": "out_of_scope"}\n',
+        encoding="utf-8",
+    )
+    items = load_route_golden(p)
+    assert len(items) == 2
+    assert items[0] == RouteItem("r1", "我第一次讲了啥", "用户：我叫小明", "context_answer")
+    assert items[1].expected == "out_of_scope"
+    assert items[1].context == ""
+
+
+def test_load_route_golden_rejects_bad_expected(tmp_path):
+    p = tmp_path / "bad.jsonl"
+    p.write_text('{"query": "q", "context": "", "expected": "whatever"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="expected"):
+        load_route_golden(p)
+
+
+def test_context_route_golden_shipped_dataset_wellformed():
+    """git 跟踪的路由评测集必须可加载,且三类路由都要有用例。"""
+    from rag.eval import DATASETS_DIR
+
+    items = load_route_golden(DATASETS_DIR / "context_route_golden.jsonl")
+    assert items
+    assert {it.expected for it in items} == {"context_answer", "out_of_scope", "retrieval"}
 
 
 async def test_run_eval_returns_six_legs_with_raw(monkeypatch):

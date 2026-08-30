@@ -4,7 +4,7 @@ from langgraph.types import Send
 from rag.agent.nodes.add_memory.memory import add_memory
 from rag.agent.nodes.cache_lookup.lookup import cache_lookup
 from rag.agent.nodes.cache_store.store import cache_store
-from rag.agent.nodes.generate.direct_answer import direct_answer
+from rag.agent.nodes.generate.context_answer import context_answer
 from rag.agent.nodes.generate.generate import generate
 from rag.agent.nodes.generate.no_results import no_results
 from rag.agent.nodes.query.query import handle_query
@@ -19,27 +19,25 @@ from rag.config import get_settings
 
 
 def _route_after_query(state: MyState) -> str:
-    """条件边：范围外直接大模型兜底，范围内走召回。"""
+    """条件边：会话上下文问题走 context_answer；范围外问题已由 handle_query 直接作答，直达 END。"""
+    if state.get("answer_from_context"):
+        return "context_answer"
     if state.get("is_out_of_scope"):
-        return "direct_answer"
+        return "end"
     return "recall"
 
 
 def _route_after_cache(state: MyState):
     """条件边:缓存命中直达记忆写入(答案已流式下发);
     未命中按 [主查询]+sub_queries 扇出 Send 并行召回(开关关闭时恒单分支)。
-    仅主查询分支携带 entities,避免多分支用同一实体集重复图召回。
     """
     if state.get("cache_hit"):
         return "add_memory"
     main_query = state.get("rewrite_query") or state["raw_query"]
-    branches = [Send("recall", {
-        "sub_query": main_query,
-        "entities": state.get("query_entities") or [],
-    })]
+    branches = [Send("recall", {"sub_query": main_query})]
     if get_settings().QUERY_DECOMPOSITION_ENABLED:
         branches += [
-            Send("recall", {"sub_query": sq, "entities": []})
+            Send("recall", {"sub_query": sq})
             for sq in state.get("sub_queries") or []
         ]
     return branches
@@ -75,14 +73,15 @@ builder.add_node("rerank", rerank)
 builder.add_node("dynamic_topk", dynamic_topk)
 # 基于知识库生成
 builder.add_node("generate", generate)
-# 范围外直接大模型回答
-builder.add_node("direct_answer", direct_answer)
-# 记忆持久化（仅 generate 路由到此处，direct_answer / no_results 不写记忆）
+# 仅依据会话上下文回答，不走知识库召回
+builder.add_node("context_answer", context_answer)
+# 记忆持久化（generate / context_answer 路由到此处；no_results 直达 END 不写记忆）
 builder.add_node("add_memory", add_memory)
 # 召回为空时的兜底话术（不调 LLM）
 builder.add_node("no_results", no_results)
 
-#                                        ┌─ out-of-scope -> direct_answer ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+#                                        ┌─ context-only -> context_answer -> add_memory ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+#                                        ├─ out-of-scope -> END(handle_query 内直接作答) ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 # START -> recall_memory -> handle_query ┤                                                                                                                                                              END
 #                                        └─ in-scope -> cache_lookup ┬─ 命中 -> add_memory ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 #                                                                    └─ 未命中 -> [Send x N] recall -> recall_fuse -> rerank -> dynamic_topk -> expand ┬─ generate -> cache_store -> add_memory ─┘
@@ -92,7 +91,11 @@ builder.add_edge("recall_memory", "handle_query")
 builder.add_conditional_edges(
     "handle_query",
     _route_after_query,
-    {"recall": "cache_lookup", "direct_answer": "direct_answer"},
+    {
+        "recall": "cache_lookup",
+        "end": END,
+        "context_answer": "context_answer",
+    },
 )
 builder.add_conditional_edges(
     "cache_lookup",
@@ -110,11 +113,23 @@ builder.add_conditional_edges(
 )
 builder.add_edge("generate", "cache_store")
 builder.add_edge("cache_store", "add_memory")
+builder.add_edge("context_answer", "add_memory")
 builder.add_edge("add_memory", END)
-builder.add_edge("direct_answer", END)
 builder.add_edge("no_results", END)
 
 graph = builder.compile()
+
+
+def build_initial_state(session_id: str, query: str) -> MyState:
+    """构造生产与评测共用的初始状态。"""
+    return {
+        "session_id": session_id,
+        "raw_query": query,
+        "is_out_of_scope": False,
+        "answer_from_context": False,
+        "sub_queries": [],
+        "sub_recall_results": [],
+    }
 
 
 async def invoke(
@@ -127,13 +142,7 @@ async def invoke(
     updates 通道(state 增量)不再下发。config 用于透传 LangChain 回调(如 Langfuse)。
     """
     async for mode, chunk in graph.astream(
-        {
-            "session_id": session_id,
-            "raw_query": query,
-            "is_out_of_scope": False,
-            "sub_queries": [],
-            "sub_recall_results": [],
-        },
+        build_initial_state(session_id, query),
         context=context,
         stream_mode=["custom"],
         config=config,

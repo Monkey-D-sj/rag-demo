@@ -1,231 +1,274 @@
-"""答案忠实度离线评测 CLI。
+"""真实生产流水线答案评测 CLI。"""
 
-用法：
-    uv run rag-eval-answer                    # 评测
-    uv run rag-eval-answer --update-baseline  # 更新基线
-    uv run rag-eval-answer --gate             # 门禁检查
-    uv run rag-eval-answer --generate         # 生成静态评测集
-"""
+from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import sys
 from datetime import datetime, timezone
-from rag.common.logging import get_logger
+from urllib.parse import urlsplit
+
 from rag.config import get_settings
 from rag.eval import DATASETS_DIR, EVAL_DIR
 from rag.eval.answer_harness import (
-    generate_answer_dataset,
-    load_answer_golden,
-    run_faithfulness_eval,
+    build_real_collection_context,
+    collect_answers,
+    dataset_fingerprint,
+    sample_fingerprint,
+    score_answers,
+    select_answer_items,
 )
-from rag.eval.harness import build_retriever, load_golden
-from rag.eval.metrics import gate
-from rag.eval.style import bold, delta_str, failure, green, phase, red, success
+from rag.eval.answer_metrics import aggregate_answer_metrics
+from rag.eval.artifacts import (
+    assert_resume_compatible,
+    create_run,
+    list_items,
+    load_manifest,
+    make_run_id,
+    run_dir,
+    update_manifest,
+    write_item,
+)
+from rag.eval.harness import load_golden
+from rag.prompts.answer_eval import PROMPT_VERSION
 
-logger = get_logger()
-
-ANSWER_GOLDEN_PATH = DATASETS_DIR / "answer_golden.jsonl"
-BASELINE_PATH = EVAL_DIR / "answer_baseline.json"
-HISTORY_DIR = EVAL_DIR / "history"
 GOLDEN_PATH = DATASETS_DIR / "retrieval_golden.jsonl"
+HISTORY_DIR = EVAL_DIR / "history"
+BASELINE_PATH = EVAL_DIR / "baseline.json"
 
 
-def _git_sha() -> str:
-    import subprocess
-
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            text=True, stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        return "unknown"
+def _host(url: str) -> str:
+    parsed = urlsplit(url or "")
+    return f"{parsed.scheme}://{parsed.hostname}" if parsed.scheme and parsed.hostname else ""
 
 
-def _load_baseline() -> dict:
-    try:
-        with open(BASELINE_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
+def _prompt_hash() -> str:
+    from rag.prompts.answer_eval import CITATION_JUDGE_PROMPT
+    return hashlib.sha256(CITATION_JUDGE_PROMPT.encode()).hexdigest()
 
 
-def _save_history(result: dict) -> None:
-    """保存评测历史记录，文件名加 faithfulness- 前缀。"""
-    HISTORY_DIR.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    name = f"faithfulness-{ts}.json"
-    record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "commit": _git_sha(),
-        "aggregate": result["aggregate"],
-        "per_query": result["per_query"],
+def _manifest(settings, items, run_id) -> dict:
+    judge_name = settings.EVAL_JUDGE_MODEL_NAME or settings.MODEL_NAME
+    judge_url = settings.EVAL_JUDGE_MODEL_URL or settings.MODEL_URL
+    return {
+        "schema_version": 2, "run_id": run_id, "status": "collecting",
+        "dataset_fingerprint": dataset_fingerprint(GOLDEN_PATH),
+        "sample_fingerprint": sample_fingerprint(items), "selected_ids": [x.id for x in items],
+        "limit": len(items), "seed": settings.EVAL_RANDOM_SEED,
+        "generator_model": settings.MODEL_NAME, "generator_url_host": _host(settings.MODEL_URL),
+        "judge_model": judge_name, "judge_url_host": _host(judge_url),
+        "embedding_model": settings.EMBEDDING_MODEL, "reranker_model": settings.RERANK_MODEL if settings.RERANK_ENABLED else "disabled",
+        "judge_prompt_version": PROMPT_VERSION, "judge_prompt_hash": _prompt_hash(),
+        "ragas_version": _ragas_version(), "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    filepath = HISTORY_DIR / name
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(record, f, ensure_ascii=False, indent=2)
-    print(f"评测结果已保存 -> {filepath}\n")
 
 
-def _print_result(result: dict) -> None:
-    """打印 faithfulness 评分报告。"""
-    agg = result["aggregate"]
-    f_mean = agg["faithfulness"]
-
-    print(bold("📊 Faithfulness 忠实度评测"))
-    print(f"  均分: {f_mean:.4f}  (共 {len(result['per_query'])} 条)")
-    print()
-
-    # 列出最低分的几条（最可疑的幻觉案例）
-    per_query = sorted(result["per_query"], key=lambda x: x["faithfulness"])
-    if per_query:
-        print(bold("🔍 低分条目 (可能存在幻觉):"))
-        for pq in per_query[:5]:
-            flag = red("✗") if pq["faithfulness"] < 0.5 else ""
-            print(f"  {flag} [{pq['id']}] {pq['query'][:60]:60s}  faithfulness={pq['faithfulness']:.4f}")
-        print()
+def _ragas_version() -> str:
+    try:
+        import ragas
+        return getattr(ragas, "__version__", "unknown")
+    except Exception:
+        return "unavailable"
 
 
-def _print_gate(result: dict, baseline: dict) -> bool:
-    """门禁检查：faithfulness 均值不得显著退化。"""
-    cur_agg = result["aggregate"]
-    passed, deltas = gate(cur_agg, baseline, keys=("faithfulness",))
+class _EvalEmbeddings:
+    def __init__(self, embedding):
+        self.embedding = embedding
 
-    if not deltas:
-        print(red("  ❌ 无 baseline 数据，请先 --update-baseline 生成基线\n"))
-        return False
+    async def aembed_query(self, text):
+        return (await self.embedding.embed([text]))[0]
 
-    print(bold("🚦 门禁检查"))
-    for key, d in deltas.items():
-        cur = d["current"]
-        base = d["baseline"]
-        rel = d["rel_drop"]
-        icon = green("✓") if rel <= 0.03 else red("✗")
-        print(f"  {icon} {key}: {cur:.4f}  base={base:.4f}  {delta_str(-rel)}")
-    print()
+    async def aembed_documents(self, texts):
+        return await self.embedding.embed(list(texts))
 
-    if passed:
-        print(success(" 门禁通过 — faithfulness 不低于 baseline"))
-    else:
-        print(failure(" 门禁不通过 — faithfulness 显著退化"))
-    print()
+    def embed_query(self, text):
+        raise NotImplementedError("eval 使用异步 embedding")
 
-    return passed
+    def embed_documents(self, texts):
+        raise NotImplementedError("eval 使用异步 embedding")
 
 
-async def _run_generate() -> int:
-    """从 retrieval_golden.jsonl 生成 answer_golden.jsonl。"""
+def _build_scorers(settings):
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+    from ragas.llms import LangchainLLMWrapper
+    from ragas.metrics import Faithfulness, ResponseRelevancy
     from rag.models.normal import NormalModel
 
-    settings = get_settings()
-    golden_items = load_golden(GOLDEN_PATH)
-    if not golden_items:
-        raise SystemExit("retrieval_golden.jsonl 为空，请先构造评测集")
-
-    pool, retriever = await build_retriever(settings)
-    llm = NormalModel(settings)
-
-    try:
-        print(phase("生成静态 Faithfulness 评测集"))
-        print(f"  数据源: {GOLDEN_PATH}")
-        print(f"  输出:   {ANSWER_GOLDEN_PATH}")
-        print()
-
-        count = await generate_answer_dataset(
-            golden_items, retriever, llm, ANSWER_GOLDEN_PATH,
-        )
-
-        if count == 0:
-            raise SystemExit("生成失败：0 条成功")
-        return count
-    finally:
-        await pool.close()
+    judge_configured = bool(settings.EVAL_JUDGE_MODEL_NAME)
+    if judge_configured:
+        judge_chat = ChatOpenAI(api_key=settings.EVAL_JUDGE_MODEL_KEY, model=settings.EVAL_JUDGE_MODEL_NAME,
+                                base_url=settings.EVAL_JUDGE_MODEL_URL, temperature=0, seed=settings.EVAL_RANDOM_SEED,
+                                timeout=settings.EVAL_JUDGE_TIMEOUT_SECONDS, max_retries=0)
+        judge_llm = LangchainLLMWrapper(judge_chat)
+        citation_judge = _StructuredJudge(judge_chat)
+    else:
+        citation_judge = NormalModel(settings)
+        judge_llm = LangchainLLMWrapper(citation_judge._model)
+    # ResponseRelevancy 在 RAGAS 0.2.x 的相似度计算是同步接口，使用同一 endpoint
+    # 的 LangChain OpenAI adapter，避免在正在运行的 event loop 中嵌套 asyncio.run。
+    embedding = OpenAIEmbeddings(api_key=settings.EMBEDDING_KEY, base_url=settings.EMBEDDING_URL,
+                                 model=settings.EMBEDDING_MODEL, dimensions=settings.EMBEDDING_DIM,
+                                 max_retries=0)
+    wrapped_embedding = LangchainEmbeddingsWrapper(embedding)
+    return Faithfulness(llm=judge_llm), ResponseRelevancy(llm=judge_llm, embeddings=wrapped_embedding), citation_judge
 
 
-async def _run_eval() -> dict:
-    """加载静态评测集，跑 faithfulness 评分。"""
-    from langchain_openai import ChatOpenAI
-    from ragas.llms import LangchainLLMWrapper
+class _StructuredJudge:
+    def __init__(self, model):
+        self.model = model
 
-    if not ANSWER_GOLDEN_PATH.exists():
-        raise SystemExit(
-            f"评测集不存在: {ANSWER_GOLDEN_PATH}\n"
-            "请先运行: uv run rag-eval-answer --generate"
-        )
+    async def ainvoke_structured(self, messages, schema):
+        return await self.model.with_structured_output(schema, method="json_mode").ainvoke(messages)
 
-    settings = get_settings()
-    items = load_answer_golden(ANSWER_GOLDEN_PATH)
-    if not items:
-        raise SystemExit(f"评测集为空: {ANSWER_GOLDEN_PATH}")
-    print(f"评测集加载完成: {len(items)} 条\n")
 
-    # 构造 RAGAS 所需的 LLM（独立 ChatOpenAI 实例，不经过 NormalModel 重试）
-    ragas_llm = LangchainLLMWrapper(
-        ChatOpenAI(
-            api_key=settings.MODEL_KEY,
-            model=settings.MODEL_NAME,
-            base_url=settings.MODEL_URL,
-            temperature=0,
-            seed=42,
-        )
-    )
+async def _score_run(run_id: str, settings, *, rescore: bool = False) -> dict:
+    manifest = load_manifest(HISTORY_DIR, run_id)
+    if manifest.get("status") == "completed" and not rescore:
+        raise ValueError("completed run 默认不可重复执行，请使用 --rescore")
+    artifacts = list_items(HISTORY_DIR, run_id)
+    if not artifacts:
+        raise ValueError(f"run 没有可评分 item: {run_id}")
+    update_manifest(HISTORY_DIR, run_id, status="scoring")
+    def needs_score(item):
+        score = item.get("score") or {}
+        if not score:
+            return True
+        for name in ("faithfulness", "answer_relevance", "citation_accuracy"):
+            if score.get(f"{name}_error"):
+                return True
+            if score.get(name) is None and not (name == "citation_accuracy" and score.get("citation_diagnostics", {}).get("factual_claim_count") == 0):
+                return True
+        return False
 
-    print(phase("开始 Faithfulness 评测"))
-    result = await run_faithfulness_eval(items, ragas_llm)
-    print(success(" 评测完成\n"))
-
+    pending = list(artifacts) if rescore else [item for item in artifacts if needs_score(item)]
+    if pending:
+        faithfulness, relevance, citation = _build_scorers(settings)
+        result = await score_answers(pending, faithfulness_scorer=faithfulness, relevance_scorer=relevance,
+                                     citation_judge=citation, semaphore=asyncio.Semaphore(settings.EVAL_JUDGE_CONCURRENCY),
+                                     timeout=settings.EVAL_JUDGE_TIMEOUT_SECONDS, max_attempts=settings.EVAL_JUDGE_MAX_ATTEMPTS)
+    else:
+        scores = [item["score"] for item in artifacts]
+        result = {"per_query": scores, **aggregate_answer_metrics(scores)}
+    if pending and len(pending) != len(artifacts):
+        fresh = {row["id"]: row for row in result["per_query"]}
+        merged = [fresh.get(item["id"], item.get("score", {"id": item["id"], "query": item.get("query", "")})) for item in artifacts]
+        result = {"per_query": merged, **aggregate_answer_metrics(merged)}
+    for row in result["per_query"]:
+        item = next((x for x in artifacts if x["id"] == row["id"]), {"id": row["id"], "query": row["query"]})
+        if rescore and item.get("score"):
+            item.setdefault("score_attempts", []).append(item["score"])
+        item["score"] = row
+        write_item(HISTORY_DIR, run_id, row["id"], item)
+    collection_success = sum(1 for x in artifacts if not x.get("collection_error")) / len(artifacts)
+    judge_success = {key: result["counts"][key]["success_rate"] for key in result["counts"]}
+    result["generation_success_rate"] = collection_success
+    result["judge_success_rate"] = judge_success
+    run_dir(HISTORY_DIR, run_id).joinpath("result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_lines = ["# Answer Evaluation", "", "| Metric | Score | Evaluated | Skipped |", "|---|---:|---:|---:|"]
+    for key, value in result["metrics"].items():
+        counts = result["counts"][key]
+        report_lines.append(f"| {key} | {'N/A' if value is None else f'{value:.4f}'} | {counts['evaluated_count']} | {counts['skipped_count']} |")
+    report_lines.append(f"\nGeneration success rate: {collection_success:.4f}")
+    run_dir(HISTORY_DIR, run_id).joinpath("report.md").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    update_manifest(HISTORY_DIR, run_id, status="completed" if collection_success == 1 and all(v >= .95 for v in judge_success.values()) else "partial",
+                    generation_success_rate=collection_success, judge_success_rate=judge_success)
     return result
 
 
+async def _collect_run(args, settings) -> str:
+    all_items = load_golden(GOLDEN_PATH)
+    run_id = args.resume or make_run_id(HISTORY_DIR)
+    if args.resume:
+        manifest = load_manifest(HISTORY_DIR, run_id)
+        selected = select_answer_items(all_items, ids=list(manifest.get("selected_ids", [])))
+        expected = _manifest(settings, selected, run_id)
+        expected["limit"] = manifest.get("limit", len(selected))
+        expected["seed"] = manifest.get("seed", settings.EVAL_RANDOM_SEED)
+        assert_resume_compatible(manifest, expected)
+    else:
+        ids = [x.strip() for x in args.ids.split(",")] if args.ids else None
+        selected = select_answer_items(all_items, limit=args.limit, seed=args.seed, ids=ids, all_items=args.all_items)
+        create_run(HISTORY_DIR, run_id, _manifest(settings, selected, run_id))
+    graph_obj, context, pool = await build_real_collection_context(settings)
+    try:
+        existing = {x.get("id") for x in list_items(HISTORY_DIR, run_id)}
+        async def save(row):
+            write_item(HISTORY_DIR, run_id, row["id"], row)
+        current_items = list_items(HISTORY_DIR, run_id)
+        current_by_id = {x.get("id"): x for x in current_items}
+        pending = [x for x in selected if x.id not in existing or current_by_id.get(x.id, {}).get("collection_error")]
+        await collect_answers(pending, graph_obj=graph_obj, context=context, run_id=run_id, on_item=save)
+    finally:
+        await pool.close()
+    update_manifest(HISTORY_DIR, run_id, status="collected")
+    return run_id
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="真实 LangGraph 生成端评测")
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--ids")
+    parser.add_argument("--all", action="store_true", dest="all_items")
+    parser.add_argument("--collect-only", action="store_true")
+    parser.add_argument("--score-only", action="store_true")
+    parser.add_argument("--run-id")
+    parser.add_argument("--resume")
+    parser.add_argument("--rescore")
+    parser.add_argument("--gate", action="store_true")
+    parser.add_argument("--update-baseline", action="store_true")
+    parser.add_argument("--accept-regression", action="store_true")
+    parser.add_argument("--reason")
+    return parser
+
+
 def main() -> None:
-    import sys
-
     from rag.common.platform import setup_windows_loop
-
     setup_windows_loop()
-    # Windows 控制台默认 GBK 无法输出 Unicode（如 ▶），统一设 UTF-8
     if sys.stdout.encoding != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")
-
-    parser = argparse.ArgumentParser(description="答案忠实度离线评测（基于 RAGAS Faithfulness）")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--update-baseline", action="store_true",
-                       help="用本次结果更新 baseline")
-    group.add_argument("--gate", action="store_true",
-                       help="门禁模式：对比 baseline，退化则 exit(1)")
-    group.add_argument("--generate", action="store_true",
-                       help="从 retrieval_golden.jsonl 生成静态评测集")
-    args = parser.parse_args()
-
-    # ── 生成模式 ──
-    if args.generate:
-        asyncio.run(_run_generate())
-        return
-
-    # ── 评测模式 ──
-    result = asyncio.run(_run_eval())
-
-    # ── 持久化 ──
-    _save_history(result)
-
-    # ── 输出 ──
-    _print_result(result)
-
-    # ── 更新 baseline ──
+    args = _parser().parse_args()
+    if sum(bool(x) for x in (args.score_only, args.resume, args.rescore)) > 1:
+        raise SystemExit("--score-only、--resume、--rescore 不能同时使用")
+    if args.run_id and not args.score_only:
+        raise SystemExit("--run-id 只能与 --score-only 一起使用")
+    if args.accept_regression and (not args.update_baseline or not (args.reason or "").strip()):
+        raise SystemExit("--accept-regression 需要 --update-baseline 和非空 --reason")
+    settings = get_settings()
+    settings_seed = settings.EVAL_RANDOM_SEED if args.seed is None else args.seed
+    args.seed = settings_seed
+    if args.score_only:
+        run_id = args.run_id or args.resume
+        if not run_id:
+            raise SystemExit("--score-only 需要 --run-id <run-id>")
+    elif args.rescore:
+        run_id = args.rescore
+    else:
+        run_id = asyncio.run(_collect_run(args, settings))
+        print(f"collect 完成: {run_id}")
+        if args.collect_only:
+            return
+    result = asyncio.run(_score_run(run_id, settings, rescore=bool(args.rescore)))
+    print(json.dumps(result.get("metrics", {}), ensure_ascii=False, indent=2))
+    from rag.eval.baseline import comparable_provenance, gate_answer_metrics, load_baseline, update_baseline
+    manifest = load_manifest(HISTORY_DIR, run_id)
+    provenance = {key: manifest.get(key) for key in ("sample_fingerprint", "selected_ids", "seed", "generator_model", "judge_model", "embedding_model", "judge_prompt_hash")}
+    baseline = load_baseline(BASELINE_PATH)
+    answer_gate = gate_answer_metrics(result.get("metrics", {}), baseline.get("answer", {}).get("metrics", {}), baseline.get("answer", {}).get("floors", {}))
+    if baseline.get("provenance"):
+        compatible, _ = comparable_provenance(provenance, baseline["provenance"])
+        answer_gate["passed"] = answer_gate["passed"] and compatible
     if args.update_baseline:
-        new_baseline = {"faithfulness": result["aggregate"]["faithfulness"]}
-        with open(BASELINE_PATH, "w", encoding="utf-8") as f:
-            json.dump(new_baseline, f, ensure_ascii=False, indent=2)
-        print(f"已更新 baseline -> {BASELINE_PATH}")
+        update_baseline(BASELINE_PATH, provenance=provenance, retrieval={}, answer_metrics=result["metrics"], run_id=run_id,
+                        reason=args.reason or "answer baseline update", accept_regression=args.accept_regression)
         return
-
-    # ── 门禁 ──
-    if args.gate:
-        baseline = _load_baseline()
-        passed = _print_gate(result, baseline)
-        if not passed:
-            raise SystemExit(1)
+    if args.gate and not answer_gate["passed"]:
+        raise SystemExit(1)
+    if result.get("generation_success_rate") != 1.0 or any(v < .95 for v in result.get("judge_success_rate", {}).values()):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -41,6 +41,19 @@ def test_semantic_cache_table_exists():
             cur.execute(
                 "SELECT indexname FROM pg_indexes"
                 " WHERE tablename = 'semantic_cache'"
-                " AND indexname = 'idx_semantic_cache_embedding'"
+                " AND indexname = 'idx_semantic_cache_session_created_at'"
             )
             assert cur.fetchone() is not None
+            cur.execute(
+                "SELECT column_name, is_nullable, data_type"
+                " FROM information_schema.columns"
+                " WHERE table_name = 'semantic_cache'"
+                " AND column_name = 'session_id'"
+            )
+            assert cur.fetchone() == ("session_id", "NO", "uuid")
+            cur.execute(
+                "SELECT indexname FROM pg_indexes"
+                " WHERE tablename = 'semantic_cache'"
+                " AND indexname = 'idx_semantic_cache_embedding'"
+            )
+            assert cur.fetchone() is None

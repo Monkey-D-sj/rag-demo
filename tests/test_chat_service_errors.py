@@ -6,15 +6,14 @@ from rag.common.exception import CircuitOpenError
 
 
 class _MockRewriteResult:
-    """使 handle_query 成功返回 is_out_of_scope=True,路由到 direct_answer 触发 LLM 错误。"""
+    """使 handle_query 成功返回 is_out_of_scope=True,由 handle_query 内流式作答触发 LLM 错误。"""
     rewrite_query = "你好"
     is_out_of_scope = True
-    entities = []
     sub_queries = []
 
 
 class _ExplodingLLM:
-    """astream 抛熔断异常的假 LLM; ainvoke_structured 正常返回以便路由到 direct_answer。"""
+    """astream 抛熔断异常的假 LLM; ainvoke_structured 正常返回以触发 handle_query 内流式作答。"""
 
     async def ainvoke_structured(self, messages, schema):
         return _MockRewriteResult()
@@ -41,7 +40,7 @@ class _NoopMemory:
 
 
 class _NoopRetriever:
-    async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+    async def search(self, query, knowledge_base_ids=None, top_k=5):
         return []
 
     async def fetch_parent_contents(self, document_ids):

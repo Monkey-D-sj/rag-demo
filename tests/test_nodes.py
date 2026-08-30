@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 import rag.agent.nodes.add_memory.memory as add_memory_mod
-import rag.agent.nodes.generate.direct_answer as direct_answer_mod
 import rag.agent.nodes.generate.generate as generate_mod
 import rag.agent.nodes.generate.no_results as no_results_mod
 import rag.agent.nodes.query.query as query_mod
@@ -25,7 +24,7 @@ class _FakeLLM:
 
         self.calls.append(messages)
         return QueryRewriteOutput(
-            rewrite_query="rewritten", is_out_of_scope=False, entities=["孙悟空"]
+            rewrite_query="rewritten", is_out_of_scope=False
         )
 
 
@@ -106,6 +105,9 @@ async def test_handle_query_detects_out_of_scope(monkeypatch):
             self.calls.append(messages)
             return QueryRewriteOutput(rewrite_query="你好啊", is_out_of_scope=True)
 
+        async def astream(self, messages):
+            yield "你好呀"
+
     llm = _OutOfScopeLLM()
     runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
     state = {"session_id": "s1", "raw_query": "你好啊", "context": ""}
@@ -117,18 +119,60 @@ async def test_handle_query_detects_out_of_scope(monkeypatch):
     assert len(llm.calls) == 1
 
 
-async def test_handle_query_writes_entities(monkeypatch):
+async def test_handle_query_out_of_scope_clamps_skipped_fields(monkeypatch):
+    """短路命中(is_out_of_scope=true)时,即使 LLM 违反契约输出改写/拆解/会话语,节点也应钳为固定值。"""
     monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
-    llm = _FakeLLM()
-    runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
-    state = {"session_id": "s1", "raw_query": "他为什么大闹天宫", "context": ""}
+    from rag.agent.nodes.query.query import QueryRewriteOutput
 
-    out = await query_mod.handle_query(state, runtime)
+    class _NonCompliantLLM:
+        async def ainvoke_structured(self, messages, schema):
+            # 违反任务优先级:短路后仍输出任务二/三/四的内容
+            return QueryRewriteOutput(
+                rewrite_query="帮我写一个快速排序的完整实现",
+                is_out_of_scope=True,
+                answer_from_context=True,
+                sub_queries=["排序算法怎么写"],
+            )
 
-    assert out["query_entities"] == ["孙悟空"]
+        async def astream(self, messages):
+            yield "直接回答"
+
+    runtime = SimpleNamespace(context=ContextSchema(llm=_NonCompliantLLM(), memory_manager=None))
+    out = await query_mod.handle_query(
+        {"session_id": "s", "raw_query": "帮我写个快速排序", "context": ""}, runtime
+    )
+
+    assert out["is_out_of_scope"] is True
+    assert out["rewrite_query"] == "帮我写个快速排序"  # 任务三短路,回退原文
+    assert out["answer_from_context"] is False  # 任务二短路
+    assert out["sub_queries"] == []  # 任务四短路
 
 
-async def test_handle_query_failure_degrades_entities_empty(monkeypatch):
+async def test_handle_query_detects_context_only_question(monkeypatch):
+    """会话历史问题应标记为仅依据上下文回答。"""
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    class _ContextLLM:
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(
+                rewrite_query="我第一次讲了啥",
+                is_out_of_scope=False,
+                answer_from_context=True,
+            )
+
+    runtime = SimpleNamespace(context=ContextSchema(llm=_ContextLLM(), memory_manager=None))
+    out = await query_mod.handle_query(
+        {"session_id": "s1", "raw_query": "我第一次讲了啥", "context": "用户：我叫小明"},
+        runtime,
+    )
+
+    assert out["answer_from_context"] is True
+    assert out["is_out_of_scope"] is False
+
+
+async def test_handle_query_failure_degrades_to_raw_query(monkeypatch):
     monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
 
     class _BoomLLM:
@@ -140,8 +184,9 @@ async def test_handle_query_failure_degrades_entities_empty(monkeypatch):
 
     out = await query_mod.handle_query(state, runtime)
 
-    assert out["query_entities"] == []
     assert out["rewrite_query"] == "q"
+    assert out["is_out_of_scope"] is False
+    assert out["sub_queries"] == []
 
 
 async def test_handle_query_sub_queries_clamped_to_three(monkeypatch):
@@ -213,28 +258,28 @@ async def test_handle_query_failure_degrades_sub_queries_empty(monkeypatch):
     assert out["sub_queries"] == []
 
 
-async def test_direct_answer_uses_direct_prompt(monkeypatch):
-    """direct_answer 节点应使用直接回答 prompt，不依赖知识库内容。"""
+async def test_handle_query_streams_out_of_scope_answer(monkeypatch):
+    """范围外查询在 handle_query 内直接流式作答,使用直接回答 prompt。"""
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
     captured_messages = []
     monkeypatch.setattr(
-        direct_answer_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+        query_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
     )
 
     class _CaptureLLM:
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(rewrite_query="你好啊", is_out_of_scope=True)
+
         async def astream(self, messages):
             captured_messages.extend(messages)
             yield "直接回答"
 
     llm = _CaptureLLM()
-    runtime = SimpleNamespace(
-        context=ContextSchema(llm=llm, memory_manager=None)
-    )
-    state = {
-        "session_id": "s1",
-        "raw_query": "你好啊",
-    }
+    runtime = SimpleNamespace(context=ContextSchema(llm=llm, memory_manager=None))
+    state = {"session_id": "s1", "raw_query": "你好啊", "context": ""}
 
-    out = await direct_answer_mod.direct_answer(state, runtime)
+    out = await query_mod.handle_query(state, runtime)
 
     assert out["generated"] == "直接回答"
     # 确认使用了 direct_system_prompt 而非 kb_system_prompt
@@ -245,35 +290,35 @@ async def test_direct_answer_uses_direct_prompt(monkeypatch):
     assert "知识库内容无关" in system_content or "直接基于你的知识" in system_content
 
 
-async def test_direct_answer_does_not_persist(monkeypatch):
-    """direct_answer 不写回记忆（闲聊/无关问题无上下文价值）。"""
+async def test_context_answer_uses_conversation_context(monkeypatch):
+    """上下文回答节点应把会话上下文传给 LLM。"""
+    import rag.agent.nodes.generate.context_answer as context_answer_mod
+
+    captured_messages = []
     monkeypatch.setattr(
-        direct_answer_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
+        context_answer_mod, "get_stream_writer", lambda: (lambda *a, **k: None)
     )
 
-    class _SpyMM:
-        def __init__(self):
-            self.added = []
-
-        async def add_message(self, session_id, text, metadata=None):
-            self.added.append(("add_message", session_id, text, metadata))
-
-        async def add(self, session_id, text, metadata=None):
-            self.added.append(("add", session_id, text, metadata))
-
-    class _StreamLLM:
+    class _CaptureLLM:
         async def astream(self, messages):
-            yield "兜底回答"
+            captured_messages.extend(messages)
+            yield "你第一次说的是：我叫小明。"
 
-    mm = _SpyMM()
     runtime = SimpleNamespace(
-        context=ContextSchema(llm=_StreamLLM(), memory_manager=mm)
+        context=ContextSchema(llm=_CaptureLLM(), memory_manager=None)
     )
-    state = {"session_id": "s1", "raw_query": "你好"}
+    out = await context_answer_mod.context_answer(
+        {
+            "session_id": "s1",
+            "raw_query": "我第一次讲了啥",
+            "context": "用户：我叫小明\nAI：你好，小明。",
+        },
+        runtime,
+    )
 
-    await direct_answer_mod.direct_answer(state, runtime)
-
-    assert mm.added == []  # 不写记忆
+    assert out["generated"] == "你第一次说的是：我叫小明。"
+    system_content = captured_messages[0].content
+    assert "我叫小明" in system_content
 
 
 async def test_route_after_query_in_scope():
@@ -284,11 +329,17 @@ async def test_route_after_query_in_scope():
     assert wf._route_after_query({}) == "recall"  # 缺失时默认走检索
 
 
-async def test_route_after_query_out_of_scope():
-    """知识库范围外查询路由到 direct_answer。"""
+def test_route_after_query_context_only_skips_recall():
     import rag.agent.workflow as wf
 
-    assert wf._route_after_query({"is_out_of_scope": True}) == "direct_answer"
+    assert wf._route_after_query({"answer_from_context": True}) == "context_answer"
+
+
+async def test_route_after_query_out_of_scope():
+    """知识库范围外查询由 handle_query 直接作答,路由直达 END。"""
+    import rag.agent.workflow as wf
+
+    assert wf._route_after_query({"is_out_of_scope": True}) == "end"
 
 
 async def test_recall_searches_kb_with_rewrite_query(monkeypatch):
@@ -300,7 +351,7 @@ async def test_recall_searches_kb_with_rewrite_query(monkeypatch):
         def __init__(self):
             self.calls = []
 
-        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
             self.calls.append((query, knowledge_base_ids))
             return [{"text": "KB1"}]
 
@@ -308,32 +359,12 @@ async def test_recall_searches_kb_with_rewrite_query(monkeypatch):
     runtime = SimpleNamespace(
         context=ContextSchema(llm=None, memory_manager=None, retriever=retriever)
     )
-    state = {"sub_query": "rw", "entities": []}
+    state = {"sub_query": "rw"}
 
     out = await kb_recall_mod.recall(state, runtime)
 
     assert out["sub_recall_results"] == [[{"text": "KB1"}]]
     assert retriever.calls[0][0] == "rw"
-
-
-async def test_recall_passes_entities_to_retriever(monkeypatch):
-    monkeypatch.setattr(kb_recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
-
-    class _Ret:
-        def __init__(self):
-            self.calls = []
-
-        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
-            self.calls.append((query, entities))
-            return []
-
-    ret = _Ret()
-    runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=ret))
-    state = {"sub_query": "rq", "entities": ["孙悟空"]}
-
-    await kb_recall_mod.recall(state, runtime)
-
-    assert ret.calls == [("rq", ["孙悟空"])]
 
 
 async def test_recall_no_retriever_yields_empty(monkeypatch):
@@ -343,7 +374,7 @@ async def test_recall_no_retriever_yields_empty(monkeypatch):
     runtime = SimpleNamespace(
         context=ContextSchema(llm=None, memory_manager=None, retriever=None)
     )
-    state = {"sub_query": "rw", "entities": []}
+    state = {"sub_query": "rw"}
 
     out = await kb_recall_mod.recall(state, runtime)
 
@@ -358,16 +389,16 @@ async def test_recall_send_payload_contract(monkeypatch):
         def __init__(self):
             self.calls = []
 
-        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
-            self.calls.append((query, entities))
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
+            self.calls.append(query)
             return [{"id": 1, "text": "KB1"}]
 
     r = _R()
     runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=r))
 
-    out = await kb_recall_mod.recall({"sub_query": "sq", "entities": ["e1"]}, runtime)
+    out = await kb_recall_mod.recall({"sub_query": "sq"}, runtime)
 
-    assert r.calls == [("sq", ["e1"])]
+    assert r.calls == ["sq"]
     assert out == {"sub_recall_results": [[{"id": 1, "text": "KB1"}]]}
 
 
@@ -376,11 +407,11 @@ async def test_recall_branch_failure_degrades_empty(monkeypatch):
     monkeypatch.setattr(kb_recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
 
     class _Boom:
-        async def search(self, query, knowledge_base_ids=None, top_k=5, entities=None):
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
             raise RuntimeError("pg down")
 
     runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=_Boom()))
-    out = await kb_recall_mod.recall({"sub_query": "sq", "entities": []}, runtime)
+    out = await kb_recall_mod.recall({"sub_query": "sq"}, runtime)
 
     assert out == {"sub_recall_results": [[]]}
 
@@ -389,7 +420,7 @@ async def test_recall_no_retriever_degrades_empty(monkeypatch):
     monkeypatch.setattr(kb_recall_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
     runtime = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, retriever=None))
 
-    out = await kb_recall_mod.recall({"sub_query": "sq", "entities": []}, runtime)
+    out = await kb_recall_mod.recall({"sub_query": "sq"}, runtime)
 
     assert out == {"sub_recall_results": [[]]}
 
@@ -1034,12 +1065,12 @@ class _FakeCache:
         self.lookup_calls = []
         self.store_calls = []
 
-    async def lookup(self, query, session_id=None):
+    async def lookup(self, query, *, session_id):
         self.lookup_calls.append((query, session_id))
         return self.hit
 
-    async def store(self, query, answer, citations):
-        self.store_calls.append((query, answer, citations))
+    async def store(self, query, answer, citations, *, session_id):
+        self.store_calls.append((query, answer, citations, session_id))
 
 
 def _cache_settings(monkeypatch, mod, enabled=True):
@@ -1110,6 +1141,19 @@ async def test_cache_lookup_miss_leaves_state(monkeypatch):
     assert "generated" not in out
 
 
+async def test_cache_lookup_missing_session_is_fail_closed(monkeypatch):
+    _cache_settings(monkeypatch, cache_lookup_mod, enabled=True)
+    cache = _FakeCache(hit={"answer": "不应返回", "citations": []})
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+
+    for session_id in (None, ""):
+        state = {"raw_query": "q", "session_id": session_id}
+        out = await cache_lookup_mod.cache_lookup(state, runtime)
+        assert cache.lookup_calls == []
+        assert "cache_hit" not in out
+
+
 async def test_cache_store_writes_generated(monkeypatch):
     _cache_settings(monkeypatch, cache_store_mod, enabled=True)
     cache = _FakeCache()
@@ -1122,7 +1166,7 @@ async def test_cache_store_writes_generated(monkeypatch):
 
     await cache_store_mod.cache_store(state, runtime)
 
-    assert cache.store_calls == [("改写q", "新答案", [{"index": 2}])]
+    assert cache.store_calls == [("改写q", "新答案", [{"index": 2}], "s1")]
 
 
 async def test_cache_store_skips_empty_answer(monkeypatch):
@@ -1145,5 +1189,20 @@ async def test_cache_store_disabled_passthrough(monkeypatch):
     state = {"session_id": "s1", "raw_query": "q", "generated": "a"}
 
     await cache_store_mod.cache_store(state, runtime)
+
+    assert cache.store_calls == []
+
+
+async def test_cache_store_missing_session_is_fail_closed(monkeypatch):
+    _cache_settings(monkeypatch, cache_store_mod, enabled=True)
+    cache = _FakeCache()
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=None, memory_manager=None, semantic_cache=cache))
+
+    for session_id in (None, ""):
+        state = {
+            "session_id": session_id, "raw_query": "q", "generated": "答案",
+        }
+        await cache_store_mod.cache_store(state, runtime)
 
     assert cache.store_calls == []

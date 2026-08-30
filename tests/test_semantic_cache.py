@@ -53,11 +53,19 @@ async def test_lookup_hit(monkeypatch):
     hit = await cache.lookup("孙悟空是谁", session_id="s1")
 
     assert hit == {"answer": "答案A", "citations": [{"index": 1}]}
-    assert any("hit_count" in sql for sql, _ in cur.calls)
+    lookup_sql, lookup_params = cur.calls[0]
+    assert "session_id = %(session_id)s" in lookup_sql
+    assert lookup_params["session_id"] == "s1"
+    update_sql, update_params = cur.calls[1]
+    assert "hit_count" in update_sql
+    assert "id = %(id)s" in update_sql
+    assert "session_id = %(session_id)s" in update_sql
+    assert update_params == {"id": 1, "session_id": "s1"}
 
     rec = recorder.record.call_args[0][0]
     assert rec.call_type == "semantic_cache"
     assert rec.status == "cache_hit"
+    assert rec.session_id == "s1"
 
 
 async def test_lookup_miss_below_threshold(monkeypatch):
@@ -65,7 +73,7 @@ async def test_lookup_miss_below_threshold(monkeypatch):
     row = {"id": 1, "answer": "答案A", "citations": [], "similarity": 0.90}
     cache, cur = _make_cache(_FakeCursor(rows=[row]), monkeypatch)
 
-    assert await cache.lookup("孙悟空是谁") is None
+    assert await cache.lookup("孙悟空是谁", session_id="s1") is None
     assert not any("hit_count" in sql for sql, _ in cur.calls)
 
 
@@ -76,15 +84,18 @@ async def test_lookup_db_error_degrades_to_none(monkeypatch):
             raise RuntimeError("db down")
 
     cache, _ = _make_cache(_BoomCursor(), monkeypatch)
-    assert await cache.lookup("孙悟空是谁") is None
+    assert await cache.lookup("孙悟空是谁", session_id="s1") is None
 
 
 # ── store ──
 
 async def test_store_inserts_when_no_near_duplicate(monkeypatch):
     cache, cur = _make_cache(_FakeCursor(rows=[None]), monkeypatch)
-    await cache.store("q", "answer", [{"index": 1}])
-    assert any("INSERT INTO semantic_cache" in sql for sql, _ in cur.calls)
+    await cache.store("q", "answer", [{"index": 1}], session_id="s1")
+    insert_sql, insert_params = cur.calls[1]
+    assert "INSERT INTO semantic_cache" in insert_sql
+    assert "session_id" in insert_sql
+    assert insert_params["session_id"] == "s1"
 
 
 async def test_store_skips_near_duplicate(monkeypatch):
@@ -92,7 +103,10 @@ async def test_store_skips_near_duplicate(monkeypatch):
         _FakeCursor(rows=[{"id": 1, "answer": "old", "citations": [], "similarity": 0.98}]),
         monkeypatch,
     )
-    await cache.store("q", "answer", [])
+    await cache.store("q", "answer", [], session_id="s1")
+    lookup_sql, lookup_params = cur.calls[0]
+    assert "session_id = %(session_id)s" in lookup_sql
+    assert lookup_params["session_id"] == "s1"
     assert not any("INSERT INTO" in sql for sql, _ in cur.calls)
 
 
@@ -102,7 +116,33 @@ async def test_store_db_error_swallowed(monkeypatch):
             raise RuntimeError("db down")
 
     cache, _ = _make_cache(_BoomCursor(), monkeypatch)
-    await cache.store("q", "a", [])  # 不抛异常即通过
+    await cache.store("q", "a", [], session_id="s1")  # 不抛异常即通过
+
+
+async def test_lookup_and_store_require_session_id(monkeypatch):
+    cache, _ = _make_cache(_FakeCursor(), monkeypatch)
+
+    import pytest
+
+    with pytest.raises(TypeError):
+        await cache.lookup("q")
+    with pytest.raises(TypeError):
+        await cache.store("q", "a", [])
+
+
+async def test_same_query_is_scoped_to_each_session(monkeypatch):
+    first_cur = _FakeCursor(rows=[None])
+    first_cache, _ = _make_cache(first_cur, monkeypatch)
+    await first_cache.store("q", "answer A", [], session_id="session-a")
+
+    second_cur = _FakeCursor(rows=[None])
+    second_cache, _ = _make_cache(second_cur, monkeypatch)
+    await second_cache.store("q", "answer B", [], session_id="session-b")
+
+    assert first_cur.calls[0][1]["session_id"] == "session-a"
+    assert first_cur.calls[1][1]["session_id"] == "session-a"
+    assert second_cur.calls[0][1]["session_id"] == "session-b"
+    assert second_cur.calls[1][1]["session_id"] == "session-b"
 
 
 # ── 管理操作 ──

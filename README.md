@@ -41,12 +41,14 @@
 | **对象存储** | MinIO |
 | **任务队列** | ARQ（异步文档入库 + 自愈 cron） |
 | **数据库迁移** | Alembic |
-| **语义缓存** | pgvector 相似度命中 + 入库失效 + TTL(SEMANTIC_CACHE_*) |
+| **语义缓存** | 按 session 隔离的精确相似度命中 + 入库全局失效 + TTL(SEMANTIC_CACHE_*) |
 | **LLM 治理** | 滑动窗口 RPM + 并发 ZSET 信号量 + Redis 三态熔断 + 成本统计 |
 | **可观测性** | Langfuse（LLM 追踪）+ Loki + Grafana（日志聚合） |
 | **前端** | React 18 + TypeScript + TailwindCSS + Vite |
 | **容器化** | Docker Compose（9 个服务一体化部署） |
-| **评测** | 自建 golden 数据集 + 4 指标 + 8 路分轨 + 基线门禁 |
+| **评测** | 自建 retrieval golden + 检索分轨 + 生成三指标 + 基线门禁 |
+
+语义缓存只在同一 `session_id` 内做精确向量相似度匹配，默认保留 7 天；文档入库成功后会全局清空缓存，删除会话时由数据库外键级联删除该会话的缓存。缓存不可用时自动降级为正常检索与生成。
 
 ## 快速开始
 
@@ -91,7 +93,7 @@ RAG_RELOAD=1 uv run rag-api
 uv run rag-worker
 ```
 
-**评测（检索质量回归检查）：**
+**评测（检索与真实生成质量回归检查）：**
 
 ```bash
 # 首次运行需先建立基线
@@ -100,6 +102,13 @@ uv run rag-eval --update-baseline
 uv run rag-eval
 # 含范围判断分类评测
 uv run rag-eval --classify
+# 使用同一 retrieval golden 的真实 LangGraph 生成评测（默认稳定抽样 15 条）
+uv run rag-eval-answer
+# 可恢复的两阶段运行
+uv run rag-eval-answer --collect-only
+uv run rag-eval-answer --resume <run-id>
+# 检索 + serving contexts + faithfulness/relevance/citation 综合门禁
+uv run rag-eval-suite
 ```
 
 API 默认监听 `http://localhost:8000`，Swagger 文档在 `http://localhost:8000/docs`。
@@ -161,7 +170,8 @@ curl -X POST http://localhost:8000/chat/stream \
 ## Agent 流水线
 
 ```
-                                     ┌─ out-of-scope → direct_answer ─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                     ┌─ context-only → context_answer → add_memory ────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                     ├─ out-of-scope → END(handle_query 内直接作答) ───────────────────────────────────────────────────────────────────────────────────────────────┤
 START → recall_memory → handle_query ┤                                                                                                                                           END
                                      └─ in-scope → cache_lookup ┬─ 命中 → add_memory ───────────────────────────────────────────────────────────────────────────────────────────────┘
                                                                 └─ 未命中 → recall → neighbor_expand → rerank → dynamic_topk → parent_expand ┬─ generate → cache_store → add_memory ─┘
@@ -171,17 +181,17 @@ START → recall_memory → handle_query ┤                                    
 | # | 节点 | 职责 |
 |---|---|---|
 | 1 | `recall_memory` | 短期记忆（Redis 最近 N 轮）+ 长期记忆（pgvector 语义搜索）并行召回 |
-| 2 | `handle_query` | LLM 结构化输出：范围判断（闲聊/编程→直接兜底）+ 指代消解改写 + 实体抽取(图召回用) |
-| 3 | `cache_lookup` | 语义缓存查询(pgvector 相似度命中,全局范围);命中直接下发缓存答案与引用,跳过检索与生成 |
+| 2 | `handle_query` | LLM 结构化输出：范围判断（闲聊/编程→直接兜底）+ 指代消解改写 + 会话上下文路由 |
+| 3 | `cache_lookup` | 语义缓存查询(按 session 隔离的精确相似度匹配);命中直接下发缓存答案与引用,跳过检索与生成 |
 | 4 | `recall` | 向量（pgvector cosine）+ BM25（ParadeDB jieba）+ 图谱(Neo4j 1 跳,条件启用) 三路并发检索,RRF 融合 |
 | 5 | `neighbor_expand` | Sentence Window:拉取同文档相邻 chunk 扩展上下文 |
 | 6 | `rerank` | Qwen3-Rerank 语义重排序（可选） |
 | 7 | `dynamic_topk` | 相邻分差法动态 top-k 截断 |
 | 8 | `parent_expand` | Parent-Child:chunk 按 doc_id 展开为父文档全文 |
 | 9a | `generate` | 基于检索上下文 + LLM 流式生成，token 级 SSE 推送 |
-| 9b | `direct_answer` | 范围外直接大模型知识回答 |
+| 9b | `context_answer` | 仅依据会话上下文回答 |
 | 9c | `no_results` | 召回为空时返回兜底话术，不调用 LLM |
-| 10 | `cache_store` | 生成完成后将答案与引用回写语义缓存,best-effort |
+| 10 | `cache_store` | 生成完成后将答案与引用回写当前 session 的语义缓存,best-effort |
 | 11 | `add_memory` | 本轮问答持久化写入短期（Redis）+ 长期（pgvector）记忆 |
 
 ## 记忆系统
@@ -228,6 +238,12 @@ uv run rag-eval
 uv run rag-eval --classify
 ```
 
+## 生成评测
+
+`rag-eval-answer` 从 `retrieval_golden.jsonl` 稳定抽样，通过生产 LangGraph 完整流水线真实生成答案，再评估 `faithfulness`、`answer_relevance` 和 `citation_accuracy`。每次运行保存在 `rag/eval/history/<run-id>/`，包含 manifest、逐题答案/上下文、评分和报告；`--score-only` 或 `--resume` 可在采集与评分中断后继续。`rag-eval-suite` 额外对最终送入生成节点的 contexts 计算 serving retrieval，并按 ID 输出检索好但生成差的题目。
+
+生成评测默认不写死 hard floor；首轮人工校准后使用显式 baseline 更新。模型、样本或 Judge prompt provenance 不一致时不会静默比较。
+
 ## 项目结构
 
 ```
@@ -271,9 +287,14 @@ rag-demo/
 │   │   ├── store.py            #   数据库 CRUD
 │   │   ├── retriever.py        #   混合检索(向量+BM25+图→RRF 融合)
 │   │   └── entity_extraction.py#   实体抽取
-│   ├── eval/                   # 检索评测
+│   ├── eval/                   # 检索与生成评测
 │   │   ├── run.py              #   CLI 入口 (rag-eval)
 │   │   ├── harness.py          #   评测编排 (8 路分轨)
+│   │   ├── answer_harness.py   #   真实 LangGraph 采集与三指标评分
+│   │   ├── answer_metrics.py   #   答案预处理与引用指标
+│   │   ├── artifacts.py        #   可恢复 history artifact
+│   │   ├── baseline.py         #   v1/v2 baseline 与门禁
+│   │   ├── suite_run.py        #   综合评测入口
 │   │   ├── metrics.py          #   指标计算 + 门禁
 │   │   ├── datasets/           #   golden 集
 │   │   └── baseline.json       #   基线数据

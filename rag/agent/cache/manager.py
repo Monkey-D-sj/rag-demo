@@ -13,14 +13,15 @@ _LOOKUP_SQL = """
 SELECT id, answer, citations,
        1 - (embedding <=> %(vec)s) AS similarity
 FROM semantic_cache
-WHERE created_at > now() - make_interval(hours => %(ttl)s)
+WHERE session_id = %(session_id)s
+  AND created_at > now() - make_interval(hours => %(ttl)s)
 ORDER BY embedding <=> %(vec)s
 LIMIT 1
 """
 
 _INSERT_SQL = """
-INSERT INTO semantic_cache (question, answer, citations, embedding)
-VALUES (%(question)s, %(answer)s, %(citations)s, %(vec)s)
+INSERT INTO semantic_cache (session_id, question, answer, citations, embedding)
+VALUES (%(session_id)s, %(question)s, %(answer)s, %(citations)s, %(vec)s)
 """
 
 
@@ -41,7 +42,7 @@ async def purge_expired(pool, ttl_hours: int) -> None:
 
 
 class SemanticCache:
-    """答案级语义缓存:以 rewrite_query 的 embedding 为 key,pgvector 相似度命中。
+    """答案级语义缓存:以 rewrite_query 的 embedding 为 key,按 session 隔离命中。
 
     lookup/store 内部吞掉一切异常(缓存故障绝不阻断主链路):
     lookup 失败返回 None(降级为未命中),store 失败仅记 warning。
@@ -65,22 +66,27 @@ class SemanticCache:
     async def _embed_query(self, query: str) -> Vector:
         return Vector((await self._embedding.embed([query]))[0])
 
-    async def _nearest_by_vec(self, cur, vec: Vector) -> dict | None:
-        await cur.execute(_LOOKUP_SQL, {"vec": vec, "ttl": self._ttl_hours})
+    async def _nearest_by_vec(
+        self, cur, vec: Vector, *, session_id: str
+    ) -> dict | None:
+        await cur.execute(
+            _LOOKUP_SQL,
+            {"session_id": session_id, "vec": vec, "ttl": self._ttl_hours},
+        )
         return await cur.fetchone()
 
-    async def lookup(self, query: str, session_id: str | None = None) -> dict | None:
+    async def lookup(self, query: str, *, session_id: str) -> dict | None:
         start = time.monotonic()
         try:
             async with get_cursor(self._pool) as cur:
                 vec = await self._embed_query(query)
-                row = await self._nearest_by_vec(cur, vec)
+                row = await self._nearest_by_vec(cur, vec, session_id=session_id)
                 if row is None or row["similarity"] < self._threshold:
                     return None
                 await cur.execute(
                     "UPDATE semantic_cache SET hit_count = hit_count + 1"
-                    " WHERE id = %(id)s",
-                    {"id": row["id"]},
+                    " WHERE id = %(id)s AND session_id = %(session_id)s",
+                    {"id": row["id"], "session_id": session_id},
                 )
         except Exception:  # noqa: BLE001 - 缓存故障降级为未命中
             logger.warning("语义缓存查询失败,降级为未命中", exc_info=True)
@@ -98,15 +104,23 @@ class SemanticCache:
         logger.info("语义缓存命中: similarity=%.4f", row["similarity"])
         return {"answer": row["answer"], "citations": row["citations"]}
 
-    async def store(self, query: str, answer: str, citations: list) -> None:
+    async def store(
+        self,
+        query: str,
+        answer: str,
+        citations: list,
+        *,
+        session_id: str,
+    ) -> None:
         try:
             async with get_cursor(self._pool) as cur:
                 vec = await self._embed_query(query)
-                row = await self._nearest_by_vec(cur, vec)
+                row = await self._nearest_by_vec(cur, vec, session_id=session_id)
                 if row is not None and row["similarity"] >= self._threshold:
                     return  # 已有近重复条目,跳过插入防膨胀
                 # 并发未命中可能同时通过查重并各插一行,属已知可容忍竞态:lookup 取最近邻,TTL/清空兜底增长
                 await cur.execute(_INSERT_SQL, {
+                    "session_id": session_id,
                     "question": query,
                     "answer": answer,
                     "citations": Json(citations),

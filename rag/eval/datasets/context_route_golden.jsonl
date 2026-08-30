@@ -1,0 +1,10 @@
+{"id": "r001", "query": "我第一次讲了啥", "context": "用户：我叫小明。\nAI：你好，小明。\n用户：我第一次讲了啥", "expected": "context_answer"}
+{"id": "r002", "query": "我刚才说了什么", "context": "用户：帮我看看这个报错。\nAI：这是 SQLAlchemy 的会话报错。\n用户：我刚才说了什么", "expected": "context_answer"}
+{"id": "r003", "query": "你上一条回答是什么", "context": "用户：什么是 RAG？\nAI：RAG 是检索增强生成。\n用户：你上一条回答是什么", "expected": "context_answer"}
+{"id": "r004", "query": "我之前提到的那个人是谁", "context": "用户：我老板姓王。\nAI：好的。\n用户：我之前提到的那个人是谁", "expected": "context_answer"}
+{"id": "r005", "query": "把我刚才那句话重复一下", "context": "用户：帮我写一个快速排序。\nAI：好的。\n用户：把我刚才那句话重复一下", "expected": "context_answer"}
+{"id": "r006", "query": "你好啊", "context": "用户：你好。\nAI：你好，有什么可以帮你？", "expected": "out_of_scope"}
+{"id": "r007", "query": "帮我用Python写个冒泡排序", "context": "用户：你好。\nAI：你好，有什么可以帮你？", "expected": "out_of_scope"}
+{"id": "r008", "query": "今天北京天气怎么样", "context": "用户：你好。\nAI：你好，有什么可以帮你？", "expected": "out_of_scope"}
+{"id": "r009", "query": "孙悟空为什么被压在五行山下", "context": "用户：什么是七十二变？\nAI：七十二变是菩提祖师传给孙悟空的法术。", "expected": "retrieval"}
+{"id": "r010", "query": "金箍棒有多重", "context": "用户：什么是七十二变？\nAI：七十二变是菩提祖师传给孙悟空的法术。", "expected": "retrieval"}

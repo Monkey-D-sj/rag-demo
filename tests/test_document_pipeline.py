@@ -289,3 +289,64 @@ async def test_ingest_marks_graph_skipped_when_disabled(monkeypatch):
 
     await pipe.ingest_document(ctx, "d1")
     assert ("d1", "skipped") in skipped
+
+
+# ── content 并入表格(parent-child 全文保留表格信息)──
+
+
+def test_append_tables_no_tables_returns_full_text():
+    assert pipe._append_tables("正文内容", []) == "正文内容"
+
+
+def test_append_tables_merges_table_embed_text():
+    tb1 = SimpleNamespace(embed_text="表1摘要\n| a | b |")
+    tb2 = SimpleNamespace(embed_text="表2摘要")
+    assert pipe._append_tables("正文", [tb1, tb2]) == "正文\n\n表1摘要\n| a | b |\n\n表2摘要"
+
+
+async def test_ingest_content_merges_tables(monkeypatch):
+    """表格块应并入 documents.content,expand 全文替换时表格信息不丢。"""
+    captured = {}
+
+    async def fake_claim(pool, doc_id):
+        return True
+
+    async def fake_get_document(pool, doc_id):
+        return {"object_key": "k", "content_type": "txt", "knowledge_base_id": "kb", "filename": "test.txt"}
+
+    async def fake_store_complete(pool, doc_id, kb, embedded):
+        pass
+
+    async def fake_set_graph_status(pool, doc_id, status, error=None):
+        pass
+
+    async def fake_get_object(*a, **k):
+        return b"data"
+
+    async def fake_set_doc_content(pool, doc_id, full_text):
+        captured["content"] = full_text
+
+    class _TB:
+        embed_text = "表格摘要：危险化学品\n| 品名 | CAS号 |\n| 阿片 | 3351-95-1 |"
+        meta = {}
+
+    async def fake_extract_tables(src, ct):
+        return [_TB()]
+
+    monkeypatch.setattr(pipe.store, "claim_for_processing", fake_claim)
+    monkeypatch.setattr(pipe.store, "get_document", fake_get_document)
+    monkeypatch.setattr(pipe.store, "store_chunks_and_complete", fake_store_complete)
+    monkeypatch.setattr(pipe.store, "set_graph_status", fake_set_graph_status)
+    monkeypatch.setattr(pipe.store, "set_document_content", fake_set_doc_content)
+    monkeypatch.setattr(pipe, "get_object", fake_get_object)
+    monkeypatch.setattr(pipe, "parse", lambda data, ct: "full text")
+    monkeypatch.setattr(pipe, "chunk", lambda strategy, text, size, overlap: [("a", {})])
+    monkeypatch.setattr(pipe, "_extract_tables", fake_extract_tables)
+
+    ctx = {"pg": None, "minio": None, "bucket": "b", "embedding": _FakeEmbedding(),
+           "settings": _settings(), "redis": None}
+
+    await pipe.ingest_document(ctx, "d1")
+
+    # filename 去扩展名后作标题前缀,与正文一起 + 表格嵌入文本
+    assert captured["content"] == "《test》full text\n\n表格摘要：危险化学品\n| 品名 | CAS号 |\n| 阿片 | 3351-95-1 |"

@@ -107,13 +107,22 @@ class Settings(BaseSettings):
     RERANK_DYNAMIC_TOPK_DEFAULT: int = 5
     RERANK_DYNAMIC_TOPK_RATIO: float = 0.7
 
-    # ── 语义缓存(handle_query 之后,答案级,全局作用域)──
+    # ── 语义缓存(handle_query 之后,答案级,session 作用域)──
     SEMANTIC_CACHE_ENABLED: bool = False
     SEMANTIC_CACHE_SIM_THRESHOLD: float = 0.95  # 余弦相似度命中阈值
     SEMANTIC_CACHE_TTL_HOURS: int = 168         # 缓存有效期(7 天)
 
     # ── 查询分解(handle_query 拆子问题 → Send 扇出并行检索)──
     QUERY_DECOMPOSITION_ENABLED: bool = False  # 关闭时路由恒单分支,行为与现状一致
+
+    # ── 生成评测（可选，不影响 API 启动）──
+    EVAL_JUDGE_MODEL_NAME: str = ""
+    EVAL_JUDGE_MODEL_URL: str = ""
+    EVAL_JUDGE_MODEL_KEY: str = ""
+    EVAL_JUDGE_CONCURRENCY: int = Field(default=2, ge=1)
+    EVAL_JUDGE_TIMEOUT_SECONDS: int = Field(default=60, ge=1)
+    EVAL_JUDGE_MAX_ATTEMPTS: int = Field(default=3, ge=1)
+    EVAL_RANDOM_SEED: int = 42
 
     # ── Loki ──
     LOKI_ENABLED: bool = False
@@ -134,6 +143,16 @@ class Settings(BaseSettings):
                 f for f in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD", "NEO4J_DATABASE")
                 if not getattr(self, f)
             ]
+        eval_fields = (
+            self.EVAL_JUDGE_MODEL_NAME,
+            self.EVAL_JUDGE_MODEL_URL,
+            self.EVAL_JUDGE_MODEL_KEY,
+        )
+        if any(eval_fields) and not all(eval_fields):
+            raise ValueError(
+                "EVAL_JUDGE_MODEL_NAME、EVAL_JUDGE_MODEL_URL、EVAL_JUDGE_MODEL_KEY "
+                "必须全空或全部设置"
+            )
         if missing:
             raise ValueError(
                 f"缺少必要配置: {', '.join(missing)}，请检查 .env 文件"

@@ -37,6 +37,7 @@ rag-api = "rag.__main__:main"
 rag-worker = "rag.worker.main:run"
 rag-eval = "rag.eval.run:main"
 rag-eval-answer = "rag.eval.answer_run:main"
+rag-eval-suite = "rag.eval.suite_run:main"
 
 [dependency-groups]
 dev = [
@@ -51,7 +52,7 @@ asyncio_mode = "auto"
 addopts = "-m 'not integration and not eval'"
 markers = [
     "integration: 需要 docker compose 起的 pg/redis（默认不跑）",
-    "eval: 检索层评测，需 pg + embedding + 已 seed 的评测 KB（默认不跑）",
+    "eval: 检索或生成评测，需外部模型/数据库（默认不跑）",
 ]
 
 [tool.hatch.build.targets.wheel]

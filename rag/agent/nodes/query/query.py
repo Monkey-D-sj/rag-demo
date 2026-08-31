@@ -1,3 +1,5 @@
+from datetime import date
+
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
@@ -15,7 +17,7 @@ class QueryRewriteOutput(BaseModel):
     """查询改写、范围判断和会话上下文问答路由的结构化输出。"""
 
     rewrite_query: str = Field(
-        description="改写后的独立查询文本；如果 is_out_of_scope 为 true，返回原始查询原文"
+        description="语义归一化后的独立检索查询；如果 is_out_of_scope 为 true，返回原始查询原文"
     )
     is_out_of_scope: bool = Field(
         description="查询是否与知识库无关（闲聊、编程、通用常识等可直接由大模型回答的问题）"
@@ -49,6 +51,7 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
                 SystemMessage(content=system_prompt),
                 HumanMessage(
                     content=f"""
+当前日期: {date.today().isoformat()}
 用户查询: {state["raw_query"]}
 上下文: {state["context"]}
 """

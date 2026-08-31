@@ -89,6 +89,17 @@ async def test_handle_query_structured_output_in_scope(monkeypatch):
     assert out["rewrite_query"] == "rewritten"
     assert out["is_out_of_scope"] is False
     assert len(llm.calls) == 1
+    assert "当前日期:" in llm.calls[0][1].content
+
+
+def test_query_rewrite_prompt_normalizes_time_and_retrieval_vocabulary():
+    """查询改写层负责时间与检索词归一化，retriever 不承载领域同义词规则。"""
+    from rag.prompts.query import system_prompt
+
+    assert "时间归一化" in system_prompt
+    assert "检索词归一化" in system_prompt
+    assert "2026年贷款贴息、贷款补贴、贷款扶持政策" in system_prompt
+    assert "不得臆造" in system_prompt
 
 
 async def test_handle_query_detects_out_of_scope(monkeypatch):

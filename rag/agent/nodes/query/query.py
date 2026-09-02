@@ -33,6 +33,14 @@ class QueryRewriteOutput(BaseModel):
         default_factory=list,
         description="复杂问题拆解出的独立子查询(每个自包含,实体显式,无指代);简单问题或 is_out_of_scope 为 true 时返回空数组",
     )
+    needs_agent: bool = Field(
+        default=False,
+        description=(
+            "问题是否必须先检索到某文档、看到其内容后再据此去查另一处(如法规'参照 X 执行'、"
+            "先归类再定适用许可、跨版本逐条对照),单次检索无法覆盖;"
+            "is_out_of_scope 或 answer_from_context 命中时必须为 false"
+        ),
+    )
 
 
 async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MyState:
@@ -71,6 +79,12 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
         )
         # 上限 3 个,防 LLM 超量输出;短路命中时钳空;开关关闭时路由侧不消费,此处不做 gate
         state["sub_queries"] = [] if result.is_out_of_scope else result.sub_queries[:3]
+        # 多步/交叉引用判定:短路(范围外/会话上下文)命中时钳 false,不信任 LLM 对被跳过任务的输出
+        state["needs_agent"] = bool(
+            not result.is_out_of_scope
+            and not state.get("answer_from_context", False)
+            and getattr(result, "needs_agent", False)
+        )
         if state["sub_queries"] and not result.is_out_of_scope:
             writer(stream_event(
                 StreamEventType.STATUS, f"已拆解为 {len(state['sub_queries'])} 个子问题"
@@ -88,6 +102,7 @@ async def handle_query(state: MyState, runtime: Runtime[ContextSchema]) -> MySta
         state["is_out_of_scope"] = False
         state["answer_from_context"] = False
         state["sub_queries"] = []
+        state["needs_agent"] = False
         return state
 
     # 范围外直接作答：不检索、不写回记忆。流式放在 try/except 之外，

@@ -143,6 +143,7 @@ async def test_handle_query_out_of_scope_clamps_skipped_fields(monkeypatch):
                 is_out_of_scope=True,
                 answer_from_context=True,
                 sub_queries=["排序算法怎么写"],
+                needs_agent=True,  # 违反契约:短路后仍输出任务五
             )
 
         async def astream(self, messages):
@@ -157,6 +158,42 @@ async def test_handle_query_out_of_scope_clamps_skipped_fields(monkeypatch):
     assert out["rewrite_query"] == "帮我写个快速排序"  # 任务三短路,回退原文
     assert out["answer_from_context"] is False  # 任务二短路
     assert out["sub_queries"] == []  # 任务四短路
+    assert out["needs_agent"] is False  # 任务五短路
+
+
+async def test_handle_query_needs_agent_passthrough_and_context_clamp(monkeypatch):
+    """普通在范围内多步问题透传 needs_agent=true;会话上下文命中时即使 LLM 置 true 也钳 false。"""
+    monkeypatch.setattr(query_mod, "get_stream_writer", lambda: (lambda *a, **k: None))
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    class _AgentLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(**self.kw)
+
+    # 场景1:范围在多步问题 → 透传
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=_AgentLLM(rewrite_query="rw", is_out_of_scope=False, needs_agent=True),
+        memory_manager=None,
+    ))
+    out = await query_mod.handle_query(
+        {"session_id": "s", "raw_query": "《A办法》参照《B条例》按哪个门槛", "context": ""}, runtime
+    )
+    assert out["needs_agent"] is True
+    assert out["is_out_of_scope"] is False
+
+    # 场景2:answer_from_context 命中但 LLM 违反契约置 true → 钳 false
+    runtime = SimpleNamespace(context=ContextSchema(
+        llm=_AgentLLM(rewrite_query="rw", is_out_of_scope=False, answer_from_context=True, needs_agent=True),
+        memory_manager=None,
+    ))
+    out = await query_mod.handle_query(
+        {"session_id": "s", "raw_query": "我刚才说了什么", "context": "ctx"}, runtime
+    )
+    assert out["answer_from_context"] is True
+    assert out["needs_agent"] is False
 
 
 async def test_handle_query_detects_context_only_question(monkeypatch):
@@ -198,6 +235,7 @@ async def test_handle_query_failure_degrades_to_raw_query(monkeypatch):
     assert out["rewrite_query"] == "q"
     assert out["is_out_of_scope"] is False
     assert out["sub_queries"] == []
+    assert out["needs_agent"] is False  # 降级默认走主链
 
 
 async def test_handle_query_sub_queries_clamped_to_three(monkeypatch):

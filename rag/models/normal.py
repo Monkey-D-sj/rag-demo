@@ -85,6 +85,9 @@ class NormalModel(ChatModel):
         self._model = ChatOpenAI(
             api_key=settings.MODEL_KEY,
             model=settings.MODEL_NAME,
+            extra_body={
+                "thinking": {"type": "disabled"}
+            },
             base_url=settings.MODEL_URL,
             temperature=0,
             seed=42,

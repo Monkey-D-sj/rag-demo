@@ -1,6 +1,7 @@
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
+from rag.agent.nodes.agent.agent import agent_execute
 from rag.agent.nodes.add_memory.memory import add_memory
 from rag.agent.nodes.cache_lookup.lookup import cache_lookup
 from rag.agent.nodes.cache_store.store import cache_store
@@ -19,12 +20,20 @@ from rag.config import get_settings
 
 
 def _route_after_query(state: MyState) -> str:
-    """条件边：会话上下文问题走 context_answer；范围外问题已由 handle_query 直接作答，直达 END。"""
+    """条件边：会话上下文问题走 context_answer；范围外问题已由 handle_query 直接作答，直达 END；
+    多步/交叉引用且开关开启时走 agent 分支，其余进缓存查找。"""
     if state.get("answer_from_context"):
         return "context_answer"
     if state.get("is_out_of_scope"):
         return "end"
+    if get_settings().AGENT_MODE_ENABLED and state.get("needs_agent"):
+        return "agent"
     return "recall"
+
+
+def _route_after_agent(state: MyState) -> str:
+    """条件边：agent 攒到上下文走生成；空结果降级回 cache_lookup 走正常召回链(现成 degrade)。"""
+    return "generate" if state.get("recall_vec_results") else "cache_lookup"
 
 
 def _route_after_cache(state: MyState):
@@ -57,6 +66,8 @@ builder = StateGraph(MyState, context_schema=ContextSchema)
 builder.add_node("recall_memory", recall_memory)
 # 查询改写 + 范围判断
 builder.add_node("handle_query", handle_query)
+# agent 多步工具检索(仅 needs_agent 且开关开启时进入)
+builder.add_node("agent_execute", agent_execute)
 # 语义缓存查询(handle_query 之后,命中跳过检索链与生成)
 builder.add_node("cache_lookup", cache_lookup)
 # 语义缓存回写(generate 之后,best-effort)
@@ -95,7 +106,13 @@ builder.add_conditional_edges(
         "recall": "cache_lookup",
         "end": END,
         "context_answer": "context_answer",
+        "agent": "agent_execute",
     },
+)
+builder.add_conditional_edges(
+    "agent_execute",
+    _route_after_agent,
+    {"generate": "generate", "cache_lookup": "cache_lookup"},
 )
 builder.add_conditional_edges(
     "cache_lookup",

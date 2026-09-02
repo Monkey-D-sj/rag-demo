@@ -14,6 +14,10 @@ async def cache_store(state: MyState, runtime: Runtime[ContextSchema]) -> MyStat
     if not settings.SEMANTIC_CACHE_ENABLED or cache is None:
         return state
 
+    # agent 产物不回写全局语义缓存,避免不同路由语义污染主链
+    if state.get("agent_skip_cache"):
+        return state
+
     answer = state.get("generated")
     if not answer:
         return state

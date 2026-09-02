@@ -167,7 +167,8 @@ async def test_invoke_decomposition_fans_out(monkeypatch):
     from rag.agent.nodes.query.query import QueryRewriteOutput
 
     monkeypatch.setattr(
-        wf_mod, "get_settings", lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=True)
+        wf_mod, "get_settings",
+        lambda: SimpleNamespace(QUERY_DECOMPOSITION_ENABLED=True, AGENT_MODE_ENABLED=False),
     )
 
     class _DecomposeLLM:
@@ -275,6 +276,103 @@ def test_build_initial_state_defaults_agent_fields():
     s = build_initial_state("sid", "q")
     assert s["needs_agent"] is False
     assert s["agent_skip_cache"] is False
+
+
+# ── agent 分支路由 ──────────────────────────────────────────
+
+def test_route_after_query_agent_enabled(monkeypatch):
+    import rag.agent.workflow as wf_mod
+
+    monkeypatch.setattr(wf_mod, "get_settings", lambda: SimpleNamespace(AGENT_MODE_ENABLED=True))
+    assert wf_mod._route_after_query({"needs_agent": True}) == "agent"
+
+
+def test_route_after_query_agent_disabled_falls_to_recall(monkeypatch):
+    import rag.agent.workflow as wf_mod
+
+    monkeypatch.setattr(wf_mod, "get_settings", lambda: SimpleNamespace(AGENT_MODE_ENABLED=False))
+    assert wf_mod._route_after_query({"needs_agent": True}) == "recall"
+
+
+def test_route_after_query_context_and_scope_take_precedence(monkeypatch):
+    import rag.agent.workflow as wf_mod
+
+    monkeypatch.setattr(wf_mod, "get_settings", lambda: SimpleNamespace(AGENT_MODE_ENABLED=True))
+    assert wf_mod._route_after_query({"answer_from_context": True, "needs_agent": True}) == "context_answer"
+    assert wf_mod._route_after_query({"is_out_of_scope": True, "needs_agent": True}) == "end"
+
+
+def test_route_after_agent_routes_to_generate_or_cache_lookup():
+    from rag.agent.workflow import _route_after_agent
+
+    assert _route_after_agent({"recall_vec_results": [{"text": "x"}]}) == "generate"
+    assert _route_after_agent({"recall_vec_results": []}) == "cache_lookup"
+    assert _route_after_agent({}) == "cache_lookup"
+
+
+def test_graph_contains_agent_execute():
+    from rag.agent.workflow import graph
+
+    assert "agent_execute" in set(graph.get_graph().nodes)
+
+
+async def test_invoke_agent_path_degrades_to_mainline_when_no_tools(monkeypatch):
+    """agent 开关开启且 needs_agent 时进入 agent_execute;空结果降级回主链完成生成。"""
+    import rag.agent.workflow as wf_mod
+    from langchain_core.messages import AIMessage
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    monkeypatch.setattr(
+        wf_mod, "get_settings",
+        lambda: SimpleNamespace(AGENT_MODE_ENABLED=True, QUERY_DECOMPOSITION_ENABLED=False),
+    )
+
+    class _AgentLLM:
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(rewrite_query="rw", is_out_of_scope=False, needs_agent=True)
+
+        async def ainvoke_with_tools(self, messages, tools):
+            return AIMessage(content="证据已齐备")  # 不调工具 → 空结果 → 降级主链
+
+        async def astream(self, messages):
+            for tok in ("甲", "乙"):
+                yield tok
+
+    retriever = _FakeRetriever()
+    ctx = ContextSchema(llm=_AgentLLM(), memory_manager=_FakeMM(), retriever=retriever)
+
+    statuses: list[str] = []
+    messages: list[str] = []
+    async for event in wf_mod.invoke("s1", "q", ctx):
+        if event["type"] == "status":
+            statuses.append(event["data"])
+        elif event["type"] == "message":
+            messages.append(event["data"])
+
+    assert "深度检索中…" in statuses  # agent 分支确实进入
+    assert messages == ["甲", "乙"]  # 降级主链正常生成
+
+
+async def test_cache_store_skips_agent_answers(monkeypatch):
+    import rag.agent.nodes.cache_store.store as cs_mod
+
+    class _Cache:
+        def __init__(self):
+            self.stored = []
+
+        async def store(self, query, answer, citations, *, session_id):
+            self.stored.append((query, answer))
+
+    cache = _Cache()
+    monkeypatch.setattr(cs_mod, "get_settings", lambda: SimpleNamespace(SEMANTIC_CACHE_ENABLED=True))
+    ctx = SimpleNamespace(context=ContextSchema(llm=None, memory_manager=None, semantic_cache=cache))
+    state = {"session_id": "s", "generated": "x", "rewrite_query": "q", "citations": [], "agent_skip_cache": True}
+    await cs_mod.cache_store(state, ctx)
+    assert cache.stored == []  # agent 答案不写缓存
+
+    state.pop("agent_skip_cache")
+    await cs_mod.cache_store(state, ctx)
+    assert cache.stored == [("q", "x")]
 
 
 def test_graph_contains_recall_fuse():

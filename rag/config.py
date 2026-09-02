@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     # ── 查询分解(handle_query 拆子问题 → Send 扇出并行检索)──
     QUERY_DECOMPOSITION_ENABLED: bool = False  # 关闭时路由恒单分支,行为与现状一致
 
+    # ── Agent 分支(原生 function calling 有界工具循环,默认关)──
+    AGENT_MODE_ENABLED: bool = False  # 关闭时 needs_agent 判定被路由忽略,恒走主链
+    AGENT_MAX_STEPS: int = Field(default=3, ge=1)
+    AGENT_STEP_TIMEOUT_SECONDS: int = Field(default=30, ge=1)
+
     # ── 生成评测（可选，不影响 API 启动）──
     EVAL_JUDGE_MODEL_NAME: str = ""
     EVAL_JUDGE_MODEL_URL: str = ""

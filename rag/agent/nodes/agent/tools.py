@@ -14,6 +14,11 @@ from rag.common.logging import get_logger
 
 logger = get_logger()
 
+DOCUMENT_WINDOW_DEFAULT_CHARS = 4_000
+DOCUMENT_WINDOW_MAX_CHARS = 8_000
+TOOL_OBSERVATION_ROW_CHARS = 4_000
+TOOL_OBSERVATION_TOTAL_CHARS = 12_000
+
 
 # ── handler:返回统一行形 {text, filename, metadata, document_id, chunk_index?} ──
 
@@ -52,23 +57,43 @@ async def _kb_search(
 
 
 async def _doc_fetch(
-    context: ContextSchema, session_id: str, document_id: str,
+    context: ContextSchema,
+    session_id: str,
+    document_id: str,
+    offset: int = 0,
+    max_chars: int = DOCUMENT_WINDOW_DEFAULT_CHARS,
 ) -> list[dict]:
-    """按文档 ID 取全文(法规条款需看完整原文时用)。"""
+    """按文档 ID 取一个有界文本窗口；长文档通过 offset 分页读取。"""
     if context.retriever is None or not document_id:
         return []
+    try:
+        offset = max(int(offset), 0)
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        max_chars = min(max(int(max_chars), 500), DOCUMENT_WINDOW_MAX_CHARS)
+    except (TypeError, ValueError):
+        max_chars = DOCUMENT_WINDOW_DEFAULT_CHARS
     try:
         contents = await context.retriever.fetch_parent_contents([str(document_id)])
     except Exception:  # noqa: BLE001
         logger.warning("agent 工具 fetch_document 失败，返回空", exc_info=True)
         return []
-    text = (contents or {}).get(str(document_id), "")
-    if not text.strip():
+    full_text = (contents or {}).get(str(document_id), "")
+    if not full_text or offset >= len(full_text):
+        return []
+    end = min(offset + max_chars, len(full_text))
+    text = full_text[offset:end].strip()
+    if not text:
         return []
     return [{
         "text": text,
         "filename": str(document_id),
-        "metadata": {},
+        "metadata": {
+            "document_offset": offset,
+            "document_end": end,
+            "document_total_chars": len(full_text),
+        },
         "document_id": str(document_id),
         "chunk_index": None,
     }]
@@ -100,6 +125,13 @@ async def _mem_search(
     return out
 
 
+async def _finish_collection(
+    context: ContextSchema, session_id: str,
+) -> list[dict]:
+    """完成标志 handler；是否已有证据由执行器统一校验。"""
+    return []
+
+
 # ── 渲染:模型看到的 observation ──
 
 def _render(rows: list[dict]) -> str:
@@ -108,9 +140,25 @@ def _render(rows: list[dict]) -> str:
     parts = []
     for i, r in enumerate(rows, 1):
         title = r.get("filename") or "未知文档"
-        text = (r.get("text") or "")[:400]
-        parts.append(f"[{i}] 《{title}》\n{text}")
-    return "\n\n".join(parts)
+        text = (r.get("text") or "")[:TOOL_OBSERVATION_ROW_CHARS]
+        attrs = []
+        if r.get("document_id"):
+            attrs.append(f"document_id={r['document_id']}")
+        if r.get("chunk_index") is not None:
+            attrs.append(f"chunk_index={r['chunk_index']}")
+        meta = r.get("metadata") or {}
+        if "document_total_chars" in meta:
+            attrs.append(
+                "字符范围="
+                f"{meta.get('document_offset', 0)}-{meta.get('document_end', 0)}"
+                f"/{meta['document_total_chars']}"
+            )
+        suffix = f" ({', '.join(attrs)})" if attrs else ""
+        parts.append(f"[{i}] 《{title}》{suffix}\n{text}")
+    rendered = "\n\n".join(parts)
+    if len(rendered) > TOOL_OBSERVATION_TOTAL_CHARS:
+        return rendered[:TOOL_OBSERVATION_TOTAL_CHARS] + "\n…工具结果已截断"
+    return rendered
 
 
 # ── 工具与注册表 ──
@@ -125,9 +173,19 @@ def build_tools(context: ContextSchema, session_id: str) -> list[BaseTool]:
         return _render(rows)
 
     @tool
-    async def fetch_document(document_id: str) -> str:
-        """按文档 ID 获取该文档完整原文(需核对条款/参照指向的完整上下文时用)。文档 ID 来自检索结果的 document_id。"""
-        rows = await _doc_fetch(context, session_id, document_id=document_id)
+    async def fetch_document(
+        document_id: str,
+        offset: int = 0,
+        max_chars: int = DOCUMENT_WINDOW_DEFAULT_CHARS,
+    ) -> str:
+        """按文档 ID 获取有界原文窗口。ID 必须来自检索结果；长文档按返回的字符范围调整 offset 继续读取。"""
+        rows = await _doc_fetch(
+            context,
+            session_id,
+            document_id=document_id,
+            offset=offset,
+            max_chars=max_chars,
+        )
         return _render(rows)
 
     @tool
@@ -136,11 +194,22 @@ def build_tools(context: ContextSchema, session_id: str) -> list[BaseTool]:
         rows = await _mem_search(context, session_id, query=query)
         return _render(rows)
 
-    return [retrieve_kb, fetch_document, search_memory]
+    @tool
+    async def finish_evidence_collection() -> str:
+        """仅当工具已经返回回答所需的全部证据时调用，用于明确结束检索。"""
+        return "证据收集完成。"
+
+    return [
+        retrieve_kb,
+        fetch_document,
+        search_memory,
+        finish_evidence_collection,
+    ]
 
 
 HANDLERS = {
     "retrieve_kb": _kb_search,
     "fetch_document": _doc_fetch,
     "search_memory": _mem_search,
+    "finish_evidence_collection": _finish_collection,
 }

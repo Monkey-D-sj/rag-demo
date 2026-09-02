@@ -275,6 +275,7 @@ def test_build_initial_state_defaults_agent_fields():
 
     s = build_initial_state("sid", "q")
     assert s["needs_agent"] is False
+    assert s["agent_succeeded"] is False
     assert s["agent_skip_cache"] is False
 
 
@@ -305,7 +306,12 @@ def test_route_after_query_context_and_scope_take_precedence(monkeypatch):
 def test_route_after_agent_routes_to_generate_or_cache_lookup():
     from rag.agent.workflow import _route_after_agent
 
-    assert _route_after_agent({"recall_vec_results": [{"text": "x"}]}) == "generate"
+    assert _route_after_agent({
+        "agent_succeeded": True, "recall_vec_results": [{"text": "x"}],
+    }) == "generate"
+    assert _route_after_agent({
+        "agent_succeeded": False, "recall_vec_results": [{"text": "partial"}],
+    }) == "cache_lookup"
     assert _route_after_agent({"recall_vec_results": []}) == "cache_lookup"
     assert _route_after_agent({}) == "cache_lookup"
 
@@ -351,6 +357,98 @@ async def test_invoke_agent_path_degrades_to_mainline_when_no_tools(monkeypatch)
 
     assert "深度检索中…" in statuses  # agent 分支确实进入
     assert messages == ["甲", "乙"]  # 降级主链正常生成
+
+
+async def test_invoke_agent_two_hop_path_collects_both_sources(monkeypatch):
+    """确定性验证完整图的两跳工具链，不能靠主链降级蒙混通过。"""
+    import rag.agent.nodes.agent.agent as agent_mod
+    import rag.agent.workflow as wf_mod
+    from langchain_core.messages import AIMessage, ToolMessage
+    from rag.agent.nodes.query.query import QueryRewriteOutput
+
+    settings = SimpleNamespace(
+        AGENT_MODE_ENABLED=True,
+        QUERY_DECOMPOSITION_ENABLED=False,
+        AGENT_MAX_STEPS=3,
+        AGENT_MAX_TOOL_CALLS_PER_STEP=4,
+        AGENT_MAX_EVIDENCE_CHARS=24_000,
+        AGENT_TOTAL_TIMEOUT_SECONDS=30,
+    )
+    monkeypatch.setattr(wf_mod, "get_settings", lambda: settings)
+    monkeypatch.setattr(agent_mod, "get_settings", lambda: settings)
+
+    class _TwoHopLLM:
+        def __init__(self):
+            self.tool_rounds = 0
+            self.tool_messages = []
+
+        async def ainvoke_structured(self, messages, schema):
+            return QueryRewriteOutput(
+                rewrite_query="A办法引用的B条例实际门槛",
+                is_out_of_scope=False,
+                needs_agent=True,
+            )
+
+        async def ainvoke_with_tools(self, messages, tools):
+            self.tool_messages.append(list(messages))
+            self.tool_rounds += 1
+            if self.tool_rounds == 1:
+                return AIMessage(content="", tool_calls=[{
+                    "name": "retrieve_kb", "args": {"query": "A办法资质要求"},
+                    "id": "c1", "type": "tool_call",
+                }])
+            if self.tool_rounds == 2:
+                assert any(
+                    isinstance(m, ToolMessage) and "B条例" in m.content
+                    for m in messages
+                )
+                return AIMessage(content="", tool_calls=[{
+                    "name": "retrieve_kb", "args": {"query": "B条例注册资本门槛"},
+                    "id": "c2", "type": "tool_call",
+                }])
+            return AIMessage(content="", tool_calls=[{
+                "name": "finish_evidence_collection", "args": {},
+                "id": "finish", "type": "tool_call",
+            }])
+
+        async def astream(self, messages):
+            yield "最终答案"
+
+    class _TwoHopRetriever:
+        def __init__(self):
+            self.calls = []
+
+        async def search(self, query, knowledge_base_ids=None, top_k=5):
+            self.calls.append(query)
+            if query == "A办法资质要求":
+                return [{
+                    "text": "A办法规定资质要求参照B条例执行。", "filename": "A办法",
+                    "document_id": "A", "chunk_index": 1, "metadata": {},
+                }]
+            if query == "B条例注册资本门槛":
+                return [{
+                    "text": "B条例规定注册资本不得低于500万元。", "filename": "B条例",
+                    "document_id": "B", "chunk_index": 1, "metadata": {},
+                }]
+            raise AssertionError(f"意外回退主链查询: {query}")
+
+        async def fetch_parent_contents(self, document_ids):
+            return {}
+
+    llm = _TwoHopLLM()
+    retriever = _TwoHopRetriever()
+    ctx = ContextSchema(llm=llm, memory_manager=_FakeMM(), retriever=retriever)
+    messages, citations = [], []
+    async for event in wf_mod.invoke("s1", "那实际门槛呢", ctx):
+        if event["type"] == "message":
+            messages.append(event["data"])
+        elif event["type"] == "citations":
+            citations.extend(event["data"])
+
+    assert retriever.calls == ["A办法资质要求", "B条例注册资本门槛"]
+    assert llm.tool_rounds == 3
+    assert messages == ["最终答案"]
+    assert [c["document_title"] for c in citations] == ["A办法", "B条例"]
 
 
 async def test_cache_store_skips_agent_answers(monkeypatch):

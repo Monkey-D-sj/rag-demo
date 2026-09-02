@@ -32,8 +32,10 @@ def _route_after_query(state: MyState) -> str:
 
 
 def _route_after_agent(state: MyState) -> str:
-    """条件边：agent 攒到上下文走生成；空结果降级回 cache_lookup 走正常召回链(现成 degrade)。"""
-    return "generate" if state.get("recall_vec_results") else "cache_lookup"
+    """只有明确收敛且证据非空才生成；其他退出原因均降级正常召回链。"""
+    if state.get("agent_succeeded") and state.get("recall_vec_results"):
+        return "generate"
+    return "cache_lookup"
 
 
 def _route_after_cache(state: MyState):
@@ -147,6 +149,7 @@ def build_initial_state(session_id: str, query: str) -> MyState:
         "sub_queries": [],
         "sub_recall_results": [],
         "needs_agent": False,
+        "agent_succeeded": False,
         "agent_skip_cache": False,
     }
 

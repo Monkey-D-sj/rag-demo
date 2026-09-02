@@ -32,10 +32,15 @@ def _ctx(retriever=None, memory=None):
     return ContextSchema(llm=None, memory_manager=memory, retriever=retriever)
 
 
-async def test_build_tools_returns_three_named_tools():
+async def test_build_tools_returns_expected_named_tools():
     ctx = _ctx(retriever=_StubRetriever())
     names = sorted(t.name for t in agent_tools.build_tools(ctx, "s1"))
-    assert names == ["fetch_document", "retrieve_kb", "search_memory"]
+    assert names == [
+        "fetch_document",
+        "finish_evidence_collection",
+        "retrieve_kb",
+        "search_memory",
+    ]
 
 
 async def test_kb_search_normalizes_rows_and_drops_empty_text():
@@ -82,10 +87,33 @@ async def test_doc_fetch_returns_full_text_row():
     assert rows == [{
         "text": "全文内容",
         "filename": "d1",
-        "metadata": {},
+        "metadata": {
+            "document_offset": 0,
+            "document_end": 4,
+            "document_total_chars": 4,
+        },
         "document_id": "d1",
         "chunk_index": None,
     }]
+
+
+async def test_doc_fetch_returns_bounded_paginated_window():
+    ctx = _ctx(retriever=_StubRetriever(contents={"d1": "甲" * 10_000}))
+    rows = await agent_tools._doc_fetch(
+        ctx, "s1", document_id="d1", offset=4_000, max_chars=2_000
+    )
+    assert len(rows[0]["text"]) == 2_000
+    assert rows[0]["metadata"] == {
+        "document_offset": 4_000,
+        "document_end": 6_000,
+        "document_total_chars": 10_000,
+    }
+
+    # 模型不能用超大窗口绕过单次工具结果上限。
+    rows = await agent_tools._doc_fetch(
+        ctx, "s1", document_id="d1", offset=0, max_chars=999_999
+    )
+    assert len(rows[0]["text"]) == agent_tools.DOCUMENT_WINDOW_MAX_CHARS
 
 
 async def test_doc_fetch_empty_when_missing_or_no_retriever():
@@ -121,5 +149,15 @@ def test_handlers_registry_covers_build_tools():
 
 def test_render_empty_and_content():
     assert agent_tools._render([]) == "未检索到相关内容。"
-    text = agent_tools._render([{"text": "x", "filename": "《A》"}])
+    text = agent_tools._render([{
+        "text": "x", "filename": "《A》", "document_id": "doc-a", "chunk_index": 2,
+    }])
     assert "《A》" in text and "x" in text
+    assert "document_id=doc-a" in text and "chunk_index=2" in text
+
+
+def test_render_has_total_output_limit():
+    rows = [{"text": "x" * 10_000, "filename": str(i)} for i in range(10)]
+    text = agent_tools._render(rows)
+    assert len(text) <= agent_tools.TOOL_OBSERVATION_TOTAL_CHARS + 20
+    assert text.endswith("…工具结果已截断")

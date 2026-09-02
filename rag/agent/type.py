@@ -102,7 +102,8 @@ class MyState(TypedDict):
 
 	# ----------- Agent 分支 -----------
 	needs_agent: bool  # handle_query 判定需多步工具检索时置 True,路由进 agent_execute
-	agent_skip_cache: bool  # agent 成功产出后置 True,cache_store 据此跳过回写
+	agent_succeeded: bool  # 工具循环拿到证据并明确收敛时置 True
+	agent_skip_cache: bool  # 仅 agent_succeeded 时置 True,cache_store 据此跳过回写
 
 @runtime_checkable
 class RerankerProtocol(Protocol):

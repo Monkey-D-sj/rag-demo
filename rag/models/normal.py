@@ -3,6 +3,7 @@ import json
 import logging
 from contextlib import asynccontextmanager, nullcontext
 from typing import Any, Callable, TypeVar
+from urllib.parse import urlparse
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import BaseMessage, SystemMessage
@@ -79,15 +80,29 @@ def _usage_from(msg) -> tuple[int | None, int | None]:
     return usage.get("input_tokens"), usage.get("output_tokens")
 
 
+def _tool_extra_body(model_name: str, model_url: str) -> dict[str, Any]:
+    """仅为工具调用选择供应商支持的“关闭思考”参数。
+
+    Agent 循环目前不回传 reasoning_content，因此工具轮需使用非思考模式。
+    参数只绑定到工具调用 runnable，不能污染普通问答、结构化输出和流式生成。
+    未识别的 OpenAI 兼容端点不注入供应商私有字段。
+    """
+    model = model_name.lower()
+    host = (urlparse(model_url).hostname or "").lower()
+    if host == "api.deepseek.com" or host.endswith(".deepseek.com"):
+        return {"thinking": {"type": "disabled"}}
+    if host == "dashscope.aliyuncs.com" or host.endswith(".dashscope.aliyuncs.com"):
+        if model.startswith(("qwen", "deepseek")):
+            return {"enable_thinking": False}
+    return {}
+
+
 class NormalModel(ChatModel):
     def __init__(self, settings: Settings, guard: LLMGuard | None = None):
         gov = get_governance_settings()
         self._model = ChatOpenAI(
             api_key=settings.MODEL_KEY,
             model=settings.MODEL_NAME,
-            extra_body={
-                "thinking": {"type": "disabled"}
-            },
             base_url=settings.MODEL_URL,
             temperature=0,
             seed=42,
@@ -96,6 +111,9 @@ class NormalModel(ChatModel):
             max_retries=0,  # SDK 内部重试关闭:重试统一由外层 tenacity+guard 管理,保证限流/熔断按真实请求计数
         )
         self._model_name = settings.MODEL_NAME
+        self._tool_call_extra_body = _tool_extra_body(
+            settings.MODEL_NAME, settings.MODEL_URL
+        )
         self._guard = guard
         self._timeout = gov.LLM_TIMEOUT_SECONDS
 
@@ -176,7 +194,12 @@ class NormalModel(ChatModel):
                     async with self._acquire("chat"):
                         async with self._translate():
                             async with asyncio.timeout(self._timeout):
-                                rsp = await self._model.bind_tools(tools).ainvoke(messages)
+                                bound = self._model.bind_tools(tools)
+                                if self._tool_call_extra_body:
+                                    bound = bound.bind(
+                                        extra_body=self._tool_call_extra_body
+                                    )
+                                rsp = await bound.ainvoke(messages)
                             if tracker is not None:
                                 tracker.set_tokens(*_usage_from(rsp))
                             return rsp

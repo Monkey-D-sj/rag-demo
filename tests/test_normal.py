@@ -229,6 +229,12 @@ class _FakeBoundTools:
     def __init__(self, model, tools):
         self._model = model
         self._tools = list(tools)
+        self._kwargs = {}
+
+    def bind(self, **kwargs):
+        self._kwargs.update(kwargs)
+        self._model.invoke_kwargs_seen.append(dict(self._kwargs))
+        return self
 
     async def ainvoke(self, messages):
         return self._model._emit(self._tools, messages)
@@ -241,6 +247,7 @@ class _FakeToolBindable:
         self._tool_calls = tool_calls
         self._usage = usage
         self.bound_seen: list[list] = []
+        self.invoke_kwargs_seen: list[dict] = []
 
     def bind_tools(self, tools):
         self.bound_seen.append(list(tools))
@@ -256,6 +263,18 @@ def _TOOL_CALLS():
     ]
 
 
+def test_tool_extra_body_is_provider_specific():
+    assert normal._tool_extra_body(
+        "deepseek-v4-flash", "https://api.deepseek.com"
+    ) == {"thinking": {"type": "disabled"}}
+    assert normal._tool_extra_body(
+        "qwen-plus", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    ) == {"enable_thinking": False}
+    assert normal._tool_extra_body(
+        "custom-model", "https://example.com/v1"
+    ) == {}
+
+
 async def test_ainvoke_with_tools_returns_message_with_tool_calls():
     m = NormalModel(Settings())
     fake = _FakeToolBindable(_TOOL_CALLS())
@@ -264,6 +283,19 @@ async def test_ainvoke_with_tools_returns_message_with_tool_calls():
     assert rsp.tool_calls == _TOOL_CALLS()
     assert len(fake.bound_seen) == 1
     assert fake.bound_seen[0] == ["tool_a"]
+
+
+async def test_ainvoke_with_tools_applies_extra_body_only_to_tool_runnable():
+    m = NormalModel(Settings())
+    m._tool_call_extra_body = {"thinking": {"type": "disabled"}}
+    fake = _FakeToolBindable(_TOOL_CALLS())
+    m._model = fake
+
+    await m.ainvoke_with_tools(["hi"], ["tool_a"])
+
+    assert fake.invoke_kwargs_seen == [
+        {"extra_body": {"thinking": {"type": "disabled"}}}
+    ]
 
 
 async def test_ainvoke_with_tools_binds_fresh_per_call():

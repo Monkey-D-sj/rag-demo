@@ -365,6 +365,11 @@ rag-demo/
 | `SEMANTIC_CACHE_ENABLED` | 开启语义缓存 | `false` |
 | `SEMANTIC_CACHE_SIM_THRESHOLD` | 语义缓存命中相似度阈值 | `0.95` |
 | `SEMANTIC_CACHE_TTL_HOURS` | 语义缓存有效期(小时) | `168` |
+| `AGENT_MODE_ENABLED` | 开启多步工具检索分支 | `false` |
+| `AGENT_MAX_STEPS` | Agent 最大模型轮数 | `3` |
+| `AGENT_MAX_TOOL_CALLS_PER_STEP` | Agent 每轮最大工具调用数 | `4` |
+| `AGENT_MAX_EVIDENCE_CHARS` | Agent 最终证据字符预算 | `24000` |
+| `AGENT_TOTAL_TIMEOUT_SECONDS` | Agent 工具循环总超时(秒) | `30` |
 
 ## 运行测试
 

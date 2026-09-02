@@ -154,6 +154,34 @@ class NormalModel(ChatModel):
                             return rsp.content
             raise AssertionError("unreachable")
 
+    async def ainvoke_with_tools(
+        self, messages: list[BaseMessage | str], tools: list[BaseTool]
+    ) -> BaseMessage:
+        """带重试的原生 function calling:返回完整消息供调用方读取 .tool_calls。
+
+        每轮对底层模型 bind_tools 生成新 runnable(不写回 self._model,
+        避免工具绑定跨调用残留);重试/guard/超时包裹与 ainvoke 一致。
+        """
+        async with self._track("chat_tool") as tracker:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential_jitter(initial=1, max=10, jitter=1),
+                retry=retry_if_exception(is_retryable),
+                before_sleep=before_sleep_log(logger, logging.WARNING),
+                reraise=True,
+            ):
+                with attempt:
+                    if tracker is not None:
+                        tracker.attempts += 1
+                    async with self._acquire("chat"):
+                        async with self._translate():
+                            async with asyncio.timeout(self._timeout):
+                                rsp = await self._model.bind_tools(tools).ainvoke(messages)
+                            if tracker is not None:
+                                tracker.set_tokens(*_usage_from(rsp))
+                            return rsp
+            raise AssertionError("unreachable")
+
     async def ainvoke_structured(
         self, messages: list[BaseMessage | str], schema: type[T]
     ) -> T:

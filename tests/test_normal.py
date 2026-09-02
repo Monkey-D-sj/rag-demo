@@ -210,3 +210,82 @@ async def test_astream_weave_uses_chat_stream_call_type():
     t = guard.trackers[0]
     assert t.call_type == "chat_stream"
     assert (t.input_tokens, t.output_tokens) == (100, 50)
+
+
+# ── ainvoke_with_tools: 原生 function calling ──────────────────
+
+class _FakeToolMsg:
+    """带 tool_calls 与 usage 的假响应,duck-type BaseMessage 的最小面。"""
+
+    def __init__(self, tool_calls, content="", usage=None):
+        self.content = content
+        self.tool_calls = tool_calls
+        self.usage_metadata = usage
+
+
+class _FakeBoundTools:
+    """bind_tools 返回的可 ainvoke 对象,记录绑定的 tools 供断言。"""
+
+    def __init__(self, model, tools):
+        self._model = model
+        self._tools = list(tools)
+
+    async def ainvoke(self, messages):
+        return self._model._emit(self._tools, messages)
+
+
+class _FakeToolBindable:
+    """支持 bind_tools 的假模型;bind 不修改自身,每次返回新 bound 对象。"""
+
+    def __init__(self, tool_calls, usage=None):
+        self._tool_calls = tool_calls
+        self._usage = usage
+        self.bound_seen: list[list] = []
+
+    def bind_tools(self, tools):
+        self.bound_seen.append(list(tools))
+        return _FakeBoundTools(self, tools)
+
+    def _emit(self, tools, messages):
+        return _FakeToolMsg(self._tool_calls, content="", usage=self._usage)
+
+
+def _TOOL_CALLS():
+    return [
+        {"name": "get_weather", "args": {"city": "Beijing"}, "id": "call_1"}
+    ]
+
+
+async def test_ainvoke_with_tools_returns_message_with_tool_calls():
+    m = NormalModel(Settings())
+    fake = _FakeToolBindable(_TOOL_CALLS())
+    m._model = fake
+    rsp = await m.ainvoke_with_tools(["hi"], ["tool_a"])
+    assert rsp.tool_calls == _TOOL_CALLS()
+    assert len(fake.bound_seen) == 1
+    assert fake.bound_seen[0] == ["tool_a"]
+
+
+async def test_ainvoke_with_tools_binds_fresh_per_call():
+    m = NormalModel(Settings())
+    fake = _FakeToolBindable([])
+    m._model = fake
+    await m.ainvoke_with_tools(["hi"], ["tool_a"])
+    await m.ainvoke_with_tools(["hi"], ["tool_b"])
+    assert len(fake.bound_seen) == 2
+    assert fake.bound_seen[0] == ["tool_a"]
+    assert fake.bound_seen[1] == ["tool_b"]
+
+
+async def test_ainvoke_with_tools_guard_weave_uses_chat_tool_type():
+    guard = _FakeGuard()
+    m = NormalModel(Settings(), guard=guard)
+    fake = _FakeToolBindable(
+        _TOOL_CALLS(), usage={"input_tokens": 100, "output_tokens": 50}
+    )
+    m._model = fake
+    await m.ainvoke_with_tools(["hi"], ["tool_a"])
+    assert guard.acquired == ["chat"]
+    t = guard.trackers[0]
+    assert (t.call_type, t.attempts) == ("chat_tool", 1)
+    assert (t.input_tokens, t.output_tokens) == (100, 50)

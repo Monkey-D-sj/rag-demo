@@ -129,6 +129,8 @@ def build_initial_state(session_id: str, query: str) -> MyState:
         "answer_from_context": False,
         "sub_queries": [],
         "sub_recall_results": [],
+        "needs_agent": False,
+        "agent_skip_cache": False,
     }
 
 

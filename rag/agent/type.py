@@ -100,6 +100,10 @@ class MyState(TypedDict):
 	citations: list[dict]  # 引用元数据 [{index, text, document_title}, ...]
 	cache_hit: bool  # cache_lookup 命中时置 True,路由直达 add_memory
 
+	# ----------- Agent 分支 -----------
+	needs_agent: bool  # handle_query 判定需多步工具检索时置 True,路由进 agent_execute
+	agent_skip_cache: bool  # agent 成功产出后置 True,cache_store 据此跳过回写
+
 @runtime_checkable
 class RerankerProtocol(Protocol):
     """agent 层所需的排序器接口。"""

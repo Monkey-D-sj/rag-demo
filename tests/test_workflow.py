@@ -269,6 +269,14 @@ def test_route_after_cache_falls_back_to_raw_query(monkeypatch):
     assert out[0].arg == {"sub_query": "raw"}
 
 
+def test_build_initial_state_defaults_agent_fields():
+    from rag.agent.workflow import build_initial_state
+
+    s = build_initial_state("sid", "q")
+    assert s["needs_agent"] is False
+    assert s["agent_skip_cache"] is False
+
+
 def test_graph_contains_recall_fuse():
     from rag.agent.workflow import graph
 

@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     # ── Agent 分支(原生 function calling 有界工具循环,默认关)──
     AGENT_MODE_ENABLED: bool = False  # 关闭时 needs_agent 判定被路由忽略,恒走主链
     AGENT_MAX_STEPS: int = Field(default=3, ge=1)
-    AGENT_STEP_TIMEOUT_SECONDS: int = Field(default=30, ge=1)
+    AGENT_TOTAL_TIMEOUT_SECONDS: int = Field(default=30, ge=1)  # agent 整轮循环的总时长预算
 
     # ── 生成评测（可选，不影响 API 启动）──
     EVAL_JUDGE_MODEL_NAME: str = ""

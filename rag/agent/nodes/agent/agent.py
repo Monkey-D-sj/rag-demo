@@ -52,7 +52,7 @@ async def agent_execute(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
     llm = runtime.context.llm
     session_id = state.get("session_id", "")
     max_steps = settings.AGENT_MAX_STEPS
-    timeout_seconds = settings.AGENT_STEP_TIMEOUT_SECONDS
+    timeout_seconds = settings.AGENT_TOTAL_TIMEOUT_SECONDS  # 包住整个循环:总时长预算,非每步
 
     messages: list = [
         SystemMessage(content=system_prompt),

@@ -64,7 +64,7 @@ async def _run(monkeypatch, llm, *, max_steps=3, timeout=30, retriever=None):
     monkeypatch.setattr(agent_mod, "get_stream_writer", lambda: (lambda ev: emitted.append(ev)))
     monkeypatch.setattr(
         agent_mod, "get_settings",
-        lambda: SimpleNamespace(AGENT_MAX_STEPS=max_steps, AGENT_STEP_TIMEOUT_SECONDS=timeout),
+        lambda: SimpleNamespace(AGENT_MAX_STEPS=max_steps, AGENT_TOTAL_TIMEOUT_SECONDS=timeout),
     )
     state = {"session_id": "s1", "raw_query": "门槛按哪个执行?"}
     out = await agent_execute(state, _ctx(llm, retriever or _StubRetriever()))

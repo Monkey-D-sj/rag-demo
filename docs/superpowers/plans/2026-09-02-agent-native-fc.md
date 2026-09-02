@@ -16,12 +16,12 @@
 - **insertion point 唯一**:只改 `handle_query` 之后的 `_route_after_query` 与新增节点;主链路其他边不动。
 - **复用 generate**:agent 只负责"攒对上下文",最终答案必须由现有 `generate` 产出(读 `state["recall_vec_results"]` 行 `{text, filename, metadata}`,自建 citations,citations index 从 1 连续)。agent 不得自己写 `generated`。
 - **工具是薄的**:直接调 `runtime.context.retriever`(协议 `search(query, kb_ids=None, top_k=5)` 与 `fetch_parent_contents(document_ids)`)与 `memory_manager.search(session_id, query, ...)`;`search` 不传 query_emb 时内部自算 embedding(与 `recall` 节点一致)。
-- **有界 + 降级**:循环轮数 ≤ `AGENT_MAX_STEPS`,整节点包 `asyncio.timeout(AGENT_STEP_TIMEOUT_SECONDS)`。异常/超时/空结果一律不向用户抛错:空上下文 → 路由回 `cache_lookup` 走正常召回。
+- **有界 + 降级**:循环轮数 ≤ `AGENT_MAX_STEPS`,整节点包 `asyncio.timeout(AGENT_TOTAL_TIMEOUT_SECONDS)`。异常/超时/空结果一律不向用户抛错:空上下文 → 路由回 `cache_lookup` 走正常召回。
 - **缓存隔离**:agent 分支不回读语义缓存(命中判定交给路由前的主链语义),成功路径置 `agent_skip_cache=True`,`cache_store` 据此跳过回写,避免 agent 答案污染全局缓存。
 - **LLM 治理自动生效**:每轮工具调用走 `ainvoke_with_tools`,内部沿用 `_track`/`_acquire`/`_translate`/timeout 包裹(限流/熔断/成本按真实请求记账),无需新增 guard 接线。
 - **streaming**:每步 `writer(STATUS "第 N 步:正在…")`;最终答案由 generate 流式下发,协议不变。
 - 新增开关默认全关;路由字段默认 False;结构化输出失败/短路命中一律钳为 False(走主链)。
-- 配置命名:`AGENT_MODE_ENABLED` / `AGENT_MAX_STEPS` / `AGENT_STEP_TIMEOUT_SECONDS`,追加到 Settings 尾部,不进 `_REQUIRED_FIELDS`。
+- 配置命名:`AGENT_MODE_ENABLED` / `AGENT_MAX_STEPS` / `AGENT_TOTAL_TIMEOUT_SECONDS`,追加到 Settings 尾部,不进 `_REQUIRED_FIELDS`。
 
 ---
 
@@ -102,7 +102,7 @@ git commit -m "feat(models): 新增原生 function calling 调用通道 ainvoke_
 ```python
     AGENT_MODE_ENABLED: bool = False
     AGENT_MAX_STEPS: int = Field(default=3, ge=1)
-    AGENT_STEP_TIMEOUT_SECONDS: int = Field(default=30, ge=1)
+    AGENT_TOTAL_TIMEOUT_SECONDS: int = Field(default=30, ge=1)
 ```
 
 - [ ] **Step 2:测试默认值**(`get_settings()` 构造后断言默认 False/3/30;确认不在必填集合)
@@ -302,7 +302,7 @@ async def agent_execute(state: MyState, runtime: Runtime[ContextSchema]) -> MySt
         HumanMessage(content=state["raw_query"]),
     ]
     try:
-        async with asyncio.timeout(settings.AGENT_STEP_TIMEOUT_SECONDS):
+        async with asyncio.timeout(settings.AGENT_TOTAL_TIMEOUT_SECONDS):
             for step in range(1, max_steps + 1):
                 writer(stream_event(StreamEventType.STATUS, f"第 {step}/{max_steps} 步"))
                 rsp = await llm.ainvoke_with_tools(messages, build_tools(runtime.context, session_id))

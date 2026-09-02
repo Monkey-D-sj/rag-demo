@@ -7,7 +7,7 @@ def test_agent_config_defaults():
     s = Settings()
     assert s.AGENT_MODE_ENABLED is False
     assert s.AGENT_MAX_STEPS == 3
-    assert s.AGENT_STEP_TIMEOUT_SECONDS == 30
+    assert s.AGENT_TOTAL_TIMEOUT_SECONDS == 30
 
 
 def test_agent_config_not_in_required_fields():
@@ -15,3 +15,4 @@ def test_agent_config_not_in_required_fields():
     required = set(Settings()._REQUIRED_FIELDS)
     assert "AGENT_MODE_ENABLED" not in required
     assert "AGENT_MAX_STEPS" not in required
+    assert "AGENT_TOTAL_TIMEOUT_SECONDS" not in required
